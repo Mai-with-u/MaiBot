@@ -7,6 +7,11 @@
  */
 import { ApiError, backendApi, requireSuccess } from '@/lib/http'
 import type {
+  Individual,
+  IndividualMergePreview,
+  IndividualProfile,
+  ProfileField,
+  IndividualDirectoryResponse,
   PersonDeleteResponse,
   PersonDetailResponse,
   PersonInfo,
@@ -39,6 +44,7 @@ export async function getPersonList(params: {
   is_known?: boolean
   platform?: string
   user_id?: string
+  exclude_numeric_user_ids?: boolean
 }): Promise<PersonListData> {
   const data = await backendApi.get<PersonListResponse>(`${API_BASE}/list`, {
     query: {
@@ -48,6 +54,7 @@ export async function getPersonList(params: {
       is_known: params.is_known,
       platform: params.platform || undefined,
       user_id: params.user_id || undefined,
+      exclude_numeric_user_ids: params.exclude_numeric_user_ids,
     },
     errorMessage: '获取人物列表失败',
   })
@@ -105,7 +112,19 @@ export async function getPersonStats(): Promise<PersonStats> {
   const data = await backendApi.get<PersonStatsResponse>(`${API_BASE}/stats/summary`, {
     errorMessage: '获取统计数据失败',
   })
-  return requireSuccess(data, '获取统计数据失败').data
+  const stats = requireSuccess(data, '获取统计数据失败').data
+  const counts = ['individuals', 'linked_individuals', 'total', 'known', 'unknown'] as const
+  for (const field of counts) {
+    if (!Number.isSafeInteger(stats?.[field]) || stats[field] < 0) {
+      throw new ApiError(
+        `人物统计接口缺少有效字段 ${field}，请重启当前 Bot 以加载新版后端，然后重试。`,
+        {
+          detail: data,
+        }
+      )
+    }
+  }
+  return stats
 }
 
 /**
@@ -134,4 +153,74 @@ export async function batchDeletePersons(personIds: string[]): Promise<{
     failed_count: checked.failed_count,
     failed_ids: checked.failed_ids,
   }
+}
+
+function validateIndividual(individual: Individual): Individual {
+  if (
+    typeof individual.display_name !== 'string' ||
+    typeof individual.is_known !== 'boolean' ||
+    !Array.isArray(individual.profile_sources)
+  ) {
+    throw new ApiError('人物资料接口版本不匹配，请重启当前 Bot 加载新版后端后重试。', {
+      detail: individual,
+    })
+  }
+  return individual
+}
+
+export async function getIndividual(individualId: string): Promise<Individual> {
+  const individual = await backendApi.get<Individual>(
+    `${API_BASE}/individual/${encodeURIComponent(individualId)}`,
+    {
+      errorMessage: '获取个体成员失败',
+    }
+  )
+  return validateIndividual(individual)
+}
+
+export async function previewIndividualMerge(
+  targetIndividualId: string,
+  individualIds: string[]
+): Promise<IndividualMergePreview> {
+  return backendApi.post<IndividualMergePreview>(`${API_BASE}/individual/preview`, {
+    body: { target_individual_id: targetIndividualId, individual_ids: individualIds },
+    errorMessage: '加载合并预览失败',
+  })
+}
+
+export async function mergeIndividuals(
+  preview: IndividualMergePreview,
+  profile: IndividualProfile,
+  resolvedConflicts: ProfileField[]
+): Promise<Individual> {
+  return backendApi.post<Individual>(`${API_BASE}/individual/merge`, {
+    body: {
+      target_individual_id: preview.target_individual_id,
+      expected_members: preview.members,
+      expected_revision: preview.revision,
+      profile,
+      resolved_conflicts: resolvedConflicts,
+    },
+    errorMessage: '合并人物失败',
+  })
+}
+
+export async function getIndividualDirectory(params: {
+  page: number
+  page_size: number
+  view: 'individuals' | 'persons'
+  search?: string
+  platform?: string
+  is_known?: boolean
+  linked_only?: boolean
+}): Promise<IndividualDirectoryResponse> {
+  const directory = await backendApi.get<IndividualDirectoryResponse>(
+    `${API_BASE}/directory/list`,
+    {
+      query: params,
+      errorMessage: '获取个体与账号关系失败',
+    }
+  )
+  directory.data.forEach(validateIndividual)
+  return directory
 }

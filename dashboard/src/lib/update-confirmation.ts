@@ -3,7 +3,6 @@ import { ApiError } from '@/lib/http'
 export interface UpdateConflict {
   message: string
   files: string[]
-  diverged: boolean
   target_commit?: string
 }
 
@@ -47,7 +46,7 @@ export function getUpdateConflict(error: unknown): UpdateConflict | null {
   if (typeof envelope.detail !== 'object' || !envelope.detail) return null
   const detail = envelope.detail as Record<string, unknown>
   if (detail.code !== 'local_changes' || typeof detail.message !== 'string' || !Array.isArray(detail.files)
-    || !detail.files.every((file) => typeof file === 'string') || typeof detail.diverged !== 'boolean') return null
+    || !detail.files.every((file) => typeof file === 'string')) return null
   if (typeof detail.target_commit !== 'string') return null
-  return { message: detail.message, files: detail.files as string[], diverged: detail.diverged, target_commit: detail.target_commit }
+  return { message: detail.message, files: detail.files as string[], target_commit: detail.target_commit }
 }

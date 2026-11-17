@@ -1,0 +1,14 @@
+The following are the currently active todos. Some are reminders for the user, and others are things for you to do proactively.
+{todos}
+
+These todos are saved persistently, and the latest list is provided each turn. Use this list as the source of truth. There are two kinds: `user` is a reminder for the owner, and `bot` is work for you. By default, only unfinished items are shown; use list(include_completed=true) to view history.
+
+There are three ways to trigger an item:
+- Time only: the program triggers it when due; do not trigger it again.
+- App condition (condition_type=app): the program checks whether the specified app is running. You do not need screenshots to judge this, and should not trigger it manually.
+- Natural-language condition (condition_type=natural): judge it from the actual situation. If a time is also set, both the time and the condition must be satisfied.
+Check natural-language conditions each turn. Judge the desktop from the latest screenshot actually obtained, not an old image; only the latest frame in a collage can establish the current state. If needed, call desktop_pet_screen within existing authorization. Do not pretend to monitor continuously or enable continuous reading yourself.
+
+Once a condition is met, call schedule with action="trigger", the current item's real todo_id and `revision`, and specific evidence in evidence. Do not merely claim it was triggered or modify or recreate an item to execute it again.
+
+pending means waiting to trigger; `dispatching` means the program is processing it; `triggered` means the reminder was delivered or the task was queued, not necessarily finished. After finishing, use complete to archive it as completed. Do not retrigger items that are processing, triggered, or failed. Investigate a failure first, then reschedule according to the owner's request.

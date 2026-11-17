@@ -16,6 +16,8 @@ WebUI Cookie 保存在应用自己的 WebView 存储中，有效期内重启后�
 
 ## 本版范围
 
+1.0.2 支持上滚分页读取主人聊天历史、未读橙点及四种可选消息提示音；须配合包含历史请求通道的新版宿主。音效跟随服务器桌宠设置，默认小木敲。
+
 - 已实现：WebUI 登录与额外代理认证、悬浮形象与皮肤、拖动、文字聊天、待办、探索与记录、断线重连、登录会话复用、文字复制。
 - 暂未实现：手机自动读屏、应用监测、图片复制与系统图片选择器；客户端明确声明不支持读屏，不申请屏幕录制、无障碍或应用列表权限。已有服务器图片和皮肤仍由共用页面呈现。
 - Android 13 及以上使用固定画布和独立触摸区域，展开菜单、切换面板时保持形象位置；透明区域可操作下方应用；窗口透明度遵循系统触摸穿透上限（通常 80%），形象和面板会略微透出背景。Android 8–12 使用矩形窗口裁剪，上方空白不拦截触摸。
@@ -44,7 +46,7 @@ $env:MAIBOT_ANDROID_KEY_ALIAS = 'maibot'
 ./scripts/dist.ps1
 ```
 
-产物：仓库 `dist/android-pet-client/maibot-android-pet-1.0.1.apk` 与同名 `.sha256` 校验文件。Release 关闭 WebView 调试；不配置密钥的 `assembleRelease` 只产生未签名 APK。测试分发可用 `./scripts/dist.ps1 -DebugBuild`，测试签名与发布签名不同，不能直接相互覆盖安装。不要提交密钥或密码。
+产物：仓库 `dist/android-pet-client/maibot-android-pet-1.0.2.apk` 与同名 `.sha256` 校验文件。Release 关闭 WebView 调试；不配置密钥的 `assembleRelease` 只产生未签名 APK。测试分发可用 `./scripts/dist.ps1 -DebugBuild`，测试签名与发布签名不同，不能直接相互覆盖安装。不要提交密钥或密码。
 
 本次本地构建的发行密钥及密码记录保存在用户目录 `.android/maibot-signing/`，不在 Git 工作区；后续更新须沿用并妥善备份该目录。
 

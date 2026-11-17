@@ -1,6 +1,6 @@
 [package]
 name = "maibot-desktop-pet"
-version = "1.0.0"
+version = "1.0.1"
 description = "MaiBot desktop companion"
 authors = ["MaiBot contributors"]
 license = "GPL-3.0-only"

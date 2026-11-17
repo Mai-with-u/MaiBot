@@ -50,11 +50,11 @@ _document_store = AISearchDocumentStore()
 
 
 def _get_ai_search_model() -> LLMServiceClient:
-    """延迟创建 utils 模型客户端，避免模块导入阶段绑定未就绪配置。"""
+    """延迟创建 planner 模型客户端，避免模块导入阶段绑定未就绪配置。"""
 
     global _ai_search_model
     if _ai_search_model is None:
-        _ai_search_model = LLMServiceClient(task_name="utils", request_type="webui.ai_search")
+        _ai_search_model = LLMServiceClient(task_name="planner", request_type="webui.ai_search")
     return _ai_search_model
 
 

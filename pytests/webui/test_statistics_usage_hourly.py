@@ -416,16 +416,46 @@ def test_dashboard_and_previous_period_match_sql(usage_db, monkeypatch):
         assert normalized(service.fetch_window_usage_totals(*previous, usage_hourly=state)) ==             normalized(service.fetch_window_usage_totals(*previous))
 
 
+def test_dashboard_core_cache_only_counts_planner(usage_db, monkeypatch):
+    from src.services import statistics_service as service
+    from src.webui.schemas.statistics import StatisticsSummary
+
+    monkeypatch.setattr(service, "get_db_session", hourly.get_db_session)
+    records = make_records(4)
+    for record, task, hit in zip(records, ("planner", "replyer", "embedding", None), (80, 20, 10, 0), strict=True):
+        record.update(
+            timestamp=NOW - timedelta(hours=2), task_name=task,
+            request_type="maisaka.planner", model_assign_name="shared-model",
+            prompt_tokens=100, prompt_cache_enabled=True,
+            prompt_cache_hit_tokens=hit, prompt_cache_miss_tokens=100 - hit,
+        )
+    insert_usage(usage_db, records)
+    state = hourly.refresh_usage_hourly(time_budget_seconds=60)
+    assert state.ready
+    start = NOW - timedelta(hours=3)
+    items = service._window_usage_items(start, NOW, True, state)
+    sql_totals = _summary(service, None, start)
+    assert _summary(service, items) == sql_totals
+    assert sql_totals["cache_hit_tokens"] == 110
+    assert sql_totals["cache_miss_tokens"] == 290
+    assert sql_totals["core_cache_hit_tokens"] == 80
+    assert sql_totals["core_cache_miss_tokens"] == 20
+    summary = StatisticsSummary()
+    service._apply_summary_usage(summary, service._summary_usage_row(start, NOW))
+    assert summary.cache_hit_rate == pytest.approx(0.275)
+    assert summary.core_cache_hit_rate == pytest.approx(0.8)
+
+
 def _summary(service, items, start=None):
     if items is not None:
         totals = service._usage_totals(items)
         return {key: totals[key] for key in (
             "total_requests", "total_cost", "input_tokens", "output_tokens", "cache_hit_tokens",
-            "cache_miss_tokens", "chat_cache_hit_tokens", "chat_cache_miss_tokens", "avg_response_time",
+            "cache_miss_tokens", "core_cache_hit_tokens", "core_cache_miss_tokens", "avg_response_time",
         )}
     row = service._summary_usage_row(start, NOW)
     keys = ("total_requests", "total_cost", "input_tokens", "output_tokens", "cache_hit_tokens",
-            "cache_miss_tokens", "chat_cache_hit_tokens", "chat_cache_miss_tokens", "avg_response_time")
+            "cache_miss_tokens", "core_cache_hit_tokens", "core_cache_miss_tokens", "avg_response_time")
     return {key: (value or 0) for key, value in zip(keys, row, strict=True)}
 
 

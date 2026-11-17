@@ -284,7 +284,11 @@ def _inherit_platform_io_route_metadata(target_stream: BotChatSession) -> Dict[s
         inherited_metadata["platform_io_target_group_id"] = normalized_group_id
 
     if target_stream.user_id and (normalized_user_id := str(target_stream.user_id).strip()):
-        inherited_metadata["platform_io_target_user_id"] = normalized_user_id
+        from src.person_info.identity import resolve_private_transport_user
+
+        inherited_metadata["platform_io_target_user_id"] = resolve_private_transport_user(
+            target_stream.platform, normalized_user_id, target_stream.account_id, target_stream.scope,
+        )
 
     return inherited_metadata
 

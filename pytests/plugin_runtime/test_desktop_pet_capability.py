@@ -59,6 +59,72 @@ async def test_unavailable_window_is_not_reported_as_success():
 
 
 @pytest.mark.asyncio
+async def test_restart_stops_ready_pet_before_starting_new_worker(monkeypatch):
+    service = DesktopPetService()
+    service._ready = True
+    service._closing = False
+    service._active_mode = "local"
+    monkeypatch.setattr(pet_module.global_config.desktop_pet, "enabled", True)
+    monkeypatch.setattr(pet_module.global_config.desktop_pet, "mode", "local")
+    monkeypatch.setattr(pet_module.sys, "platform", "win32")
+    events = []
+
+    async def stop():
+        events.append("stop")
+        service._ready = False
+        service._closing = True
+
+    async def run():
+        events.append("start")
+
+    monkeypatch.setattr(service, "_stop", stop)
+    monkeypatch.setattr(service, "_run", run)
+    await service._reload(force_restart=True)
+    await service._worker
+    assert events == ["stop", "start"]
+    assert not service._closing
+    assert service._active_mode == "local"
+
+
+@pytest.mark.asyncio
+async def test_restart_rejects_remote_mode_without_stopping_it(monkeypatch):
+    service = DesktopPetService()
+    stop = AsyncMock()
+    monkeypatch.setattr(service, "_stop", stop)
+    monkeypatch.setattr(pet_module.global_config.desktop_pet, "enabled", True)
+    monkeypatch.setattr(pet_module.global_config.desktop_pet, "mode", "remote")
+    with pytest.raises(RuntimeError, match="启用本机桌宠"):
+        await service._reload(force_restart=True)
+    stop.assert_not_awaited()
+
+
+@pytest.mark.asyncio
+async def test_page_reload_ready_preserves_hidden_window_and_background_tasks(monkeypatch):
+    service = DesktopPetService()
+    service._ready = True
+    service._visible = False
+    dispatch = AsyncMock()
+    todos = AsyncMock()
+    apply_skin = AsyncMock()
+    monkeypatch.setattr(service, "_dispatch_hook", dispatch)
+    monkeypatch.setattr(service, "_run_todos", todos)
+    monkeypatch.setattr(service, "apply_skin", apply_skin)
+    monkeypatch.setattr(service, "_buttons_changed", lambda: None)
+    monkeypatch.setattr(service, "_restart_proactive_wake", lambda: None)
+    monkeypatch.setattr(service, "_publish_screen_state", AsyncMock())
+    monkeypatch.setattr(service, "_publish_exploration_state", AsyncMock())
+
+    service._handle_event({"type": "ready"})
+    await asyncio.gather(*service._notifications)
+
+    assert service._ready
+    assert not service._visible
+    dispatch.assert_not_awaited()
+    todos.assert_not_awaited()
+    apply_skin.assert_awaited_once()
+
+
+@pytest.mark.asyncio
 async def test_window_interactions_dispatch_observe_hooks(monkeypatch):
     service = DesktopPetService()
     dispatch = AsyncMock()
@@ -126,7 +192,7 @@ async def test_only_internal_owner_reply_is_displayed(monkeypatch):
     command = AsyncMock()
     monkeypatch.setattr(service, "_command", command)
     def message(platform, target, group=None):
-        return {"platform": platform, "message_info": {
+        return {"platform": platform, "message_id": "reply-1", "message_info": {
             "additional_config": {"platform_io_target_user_id": target}, "group_info": group,
         }, "raw_message": [{"type": "text", "data": "你好"}]}
     await service.notify_reply(message("webui", "owner"))
@@ -135,7 +201,8 @@ async def test_only_internal_owner_reply_is_displayed(monkeypatch):
     assert not service._notifications
     await service.notify_reply(message("internal", "owner"))
     await asyncio.gather(*service._notifications)
-    command.assert_awaited_once_with({"type": "reply", "parts": [{"kind": "text", "text": "你好"}]})
+    command.assert_awaited_once_with({"type": "reply", "parts": [{"kind": "text", "text": "你好"}],
+                                    "message_id": "reply-1", "sound": pet_module.global_config.desktop_pet.message_sound})
 
     # 窗口隐藏时，主人会话的发言先主动显示窗口再出气泡。
     service._visible = False

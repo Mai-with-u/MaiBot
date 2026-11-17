@@ -1,0 +1,15 @@
+[agent_acp]
+display_name = "External agent integration guide"
+advanced = true
+description = "External agent integration guide."
+
+[agent_planner]
+display_name = "External planner integration guide"
+advanced = true
+description = "External planner integration guide."
+
+[maisaka_subagent]
+display_name = "Subagent"
+advanced = false
+description = "Main system prompt for an independent subagent task."
+

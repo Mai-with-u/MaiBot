@@ -7,8 +7,8 @@ import asyncio
 import json
 import traceback
 
-from src.chat.replyer.replyer_manager import replyer_manager
 from src.chat.message_receive.message import SessionMessage
+from src.chat.replyer.replyer_manager import replyer_manager
 from src.chat.utils.utils import get_bot_account, is_bot_self
 from src.cli.maisaka_cli_sender import CLI_PLATFORM_NAME, render_cli_message
 from src.common.data_models.message_component_data_model import TextComponent
@@ -16,18 +16,27 @@ from src.common.data_models.reply_generation_data_models import ReplyGenerationR
 from src.common.llm_json import parse_llm_json
 from src.common.logger import get_logger
 from src.config import config as config_module
-from src.maisaka.scenes.factory import get_scene
-from src.core.tooling import ToolAvailabilityContext, ToolExecutionContext, ToolExecutionResult, ToolInvocation, ToolSpec
-from src.maisaka.quote import decide_quote
+from src.core.tooling import (
+    ToolAvailabilityContext,
+    ToolExecutionContext,
+    ToolExecutionResult,
+    ToolInvocation,
+    ToolSpec,
+)
 from src.maisaka.context.message_adapter import build_visible_text_from_sequence, parse_speaker_content
 from src.maisaka.context.message_id_alias import to_display_message_id
 from src.maisaka.context.messages import InternalContextMessage, LLMContextMessage, SessionBackedMessage
 from src.maisaka.context.planner_messages import extract_quote_ids_from_message_sequence
+from src.maisaka.quote import decide_quote
+from src.maisaka.scenes.factory import get_scene
 from src.plugin_runtime.host.hook_dispatcher import HookAbortedError, build_hook_abort_tool_result
 from src.plugin_runtime.host.message_utils import PluginMessageUtils
-from src.plugin_runtime.host.reply_extensions import ReplyExtensionExecution, build_reply_extensions_schema, get_reply_extensions
+from src.plugin_runtime.host.reply_extensions import (
+    ReplyExtensionExecution,
+    build_reply_extensions_schema,
+    get_reply_extensions,
+)
 from src.services import send_service
-
 from .context import BuiltinToolRuntimeContext, PostProcessedReplyMessage, ResolvedReplyAttachments
 from .wait import resolve_wait_seconds
 
@@ -133,7 +142,7 @@ def get_tool_spec(context: Optional[ToolAvailabilityContext] = None) -> ToolSpec
             "type": "string",
             "enum": ["continue", "wait"],
             "default": "wait",
-            "description": "回复发送成功后的行为：continue 继续思考和调用工具；wait（默认）暂停，未填 wait_seconds 则结束本轮，填写 wait_seconds 则定时再判断。wait 会取消同批后续工具。",
+            "description": "回复发送成功后的行为：continue 继续思考和调用工具；wait（默认）暂停，未填 wait_seconds 则结束本轮，填写 wait_seconds 则定时再判断。",
         },
         "wait_seconds": {
             "type": "integer",
@@ -142,13 +151,13 @@ def get_tool_spec(context: Optional[ToolAvailabilityContext] = None) -> ToolSpec
         },
         "msg_id": {
             "type": "string",
-            "description": "可选。要回复的真实聊天消息 msg_id；省略或留空表示向当前会话主动发言。内部任务编号也按无目标发言处理。",
+            "description": "可选。要回复的真实聊天消息 msg_id；省略或留空表示向当前会话主动发言。",
         },
         "chat_anlyze": {
             "type": "string",
             "minLength": 1,
             "description": (
-                "用一段精炼的话描述当前对话局面与查到的关键事实：如同转述一样梳理上文核心逻辑，"
+                "用一段话，约100-200字描述当前对话局面与查到的关键事实：如同转述一样梳理上文核心逻辑，"
                 "提炼通过搜索或工具查证到的关键事实结论，不写入长段原文时间戳或者具体的消息ID。"
                 "不要原文引用，不评价回复价值、不写回复原因、不构想或指导如何回复。"
             ),
@@ -517,16 +526,6 @@ async def _execute_reply(
     """
 
     invocation_arguments = deepcopy(arguments)
-    planner_snapshot = None
-    if config_module.global_config.experimental.reply_cache and not config_module.global_config.experimental.super_creative_mode:
-        # Focus 使用共享 Planner 快照，普通聊天使用所属会话的快照。
-        planner_service = (
-            tool_ctx.runtime._focus_group._service if tool_ctx.runtime._focus_group is not None
-            else tool_ctx.runtime._chat_loop_service
-        )
-        planner_snapshot = planner_service.planner_request_snapshot
-        if planner_snapshot is None:
-            return tool_ctx.build_failure_result("reply", "回复缓存模式缺少本轮 Planner 请求快照，无法生成回复。")
     if type(invocation_arguments.get("attach_emoji")) is int and invocation_arguments["attach_emoji"] == 0:
         invocation_arguments.pop("attach_emoji")
     chat_anlyze = invocation_arguments.get("chat_anlyze")
@@ -661,7 +660,7 @@ async def _execute_reply(
             reply_message=target_message if supplement_runner is None else None,
             resolve_reply_target=resolve_reply_target if supplement_runner is not None else None,
             chat_history=replyer_chat_history,
-            retro_history_builder=tool_ctx.runtime.build_retro_reply_history,
+            reply_history_builder=tool_ctx.runtime.build_reply_history,
             image_recognition_refresher=lambda history: (
                 tool_ctx.runtime._reasoning_engine._refresh_chat_history_visual_placeholders(
                     chat_history=history,
@@ -674,7 +673,6 @@ async def _execute_reply(
                 system_prompt,
             ),
             log_reply=False,
-            planner_snapshot=planner_snapshot,
         )
         success, reply_result = await generation
         if supplement_runner is not None:

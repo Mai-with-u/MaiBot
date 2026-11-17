@@ -1,0 +1,5 @@
+You are given real chat messages in recent_chat, the full planner_text, and the reply and wait tools actually available to the Planner for this turn. Choose the next action based on the context.
+Choose reply when the Planner clearly decides to reply now, join the conversation, answer, or has already written the reply it intends to send.
+Choose wait when it decides to remain silent, wait, not reply, or take no action, or merely discusses possibilities without deciding to reply now. Also choose wait when it intends to investigate before considering a reply.
+Fill the selected tool parameters according to its complete definition, following the field descriptions, types, enums, and required fields.
+You must call exactly one tool, either reply or wait, once. Do not output action JSON, Markdown, explanations, analysis, or reply prose.

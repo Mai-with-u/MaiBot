@@ -1,6 +1,8 @@
 from __future__ import annotations
 
 from contextlib import suppress
+from copy import deepcopy
+from dataclasses import asdict
 from datetime import datetime, timedelta, timezone
 from hashlib import md5, sha1, sha256
 from pathlib import Path
@@ -19,8 +21,9 @@ from aiohttp import ClientError, ClientResponseError, ClientSession, ClientTimeo
 from maibot_sdk import API, Command, ConfigWidget, ConfigWidgetState, MaiBotPlugin, MessageGateway, PluginConfigBase, Tool
 from maibot_sdk.types import ToolParameterInfo, ToolParamType
 
-from src.common.paths import resolve_plugin_config_path
+from src.common.paths import get_instance_root, resolve_plugin_config_path
 
+from .binding_store import JOURNAL, commit_binding_delete, recover_binding_delete
 from .codec import (
     GROUP_EVENTS,
     MAX_OUTBOUND_FILE_BYTES,
@@ -29,13 +32,16 @@ from .codec import (
     SUPPORTED_EVENTS,
     decode_message,
     encode_message,
+    extract_user_openid,
     is_bot_author,
     summarize_payload,
 )
+from .mapping_migration import disable_mapping, migration_candidates, save_mapping_mode
 from .settings import AdapterSettings
 from .identity_sync import PROFILE_TTL, IdentityScope, SilentIdentitySync, save_profiles
 from .qr_login import QRLogin, save_credentials
 from .quoted_media import quoted_image_attachments
+from .union_identity import UNION_IDENTITIES_FILE, UnionIdentities
 
 GATEWAY_NAME = "qq_official_gateway"
 MESSAGE_INTENTS = 1 << 25
@@ -79,7 +85,7 @@ class QQOfficialAdapterPlugin(MaiBotPlugin):
         official_fields = sections["qq_official"]["fields"]
         sync_fields = {
             name: official_fields.pop(name)
-            for name in ("unified_account_id", "silent_user_sync", "snowluma_identity_only")
+            for name in ("unified_account_id", "enable_mapping", "silent_user_sync", "snowluma_identity_only")
         }
         for section in sections.values():
             if section["order"] >= 2:
@@ -166,6 +172,8 @@ class QQOfficialAdapterPlugin(MaiBotPlugin):
         self._dispatch_tasks: Set[asyncio.Task[None]] = set()
         self._id_map: Dict[str, Dict[str, str]] = {"group": {}, "user": {}}
         self._id_map_lock = asyncio.Lock()
+        self._union_identities = UnionIdentities()
+        self._union_identity_lock = asyncio.Lock()
         self._unified_account_id = ""
         self._connection_lock = asyncio.Lock()
         self._qr_login = QRLogin(self._apply_qr_credentials)
@@ -174,6 +182,8 @@ class QQOfficialAdapterPlugin(MaiBotPlugin):
         # 群基本信息查询按应用和 OpenID 缓存，失败同样缓存，避免耗尽接口配额。
         self._group_names: Dict[Tuple[str, str], Tuple[str, float]] = {}
         self._group_name_lock = asyncio.Lock()
+        # 消息直接下发的用户头像按应用缓存，避免额外查询用户资料。
+        self._user_avatars: Dict[Tuple[str, str], Tuple[str, float]] = {}
         self._identity_sync = SilentIdentitySync()
         self._identity_task: Optional[asyncio.Task[None]] = None
         self._identity_dirty = False
@@ -182,8 +192,12 @@ class QQOfficialAdapterPlugin(MaiBotPlugin):
         self._identity_only_target = ""
 
     async def on_load(self) -> None:
+        await asyncio.to_thread(recover_binding_delete, self.ctx.paths.data_dir)
         # 页面在连接关闭或凭据尚未填写时也需要展示已有绑定。
         await asyncio.to_thread(self._load_id_map)
+        self._union_identities = await asyncio.to_thread(
+            UnionIdentities.load, self.ctx.paths.data_dir / UNION_IDENTITIES_FILE,
+        )
         try:
             await asyncio.to_thread(self._identity_sync.load, self.ctx.paths.data_dir / "auto_user_profiles.json")
         except (OSError, ValueError, KeyError, TypeError) as exc:
@@ -300,6 +314,7 @@ class QQOfficialAdapterPlugin(MaiBotPlugin):
         self._replies.clear()
         self._ref_idx.clear()
         self._group_names.clear()
+        self._user_avatars.clear()
         self._session_id = ""
         self._seq = None
         self._account_id = ""
@@ -318,7 +333,15 @@ class QQOfficialAdapterPlugin(MaiBotPlugin):
         return (*self._identity_namespace(), group_openid, self._id_map["group"].get(group_openid, ""), user_openid)
 
     def _group_user_map(self, group_openid: str) -> Dict[str, str]:
-        """合并本群自动身份与人工映射，人工绑定优先。"""
+        """开启映射时使用 QQ 号，否则保留原始 OpenID。"""
+        return self._legacy_group_user_map(group_openid) if self.config.qq_official.enable_mapping else {}
+
+    def _group_union_map(self, group_openid: str) -> Dict[str, str]:
+        """平台确认的原始 OpenID 到 Union 对应关系，不代表已切换用户身份。"""
+        return self._union_identities.user_map(self.config.qq_official.app_id.strip(), group_openid)
+
+    def _legacy_group_user_map(self, group_openid: str) -> Dict[str, str]:
+        """查询已关联 QQ 号，供映射、迁移依据和旧参数解析使用，人工绑定优先。"""
         users: Dict[str, str] = {}
         if self.config.qq_official.silent_user_sync and group_openid in self._id_map["group"]:
             prefix = self._identity_scope(group_openid, "")[:4]
@@ -327,6 +350,66 @@ class QQOfficialAdapterPlugin(MaiBotPlugin):
                     users[scope[4]] = profile.user_id
         users.update(self._id_map["user"])
         return users
+
+    async def _record_union_identity(self, group_openid: str, openid: str, union_openid: str) -> None:
+        qq_id = self._legacy_group_user_map(group_openid).get(openid)
+        qq_source = "manual" if openid in self._id_map["user"] else "silent"
+        profile = self._identity_sync.profiles.get(self._identity_scope(group_openid, openid))
+        candidate = self._identity_sync.candidates.get(self._identity_scope(group_openid, openid))
+        if qq_source == "silent" and ((profile is not None and profile.conflict) or (candidate is not None and candidate.conflict)):
+            qq_id = ""
+        async with self._union_identity_lock:
+            identities = self._union_identities.updated(
+                self.config.qq_official.app_id.strip(), group_openid, openid, union_openid,
+                qq_id=qq_id, qq_source=qq_source,
+            )
+            if identities is self._union_identities:
+                return
+            saving = asyncio.create_task(asyncio.to_thread(
+                identities.save, self.ctx.paths.data_dir / UNION_IDENTITIES_FILE,
+            ))
+            try:
+                await asyncio.shield(saving)
+            except asyncio.CancelledError:
+                await saving
+                self._union_identities = identities
+                raise
+            self._union_identities = identities
+
+    def _member_identity_ids(self, group_openid: str, openid: str, user_id: str) -> Set[str]:
+        """原始模式只匹配 OpenID；映射模式同时识别关联身份。"""
+        if not self.config.qq_official.enable_mapping:
+            return {openid} - {""}
+        union = self._group_union_map(group_openid).get(openid, user_id)
+        return {user_id, openid, union, self._legacy_group_user_map(group_openid).get(openid, ""),
+                *self._union_identities.legacy_qq_ids(self.config.qq_official.app_id.strip(), union)} - {""}
+
+    def _reverse_user_map(self, group_openid: str = "") -> Dict[str, str]:
+        app_id = self.config.qq_official.app_id.strip()
+        scoped = self._group_union_map(group_openid)
+        known = {row.openid for row in self._union_identities.bindings.values() if row.app_id == app_id}
+        result = {qq: openid for openid, qq in self._legacy_group_user_map(group_openid).items()
+                  if openid not in known or openid in scoped}
+        # 同一 QQ 号若指向不同 Union，不能拿它来选择任意一个人的平台路由。
+        owners: Dict[str, Set[str]] = {}
+        for row in self._union_identities.bindings.values():
+            if row.app_id == app_id and row.qq_id:
+                owners.setdefault(row.qq_id, set()).add(row.union_openid)
+        scoped_reverse = self._union_identities.reverse_map(app_id, group_openid)
+        for qq_id, unions in owners.items():
+            if len(unions) == 1 and (openid := scoped_reverse.get(next(iter(unions)))):
+                result[qq_id] = openid
+        for row in self._union_identities.bindings.values():
+            if row.app_id == app_id and row.union_openid in scoped_reverse:
+                result[row.openid] = scoped_reverse[row.union_openid]
+        for qq_id, unions in owners.items():
+            if len(unions) > 1:
+                result.pop(qq_id, None)
+        for row in self._union_identities.relations(app_id):
+            if row["conflict"]:
+                result.pop(row["source"], None)
+        result.update(scoped_reverse)
+        return result
 
     async def _sync_identities_once(self) -> None:
         namespace = self._identity_namespace()
@@ -347,9 +430,15 @@ class QQOfficialAdapterPlugin(MaiBotPlugin):
             for scope, candidate in self._identity_sync.candidates.items():
                 if candidate.conflict and scope not in previous_conflicts:
                     self.ctx.logger.warning("QQ 静默身份匹配存在冲突，暂停自动绑定: group=%s openid=%s", scope[3], scope[4])
+                    if union := self._group_union_map(scope[2]).get(scope[4]):
+                        await self._record_union_identity(scope[2], scope[4], union)
             if changes:
                 self._identity_dirty = True
                 self.ctx.logger.debug("QQ 静默身份同步更新 %s 条记录", len(changes))
+                for profile in changes:
+                    group_openid, openid = profile.scope[2], profile.scope[4]
+                    if union := self._group_union_map(group_openid).get(openid):
+                        await self._record_union_identity(group_openid, openid, union)
         if self._identity_dirty:
             # 停用时等待正在进行的原子写入结束，避免取消 to_thread 后遗留并发写入。
             saving = asyncio.create_task(asyncio.to_thread(
@@ -434,6 +523,19 @@ class QQOfficialAdapterPlugin(MaiBotPlugin):
         ]
         return {"total": len(groups), "groups": groups}
 
+    @API("webui_set_mapping_mode", description="切换 QQ 号映射模式，不迁移数据", version="1", public=True)
+    async def webui_set_mapping_mode(self, enabled: bool) -> Dict[str, bool]:
+        async with self._connection_lock:
+            config_data = await asyncio.to_thread(
+                save_mapping_mode, resolve_plugin_config_path(Path(__file__).parent), enabled,
+            )
+            self.set_plugin_config(config_data)
+            return {"mapping_enabled": self.config.qq_official.enable_mapping}
+
+    @API("webui_identity_mode", description="查询当前用户身份模式", version="1", public=True)
+    async def webui_identity_mode(self) -> Dict[str, bool]:
+        return {"mapping_enabled": self.config.qq_official.enable_mapping}
+
     @API("webui_mappings", description="查看 QQ 群和用户的 OpenID 绑定", version="1", public=True)
     async def webui_mappings(self) -> Dict[str, Any]:
         """合并人工映射与当前账号的群内自动身份，保留冲突记录供页面核对。"""
@@ -468,17 +570,116 @@ class QQOfficialAdapterPlugin(MaiBotPlugin):
                 "group_id": scope[3], "group_openid": scope[2], "conflict": conflict, "status": status,
             })
         result["user"].sort(key=lambda row: (row["id"], row["source"], row["group_id"], row["openid"]))
-        return result
+        app_id = self.config.qq_official.app_id.strip()
+        bindings = [row for row in self._union_identities.bindings.values() if row.app_id == app_id]
+        for row in result["user"]:
+            unions = {item.union_openid for item in bindings if item.openid == row["openid"]
+                      and (not row["group_openid"] or item.group_openid == row["group_openid"])}
+            row["union_openid"] = next(iter(unions)) if len(unions) == 1 else ""
+        represented = {(row["openid"], row["union_openid"]) for row in result["user"]}
+        for binding in bindings:
+            if (binding.openid, binding.union_openid) not in represented:
+                result["user"].append({
+                    "openid": binding.openid, "id": binding.qq_id or "—", "source": "union",
+                    "union_openid": binding.union_openid, "nickname": "", "cardname": "",
+                    "group_id": self._id_map["group"].get(binding.group_openid, ""),
+                    "group_openid": binding.group_openid, "conflict": False,
+                    "status": "官方身份关联",
+                })
+        return {**result, "mapping_enabled": self.config.qq_official.enable_mapping}
+
+    @API("webui_mapping_migrations", description="查询 QQ 号迁回 OpenID 的进度", version="1", public=True)
+    async def webui_mapping_migrations(self) -> Dict[str, Any]:
+        result = await self.webui_mappings()
+        rows = list(result["user"])
+        represented = {(row["id"], row["openid"]) for row in rows}
+        # 迁移检查包含过期的静默关系，不能因展示 TTL 而漏掉历史 QQ 身份。
+        for scope, profile in self._identity_sync.profiles.items():
+            if scope[:2] == self._identity_namespace() and (profile.user_id, scope[4]) not in represented:
+                rows.append({"id": profile.user_id, "openid": scope[4], "source": "auto", "conflict": profile.conflict})
+        candidates = await asyncio.to_thread(migration_candidates, get_instance_root(), rows)
+        return {"enabled": self.config.qq_official.enable_mapping, "candidates": candidates}
+
+    @API("webui_finish_mapping", description="完成迁移并关闭 QQ 号映射", version="1", public=True)
+    async def webui_finish_mapping(self) -> Dict[str, Any]:
+        async with self._connection_lock:
+            result = await self.webui_mapping_migrations()
+            if any(item["status"] not in {"migrated", "empty"} for item in result["candidates"]):
+                raise ValueError("仍有未迁移用户或身份冲突，请先完成处理")
+            config_data = await asyncio.to_thread(disable_mapping, resolve_plugin_config_path(Path(__file__).parent))
+            self.set_plugin_config(config_data)
+            return {"enabled": False}
+
+    @API("webui_delete_bindings", description="删除群或用户绑定及相关静默关联", version="1", public=True)
+    async def webui_delete_bindings(self, kind: str, openids_json: str) -> Dict[str, int]:
+        values = json.loads(openids_json)
+        if kind not in {"group", "user"} or not isinstance(values, list) or not 1 <= len(values) <= 10000:
+            raise ValueError("请选择群或用户绑定")
+        if any(not isinstance(value, str) or not value or len(value) > 128 for value in values):
+            raise ValueError("绑定 OpenID 无效")
+        selected = set(values)
+        async with self._connection_lock:
+            # 暂停接收与静默同步，等待其持久化任务结束，避免删除后被旧快照覆盖。
+            was_running = self._worker is not None
+            await self._stop()
+            async with self._id_map_lock, self._union_identity_lock:
+                def recover_pending() -> Optional[Tuple[SilentIdentitySync, UnionIdentities]]:
+                    if not (self.ctx.paths.data_dir / JOURNAL).exists():
+                        return None
+                    recover_binding_delete(self.ctx.paths.data_dir)
+                    self._load_id_map()
+                    recovered_sync = SilentIdentitySync()
+                    recovered_sync.load(self.ctx.paths.data_dir / "auto_user_profiles.json")
+                    return recovered_sync, UnionIdentities.load(self.ctx.paths.data_dir / UNION_IDENTITIES_FILE)
+
+                recovered = await asyncio.to_thread(recover_pending)
+                if recovered is not None:
+                    self._identity_sync, self._union_identities = recovered
+                id_map = deepcopy(self._id_map)
+                sync = deepcopy(self._identity_sync)
+                sync.clear_pending()
+                for openid in selected:
+                    id_map[kind].pop(openid, None)
+                app_id = self.config.qq_official.app_id.strip()
+                for scope in list(sync.profiles):
+                    if scope[0] == app_id and scope[2 if kind == "group" else 4] in selected:
+                        del sync.profiles[scope]
+                identities = UnionIdentities([
+                    row for row in self._union_identities.bindings.values()
+                    if not (row.app_id == app_id and (row.group_openid if kind == "group" else row.openid) in selected)
+                ])
+                contents = {
+                    ID_MAP_FILE_NAME: json.dumps(id_map, ensure_ascii=False),
+                    "auto_user_profiles.json": json.dumps(sync.dump(), ensure_ascii=False),
+                    UNION_IDENTITIES_FILE: json.dumps({"version": 1, "bindings": [asdict(row) for row in identities.bindings.values()]}, ensure_ascii=False),
+                }
+                saving = asyncio.create_task(asyncio.to_thread(commit_binding_delete, self.ctx.paths.data_dir, contents))
+                try:
+                    await asyncio.shield(saving)
+                except asyncio.CancelledError:
+                    await saving
+                    self._id_map, self._identity_sync, self._union_identities = id_map, sync, identities
+                    self._identity_dirty = False
+                    if was_running:
+                        self._start()
+                    raise
+                self._id_map, self._identity_sync, self._union_identities = id_map, sync, identities
+                self._identity_dirty = False
+            if was_running:
+                self._start()
+        return {"deleted": len(selected)}
 
     @API("webui_mapping_avatar", description="获取已绑定群或用户的头像", version="1", public=True)
     async def webui_mapping_avatar(
         self, kind: str, openid: str, source: str = "manual", group_openid: str = ""
     ) -> Dict[str, str]:
         """隔离页面不能访问外网，将已绑定对象的小尺寸头像转为内嵌图片。"""
-        if kind not in {"group", "user"} or source not in {"manual", "auto"}:
+        if kind not in {"group", "user"} or source not in {"manual", "auto", "union"} or (kind == "group" and source == "union"):
             raise ValueError("映射类型或来源无效")
         target_id: Optional[str] = None
-        if source == "manual":
+        if source == "union" and kind == "user":
+            target_id = self._group_union_map(group_openid).get(openid)
+        elif source == "manual":
             target_id = self._id_map[kind].get(openid)
         elif kind == "user" and group_openid in self._id_map["group"]:
             profile = self._identity_sync.profiles.get(self._identity_scope(group_openid, openid))
@@ -598,10 +799,15 @@ class QQOfficialAdapterPlugin(MaiBotPlugin):
             id_map[kind][openid] = value
             await asyncio.to_thread(self._save_id_map, id_map)
             self._id_map = id_map
+        if kind == "user" and (union := self._group_union_map(group_openid).get(openid)):
+            await self._record_union_identity(group_openid, openid, union)
         self.ctx.logger.info("QQ 统一 ID 绑定更新: %s %s -> %s", kind, openid, value)
         result = (
             f"已将{'当前群' if kind == 'group' else '目标用户'}的 ID 绑定为 {value}。"
             "后续消息按该 ID 归属；会话身份改变时使用另一聊天流，旧记录不会自动迁移。"
+        ) if kind == "group" else (
+            f"已保留目标用户的 QQ 号关联 {value}；是否映射为 QQ 号由启用映射开关控制。"
+            "需要合并旧用户数据时，可在插件页面使用用户数据灌注功能。"
         )
         await self._send_binding_result(message, result)
         return True, result, True
@@ -832,6 +1038,12 @@ class QQOfficialAdapterPlugin(MaiBotPlugin):
                 return
             segments, labels, is_picture, is_emoji = await self._build_attachments(data)
             group_openid = str(data.get("group_openid") or "") if event in GROUP_EVENTS else ""
+            openid = extract_user_openid(event, data)
+            author = data["author"]
+            supplied_union = author.get("union_openid")
+            union = supplied_union.strip() if isinstance(supplied_union, str) else ""
+            if not union:
+                union = self._group_union_map(group_openid).get(openid, "")
             effective_id_map = {**self._id_map, "user": self._group_user_map(group_openid)}
             group_name = str(data.get("group_name") or "").strip()
             if group_openid and not group_name:
@@ -848,7 +1060,11 @@ class QQOfficialAdapterPlugin(MaiBotPlugin):
                 id_map=effective_id_map,
                 unified_account_id=self._unified_account_id,
                 group_name=group_name,
+                union_user_map=self._group_user_map(group_openid),
             )
+            if union:
+                await self._record_union_identity(group_openid, openid, union)
+            self._remember_user_avatar(message)
             if group_openid and self.config.qq_official.silent_user_sync:
                 user_openid = message["message_info"]["additional_config"]["qq_official_user_openid"]
                 scope = self._identity_scope(group_openid, user_openid)
@@ -857,12 +1073,18 @@ class QQOfficialAdapterPlugin(MaiBotPlugin):
                     self._identity_sync.observe(scope, message)
                     profile = self._identity_sync.get_profile(scope)
                     user_info = message["message_info"]["user_info"]
-                    if profile is not None and user_info["user_id"] == profile.user_id:
-                        if profile.nickname:
+                    manual_qq = self._id_map["user"].get(user_openid)
+                    if profile is not None and (manual_qq is None or manual_qq == profile.user_id):
+                        author = data["author"]
+                        if profile.nickname and not author.get("username"):
                             user_info["user_nickname"] = profile.nickname
-                        user_info["user_cardname"] = profile.cardname or None
+                        if "member_nickname" not in author:
+                            user_info["user_cardname"] = profile.cardname or None
         except ValueError as exc:
-            self.ctx.logger.info("忽略 QQ 官方消息: %s | payload=%s", exc, summarize_payload(data))
+            if "union_openid" in str(exc) or "Union" in str(exc):
+                self.ctx.logger.warning("QQ 官方消息身份错误，未投递: %s | payload=%s", exc, summarize_payload(data))
+            else:
+                self.ctx.logger.info("忽略 QQ 官方消息: %s | payload=%s", exc, summarize_payload(data))
             return
         message_id = message["message_id"]
         key = (scene, target, message_id)
@@ -1125,19 +1347,26 @@ class QQOfficialAdapterPlugin(MaiBotPlugin):
                 return openid
         return group_id
 
-    def _resolve_member_openid(self, user_id: str, additional_config: Any) -> str:
-        """解析目标用户的 OpenID：消息原始路由信息优先，其次统一 ID 反查。"""
+    def _resolve_member_openid(self, user_id: str, additional_config: Any, group_openid: str = "") -> str:
+        """消息原始路由优先，Union/QQ 号反查限定于目标群。"""
         if isinstance(additional_config, Mapping):
             if openid := str(additional_config.get("qq_official_user_openid") or "").strip():
                 return openid
-        return self._resolve_user_openid(user_id)
+        if openid := self._reverse_user_map(group_openid).get(user_id):
+            return openid
+        if any(row.app_id == self.config.qq_official.app_id.strip() and user_id in {row.union_openid, row.openid}
+               for row in self._union_identities.bindings.values()):
+            return ""
+        return "" if user_id.isdigit() else user_id
 
     def _resolve_user_openid(self, user_id: str) -> str:
-        """统一用户 ID 反查回 OpenID。"""
-        for openid, unified in self._id_map.get("user", {}).items():
-            if unified == user_id:
-                return openid
-        # 未绑定的用户 user_id 本身就是 OpenID；纯数字是无法反查的 QQ 号。
+        """私聊 Union 或历史 QQ 号只能使用已确认的 C2C OpenID。"""
+        if openid := self._reverse_user_map().get(user_id):
+            return openid
+        if any(row.app_id == self.config.qq_official.app_id.strip() and user_id in {row.union_openid, row.openid}
+               for row in self._union_identities.bindings.values()):
+            return ""
+        # 旧记录仍可以携带原始 OpenID；已知 Union 没有 C2C 记录时明确拒绝。
         return "" if user_id.isdigit() else user_id
 
     async def _get_group_name(self, group_openid: str) -> str:
@@ -1171,6 +1400,23 @@ class QQOfficialAdapterPlugin(MaiBotPlugin):
             self._group_names[key] = (name, now)
             return name
 
+    def _remember_user_avatar(self, message: Mapping[str, Any]) -> None:
+        """保存当前应用收到的头像，按原始 OpenID 和消息使用的用户 ID 索引。"""
+        info = message["message_info"]
+        config = info["additional_config"]
+        url = str(config.get("qq_official_author_avatar") or "").strip()
+        if not url:
+            return
+        now = time.time()
+        app_id = self.config.qq_official.app_id.strip()
+        self._user_avatars = {
+            key: value for key, value in self._user_avatars.items() if value[1] > now
+        }
+        for user_id in {config["qq_official_user_openid"], info["user_info"]["user_id"]}:
+            self._user_avatars[(app_id, user_id)] = (url, now + AVATAR_TTL_SEC)
+        while len(self._user_avatars) > 2000:
+            del self._user_avatars[min(self._user_avatars, key=lambda key: self._user_avatars[key][1])]
+
     @API("adapter.avatar.get", description="获取独立用户或群头像资源", version="1", public=True)
     async def api_get_avatar(
         self,
@@ -1195,6 +1441,13 @@ class QQOfficialAdapterPlugin(MaiBotPlugin):
         # 机器人自身只有 OpenID（可能被统一账号映射成 QQ 号），头像统一走 /users/@me。
         if target_type == "user" and self._is_bot_target(effective_id):
             return await self._bot_avatar_resource()
+        if target_type == "user":
+            cached_avatar = self._user_avatars.get((self.config.qq_official.app_id.strip(), normalized_target_id))
+            if cached_avatar is not None and cached_avatar[1] > time.time():
+                return {
+                    "status": "available", "url": cached_avatar[0],
+                    "expires_in": max(1, int(cached_avatar[1] - time.time())),
+                }
         if re.fullmatch(r"[0-9]+", effective_id) is not None:
             normalized_id = int(effective_id)
             if normalized_id <= 0:
@@ -1209,7 +1462,13 @@ class QQOfficialAdapterPlugin(MaiBotPlugin):
         # OpenID 头像：官方不提供按群 OpenID 取群头像的接口，只有用户维度可用。
         if target_type == "group":
             return {"status": "unsupported"}
-        url = self._openid_avatar_url(effective_id)
+        avatar_openid = self._resolve_user_openid(effective_id)
+        if not avatar_openid:
+            candidates = [row for row in self._union_identities.bindings.values()
+                          if row.app_id == self.config.qq_official.app_id.strip() and effective_id in {row.union_openid, row.openid}]
+            if candidates:
+                avatar_openid = max(candidates, key=lambda row: row.observed_at).openid
+        url = self._openid_avatar_url(avatar_openid)
         if not url:
             return {"status": "unsupported"}
         return {"status": "available", "url": url, "expires_in": AVATAR_TTL_SEC}
@@ -1388,12 +1647,11 @@ class QQOfficialAdapterPlugin(MaiBotPlugin):
         member_openid = self._resolve_member_openid(user_id, additional_config)
         if not group_openid or group_openid.isdigit() or not member_openid or member_openid.isdigit():
             return {"success": False, "error": "无法解析目标群或成员的官方 OpenID"}
-        allowed_groups = [item.strip() for item in self.config.kick.allowed_groups if item.strip()]
+        allowed_groups = [item.id for item in self.config.kick.allowed_groups]
         if allowed_groups and group_id not in allowed_groups and group_openid not in allowed_groups:
             return {"success": False, "error": f"群 {group_id} 不在踢人白名单内"}
-        protected_users = {item.strip() for item in self.config.kick.admin_users if item.strip()}
-        mapped_user_id = self._group_user_map(group_openid).get(member_openid, user_id)
-        if protected_users.intersection({user_id, member_openid, mapped_user_id}):
+        protected_users = {item.id for item in self.config.kick.admin_users}
+        if protected_users.intersection(self._member_identity_ids(group_openid, member_openid, user_id)):
             return {"success": False, "error": f"用户 {user_id} 在踢人保护名单中，无法被移除"}
         if member_openid == self._account_id or user_id in {self._account_id, self._unified_account_id}:
             return {"success": False, "error": "不能通过踢人工具移除机器人自身"}
@@ -1421,11 +1679,7 @@ class QQOfficialAdapterPlugin(MaiBotPlugin):
             return {"success": False, "error": "group_id 和 user_id 必须非空"}
         group_openid = self._resolve_group_openid(normalized_group_id)
         user_map = self._group_user_map(group_openid)
-        # 群内自动身份映射按 OpenID -> QQ 号保存，反查仅限目标群。
-        member_openid = next(
-            (openid for openid, unified in user_map.items() if unified == target_user_id),
-            self._resolve_user_openid(target_user_id),
-        )
+        member_openid = self._resolve_member_openid(target_user_id, None, group_openid)
         return await self._set_member_mute(
             self._id_map["group"].get(group_openid, normalized_group_id),
             user_map.get(member_openid, target_user_id),
@@ -1449,13 +1703,13 @@ class QQOfficialAdapterPlugin(MaiBotPlugin):
         if not group_openid or group_openid.isdigit():
             return {"success": False, "error": f"无法解析群 {normalized_group_id} 的 OpenID"}
         action = "解除禁言" if duration == 0 else "禁言"
-        allowed_groups = [str(item).strip() for item in mute_settings.allowed_groups if str(item).strip()]
+        allowed_groups = [item.id for item in mute_settings.allowed_groups]
         if allowed_groups and normalized_group_id not in allowed_groups and group_openid not in allowed_groups:
             return {"success": False, "error": f"群 {normalized_group_id} 不在禁言白名单内"}
 
-        # 保护名单：配置内用户一律不禁言（统一 QQ 号或 OpenID 均可命中）。
-        admin_users = [str(item).strip() for item in mute_settings.admin_users if str(item).strip()]
-        if duration > 0 and (target_user_id in admin_users or (member_openid and member_openid in admin_users)):
+        # 保护名单按当前身份模式匹配；原始模式只使用目标成员 OpenID。
+        admin_users = [item.id for item in mute_settings.admin_users]
+        if duration > 0 and set(admin_users).intersection(self._member_identity_ids(group_openid, member_openid, target_user_id)):
             return {"success": False, "error": f"用户 {target_display_name} 在禁言保护名单中，无法被禁言"}
         if not member_openid:
             return {
@@ -1563,7 +1817,7 @@ class QQOfficialAdapterPlugin(MaiBotPlugin):
             openid = str(additional_config.get("qq_official_group_openid") or "").strip() or self._resolve_group_openid(
                 group_id
             )
-            allowed_groups = [str(item).strip() for item in self.config.recall.allowed_groups if str(item).strip()]
+            allowed_groups = [item.id for item in self.config.recall.allowed_groups]
             if allowed_groups and group_id not in allowed_groups and openid not in allowed_groups:
                 return {"success": False, "error": f"群 {group_id} 不在撤回白名单内"}
             path = f"/v2/groups/{quote(openid, safe='')}/messages/{quote(normalized_msg_id, safe='')}"
@@ -1631,14 +1885,26 @@ class QQOfficialAdapterPlugin(MaiBotPlugin):
             group_info = message.get("message_info", {}).get("group_info") or {}
             group_id = str(group_info.get("group_id") or "")
             group_openid = reverse_map["group"].get(group_id, group_id)
-            if group_openid:
-                reverse_map["user"] = {value: key for key, value in self._group_user_map(group_openid).items()}
+            reverse_map["user"] = self._reverse_user_map(group_openid)
+            if not group_openid:
+                user_id = str(message.get("message_info", {}).get("additional_config", {}).get("platform_io_target_user_id") or "")
+                if not self._resolve_user_openid(user_id):
+                    raise ValueError("目标 Union 身份没有已确认的单聊 OpenID，不能使用群成员 OpenID 私聊")
+            known_unions = {row.union_openid for row in self._union_identities.bindings.values()
+                            if row.app_id == self.config.qq_official.app_id.strip()}
+            for segment in message.get("raw_message", []):
+                if segment.get("type") == "at":
+                    data = segment.get("data")
+                    mention = data.get("target_user_id") if isinstance(data, Mapping) else data
+                    if mention in known_unions and mention not in reverse_map["user"]:
+                        raise ValueError("被 @ 的 Union 身份没有当前场景的 OpenID")
             # 媒体 Base64 解码和内容哈希放在线程池，避免大段语音占住网关事件循环。
             scene, target, parts, reply_target_id = await asyncio.to_thread(
                 encode_message, message, reverse_map=reverse_map
             )
             # 被动回复窗口按入站记录的统一 ID 匹配（encode 返回的 target 已反查为 OpenID）。
-            route_target = self._id_map.get("group" if scene == "group" else "user", {}).get(target, target)
+            route_target = (self._id_map["group"].get(target, target) if scene == "group"
+                            else self._group_user_map("").get(target, target))
             reference_scope = (self._account_id, scene, route_target)
             reply_to = str(message.get("reply_to") or "").strip()
             # 只有标准 reply 段代表宿主决定显示引用；reply_to 是回复上下文及被动发送凭证，

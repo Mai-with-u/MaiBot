@@ -32,6 +32,7 @@ export function OtherTab() {
   const [enableAvatarFetch, setEnableAvatarFetch] = useState(() => getSetting('enableAvatarFetch'))
   const [alwaysShowUpdateNotice, setAlwaysShowUpdateNotice] = useState(() => getSetting('alwaysShowUpdateNotice'))
   const [alwaysShowUpdateButton, setAlwaysShowUpdateButton] = useState(() => getSetting('alwaysShowUpdateButton'))
+  const [editDefaultPrompt, setEditDefaultPrompt] = useState(() => getSetting('editDefaultPrompt'))
   const [storageUsage, setStorageUsage] = useState(() => getStorageUsage())
   
   // 导入/导出状态
@@ -159,6 +160,7 @@ export function OtherTab() {
           setEnableAvatarFetch(getSetting('enableAvatarFetch'))
           setAlwaysShowUpdateNotice(getSetting('alwaysShowUpdateNotice'))
           setAlwaysShowUpdateButton(getSetting('alwaysShowUpdateButton'))
+          setEditDefaultPrompt(getSetting('editDefaultPrompt'))
           refreshStorageUsage()
           
           toast({
@@ -209,6 +211,7 @@ export function OtherTab() {
     setEnableAvatarFetch(DEFAULT_SETTINGS.enableAvatarFetch)
     setAlwaysShowUpdateNotice(DEFAULT_SETTINGS.alwaysShowUpdateNotice)
     setAlwaysShowUpdateButton(DEFAULT_SETTINGS.alwaysShowUpdateButton)
+    setEditDefaultPrompt(DEFAULT_SETTINGS.editDefaultPrompt)
     refreshStorageUsage()
     toast({
       title: t('settings.other.resetDone'),
@@ -614,6 +617,25 @@ export function OtherTab() {
                 setSetting('alwaysShowUpdateButton', checked)
               }}
               aria-label={t('settings.other.alwaysShowUpdateButton')}
+            />
+          </div>
+          <div className="flex items-start justify-between gap-4 rounded-lg bg-muted/50 p-3 sm:p-4">
+            <div className="min-w-0 space-y-1">
+              <Label htmlFor="edit-default-prompt" className="text-sm font-medium">
+                {t('settings.other.editDefaultPrompt')}
+              </Label>
+              <p className="text-xs text-muted-foreground">
+                {t('settings.other.editDefaultPromptDesc')}
+              </p>
+            </div>
+            <Switch
+              id="edit-default-prompt"
+              checked={editDefaultPrompt}
+              onCheckedChange={(checked) => {
+                setEditDefaultPrompt(checked)
+                setSetting('editDefaultPrompt', checked)
+              }}
+              aria-label={t('settings.other.editDefaultPrompt')}
             />
           </div>
           <div className="flex items-start justify-between gap-4 rounded-lg bg-muted/50 p-3 sm:p-4">

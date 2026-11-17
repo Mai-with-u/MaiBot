@@ -42,6 +42,10 @@ export function setDesktopPetVisible(visible: boolean) {
   return backendApi.post<DesktopPetStatus>(`${root}/visibility`, { body: { visible } })
 }
 
+export function restartDesktopPet() {
+  return backendApi.post<{ reloaded: boolean }>(`${root}/restart`)
+}
+
 export function sendDesktopPetMessage(text: string) {
   return backendApi.post<{ message_id: string }>(`${root}/chat`, { body: { text } })
 }

@@ -7,6 +7,7 @@ WebUI 的排布完全由字段元数据声明：
 - ``x-layout``/``x-input-width``：标签在左、控件在右，并限制控件宽度。
 """
 
+from pydantic import field_validator
 from typing import Literal
 
 from src.config.config_base import ConfigBase, Field
@@ -31,6 +32,11 @@ _COLUMNS = {"x-column-group": "desktop-pet-columns"}
 _SKIN_COLUMN = {**_COLUMNS, "x-column": "皮肤"}
 _WAKE_COLUMN = {**_COLUMNS, "x-column": "主动思考"}
 _SCREEN_COLUMN = {**_COLUMNS, "x-column": "读取桌面"}
+
+
+def _replace_removed_sound(value: object) -> object:
+    """已移除的柔和啵叮配置转换为小木敲。"""
+    return "wood" if value == "soft" else value
 
 
 class DesktopPetConfig(ConfigBase):
@@ -61,6 +67,20 @@ class DesktopPetConfig(ConfigBase):
 
     skin_id: str = Field(default="builtin", json_schema_extra={"label": {"zh_CN": "当前皮肤"}, **_SKIN_COLUMN})
     """选择已安装的皮肤 ID；支持热切换，builtin 为内置麦麦。"""
+
+    message_sound: Literal["wood", "bubbles", "bell", "water", "off"] = Field(
+        default="wood",
+        json_schema_extra={
+            "x-widget": "select",
+            "x-option-labels": {"wood": "小木敲（默认）", "bubbles": "软气泡",
+                                "bell": "暖铃啵叮", "water": "小水滴", "off": "关闭音效"},
+            "label": {"zh_CN": "消息提示音"},
+            **_SKIN_COLUMN,
+        },
+    )
+    """本机桌宠新回复的提示音，保存后从下一条回复生效；不影响未读橙点。"""
+
+    _normalize_message_sound = field_validator("message_sound", mode="before")(_replace_removed_sound)
 
     proactive_wake_enabled: bool = Field(default=False, json_schema_extra=_switch("定期主动思考", **_WAKE_COLUMN))
     """桌宠运行期间定期唤醒主人聊天流，自主探索并选择是否交流；会调用模型，默认关闭。"""

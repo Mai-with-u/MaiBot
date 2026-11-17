@@ -13,7 +13,7 @@ def get_tool_spec() -> ToolSpec:
 
     return ToolSpec(
         name="tool_search",
-        description="在 deferred tools 列表中按名称或关键词搜索工具，并将命中的工具加入后续轮次的可用工具列表。",
+        description="在 deferred tools 列表中按名称或关键词搜索工具，在搜索结果中加载命中工具的定义和调用指引，供后续轮次调用。",
         parameters_schema={
             "type": "object",
             "properties": {
@@ -58,28 +58,6 @@ async def handle_tool(
     matched_tool_names = [tool_spec.name for tool_spec in matched_tool_specs]
     newly_discovered_tool_names = tool_ctx.runtime.discover_deferred_tools(matched_tool_names)
 
-    if not tool_ctx.runtime._tool_search_tail_loading:
-        structured_content = {
-            "query": raw_query.strip(),
-            "matched_tool_names": matched_tool_names,
-            "newly_discovered_tool_names": newly_discovered_tool_names,
-        }
-        if matched_tool_names:
-            new_names = set(newly_discovered_tool_names)
-            content = "\n".join([
-                f"已找到 {len(matched_tool_names)} 个 deferred tools，它们会在后续轮次中加入可用工具列表：",
-                *[f"- {name}{'（本次新发现）' if name in new_names else '（此前已发现）'}" for name in matched_tool_names],
-            ])
-        else:
-            content = "未找到匹配的 deferred tools，请尝试更完整的工具名、前缀或其他关键词。"
-        return tool_ctx.build_success_result(
-            invocation.tool_name, content, structured_content=structured_content,
-            metadata={
-                "monitor_detail": {**structured_content, "content": content},
-                "matched_tool_names": matched_tool_names,
-                "newly_discovered_tool_names": newly_discovered_tool_names,
-            },
-        )
     structured_content = build_tool_search_result(raw_query.strip(), matched_tool_specs, newly_discovered_tool_names)
     return tool_ctx.build_success_result(
         invocation.tool_name,

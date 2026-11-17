@@ -53,6 +53,8 @@
       "stop": "Waiting for the Bot and its child processes to exit. This may take over a minute…",
       "restart": "Stopping and restarting the Bot, please wait…"
     },
+    "multiBotManagement": "Multi-Bot Management",
+    "managePage": "Manage Bots",
     "currentBot": "Current Bot",
     "noSelection": "No Bot selected",
     "selectedStopped": "The current Bot is not running",
@@ -140,6 +142,9 @@
       "errorTitle": "The pet window is not running",
       "unsupported": "This system does not support the local window. Use the remote client instead.",
       "show": "Show",
+      "reload": "Reload pet",
+      "reloadHint": "Stop and restart the pet with the current settings; unsent drafts will be cleared",
+      "reloadFailed": "Could not reload the pet",
       "showFailed": "Could not show the pet",
       "inputPlaceholder": "Say something to the pet…",
       "send": "Send",
@@ -275,6 +280,8 @@
       "learning": "Learning",
       "expressionManagement": "Expression Management",
       "slangManagement": "Slang Management",
+      "contactPeople": "People",
+      "contacts": "Contacts",
       "personInfo": "Person Info",
       "knowledgeGraph": "Long-Term Memory Graph",
       "knowledgeBase": "Long-Term Memory",
@@ -820,10 +827,6 @@
           "description": "A nostalgic turn-of-the-millennium style"
         }
       },
-      "layoutVersion": "Layout",
-      "layoutVersionDesc": "Classic keeps the top bar and card home page. Observation removes the top bar: the sidebar shows settings on top and all conversations below, and home becomes a status board. Desktop width only.",
-      "layoutClassic": "Classic",
-      "layoutObservation": "Observation",
       "themeMode": "Theme Mode",
       "themeModeDesc": "Light / Dark / Follow system",
       "light": "Light",
@@ -1067,6 +1070,11 @@
       "resetNotificationStatesAction": "Reset",
       "notificationsResetDone": "Notification states reset",
       "notificationsResetDoneDesc": "Cleared {{count}} items. Changes apply when you revisit the page.",
+      "editDefaultPrompt": "Edit Default Prompt",
+      "editDefaultPromptDesc": "When enabled, saving the default version in Prompt Manager overwrites the source template. Program updates may overwrite these changes.",
+      "saveDefaultPrompt": "Overwrite Default Prompt",
+      "defaultPromptSaved": "Default Prompt Saved",
+      "editingDefaultPromptDesc": "Saving overwrites the source template for the current language without creating a custom version. Existing custom overrides remain active; apply the default version to use this template.",
       "alwaysShowUpdateButton": "Always show update button",
       "alwaysShowUpdateButtonDesc": "Always show the main program update button in the top-right corner, even when no update is detected. Takes effect immediately.",
       "alwaysShowUpdateNotice": "Always Show Update Notice",
@@ -1234,7 +1242,23 @@
     "switchToDark": "Switch to dark mode"
   },
   "setupPage": {
+    "platform": {
+      "local": "Start chatting without connecting",
+      "localHint": "Start a conversation in WebUI Chat. You can connect a platform later in Adapter Management.",
+      "loading": "Loading built-in chat platforms…",
+      "loadFailed": "Failed to load chat platforms",
+      "retry": "Reload",
+      "empty": "No built-in chat platforms are available. You can add a connection later in Adapter Management.",
+      "connectHint": "After setup, the selected platform’s connection settings will open so you can configure your account and sign in.",
+      "connect": "Finish and configure connection",
+      "startChat": "Finish and start chatting",
+      "completeDescription": "Basic settings saved. Continue configuring the selected chat platform’s connection."
+    },
     "steps": {
+      "chatPlatform": {
+        "title": "Choose a chat platform",
+        "description": "Connect a built-in chat platform, or start chatting with MaiBot without one."
+      },
       "nickname": {
         "title": "Choose a Name",
         "label": "Nickname",
@@ -1747,7 +1771,7 @@
     "items": {
       "home": "Home",
       "homeDesc": "View dashboard overview",
-      "chatDesc": "Conversation settings: open the group conversation settings to check its reply frequency. At zero, the group still receives messages but does not enter Planner. Private chat has its own pause switch.",
+      "chatDesc": "Conversation settings: open the group conversation settings to check its viewing frequency. At zero, the group still receives messages but does not enter Planner. Private chat has its own pause switch.",
       "botConfig": "Bot Main Config",
       "botConfigDesc": "Configure bot settings and shared groups",
       "model": "Model Config",
@@ -2185,7 +2209,7 @@
       "description": "Cache hits for input tokens",
       "hitRate": "Cache Hit Rate",
       "all": "All",
-      "chat": "Chat",
+      "core": "Core",
       "hitTokens": "Hit Tokens",
       "missTokens": "Miss Tokens",
       "eligibleTokens": "{{value}} eligible tokens"
@@ -2405,8 +2429,8 @@
         "content": "Controls the tone and length of replies, such as shorter, livelier or more formal. Remember to save after editing."
       },
       "talkValue": {
-        "title": "Group talk frequency",
-        "content": "How often the bot speaks up in group chats. Lower values make it quieter. Adjust this if it talks too much or too little."
+        "title": "Group viewing frequency",
+        "content": "The base probability of checking a debounced message batch with Planner. Activation enables continuous checks until the internal budget is exhausted, followed by recovery over 16 decisions. This is not the reply probability."
       },
       "plugins": {
         "title": "Plugin market",
@@ -2421,5 +2445,80 @@
         "content": "Everything you changed lives in the sidebar menu, so you can come back and adjust it anytime. Now go chat with the bot!"
       }
     }
+  },
+  "promptBlocks": {
+    "title": "Block content",
+    "close": "Close",
+    "loading": "Loading actual content…",
+    "actual": "Actual instruction",
+    "example": "Dynamic example (not real chat history)",
+    "edit": "Edit linked template",
+    "genericExample": "Example: {{name}} is replaced with the current context when a request is built.",
+    "styles": {
+      "简短表达": "Short",
+      "正常回复": "Normal",
+      "长回复": "Long"
+    },
+    "descriptions": {
+      "identity": "Built from the current bot name, aliases, and persona settings.",
+      "style": "Expression style from persona settings, replaced by the random alternative style when one is selected for this reply.",
+      "history": "Actual chat history for each turn, possibly including images, rendered in the reply user template alongside the corresponding messages.",
+      "expression": "Expression habits selected for this conversation; may be empty. Mai Replier normally skips this block.",
+      "analysis": "Conversation situation and key facts from the reply tool’s chat_anlyze argument. The linked template only wraps this material.",
+      "time": "The current time when the request is built.",
+      "target": "Information from the actual reply target; may be empty for proactive messages.",
+      "requirements": "Additional requirements or plugin injections for this turn; empty when unused.",
+      "attention": "Chat-specific notes or attention guidance from configuration; may be empty.",
+      "duplicate": "A reminder when the same target was recently replied to; empty otherwise.",
+      "attachment": "Information about images, emojis, or other attachments sent with the reply; empty when unused.",
+      "template": "The currently applied content of the linked template. Its variables are filled when a request is built.",
+      "unknown": "Filled by the module that owns this template when a request is built. Its meaning depends on the current template.",
+      "instruction": "Actual short instructions used for reply generation, selected by reply length.",
+      "background": "Background information combining the general group or private chat prompt with the prompt configured for this specific chat. Unconfigured parts are omitted; the block is empty when both are empty."
+    },
+    "examples": {
+      "identity": "Your name is Mai.\nYou enjoy casual group conversations.",
+      "name": "Mai",
+      "style": "Use natural, conversational language without forced rhetoric.",
+      "history": "[21:58:03] Alex: Want to play tonight?\n[21:58:10] Sam: Sure, give me ten minutes.",
+      "expression": "Use “give me a moment” to express a short wait.",
+      "analysis": "The group is planning a game tonight and needs to confirm the starting time.",
+      "time": "2026-11-15 22:00:00",
+      "target": "Reply to Alex: Want to play tonight?",
+      "requirements": "Explain the specific reason in this reply.",
+      "duplicate": "This message was recently answered; avoid repeating the same reply.",
+      "attachment": "An image will be sent separately after the text.",
+      "background": "Some background information for this chat follows: This chat mainly discusses technical topics.\nThe members of this group are developing a bot together."
+    }
+  },
+  "promptFolders": {
+    "default": "Default mode",
+    "mai_replier": "Mai Replier",
+    "common": "Shared",
+    "writing": "Writing",
+    "group": "Group chat",
+    "private": "Private chat",
+    "focus": "Focus mode"
+  },
+  "promptCompare": {
+    "rightVersion": "Right Prompt version",
+    "defaultVersion": "Default version",
+    "saveNew": "Save as New Version",
+    "saveChanges": "Save Changes",
+    "saving": "Saving",
+    "saved": "Saved",
+    "saveFailed": "Failed to save Prompt",
+    "loadFailed": "Failed to load Prompt version",
+    "unsavedRight": "Right Prompt has unsaved changes or is busy",
+    "saveRightFirst": "Save the right Prompt and wait for the operation to finish before switching templates or leaving side-by-side mode.",
+    "title": "Side-by-side Editing",
+    "description": "Edit and save each Prompt independently. Current language: {{language}}.",
+    "left": "Left Prompt",
+    "right": "Right Prompt",
+    "choose": "Choose a Prompt",
+    "current": "Current editor content (including unsaved changes)",
+    "applied": "Currently applied version",
+    "chooseFromDirectory": "Choose the second Prompt from the directory on the left",
+    "exit": "Exit side-by-side"
   }
 }

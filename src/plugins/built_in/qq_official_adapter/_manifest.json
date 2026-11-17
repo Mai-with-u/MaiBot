@@ -1,7 +1,7 @@
 {
   "manifest_version": 2,
   "id": "Mai-with-u.qq-adapter",
-  "version": "0.4.7",
+  "version": "0.5.0",
   "name": "QQ 官方机器人适配器",
   "description": "直连 QQ 开放平台官方 API，支持群聊与单聊的文本、@、图片、表情、语音收发及视频、文件发送，提供禁言、解除禁言、撤回及可选踢人工具。",
   "author": {

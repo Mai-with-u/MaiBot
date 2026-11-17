@@ -39,11 +39,11 @@
   </style>
 </head>
 <body class="maibot-page"><main>
-  <header><div><strong>QQ 群与用户映射</strong><p class="muted">查看手动与自动绑定、用户名称及冲突状态。同步后点击刷新更新。</p></div><button id="refresh" class="maibot-button" type="button">刷新映射</button></header>
-  <section id="login-panel" class="maibot-card" aria-labelledby="login-heading">
+  <header><nav id="views" hidden><button data-view="group" class="maibot-button">群映射</button> <button data-view="user" class="maibot-button">用户映射</button> <button data-view="login" class="maibot-button">登录状态</button></nav><button id="refresh" class="maibot-button" type="button">刷新映射</button></header>
+  <section id="login-panel" hidden class="maibot-card" aria-labelledby="login-heading">
     <h2 id="login-heading">QQ 官方机器人登录</h2>
     <p id="connection-status" class="muted">正在读取连接状态…</p>
-    <p class="muted">扫码授权后自动保存 AppID / AppSecret 并启用连接；已有凭据将被替换。也可继续在插件配置中手动填写。</p>
+    <p class="muted">扫码授权将替换当前登录账号。</p>
     <div class="login-actions"><button id="login-start" type="button" class="maibot-button maibot-button-primary" disabled>扫码登录</button><button id="login-cancel" type="button" class="maibot-button" hidden>取消扫码</button></div>
     <img id="login-qr" alt="使用手机 QQ 扫码授权机器人" hidden>
     <p id="login-message" role="status" aria-live="polite"></p>
@@ -119,14 +119,13 @@
     const panel = make('section', 'maibot-card');
     const heading = make('h2'); heading.append(icon(kind), make('span', '', group ? '群映射' : '用户映射'), make('span', 'badge', `${items.length} 条记录`));
     panel.append(heading);
-    if (!group) panel.append(make('p', 'muted', '自动绑定按群分别展示；手动绑定优先生效。旧手动记录未保存昵称、群名片和所属群时显示「—」或「全局」。'));
     if (!items.length) {
       panel.append(make('p', 'empty', group ? '暂无群映射。在目标群内发送 /assign_group_id <群号> 完成绑定。' : '暂无用户映射。可发送 /assign_id <QQ号> 手动绑定，或等待已绑定群内的静默匹配完成。'));
       return panel;
     }
     const wrap = make('div', 'table-wrap'), table = make('table'), head = make('thead'), titles = make('tr'), body = make('tbody');
     const columns = group ? ['群头像 / 绑定群号', 'OpenID', '绑定来源', '状态']
-      : ['用户头像 / QQ 号', '昵称', '群名片', '所属群', '绑定来源', '状态', '用户 OpenID'];
+      : ['用户头像 / 历史 QQ 号', '昵称', '群名片', '所属群', '关联来源', '状态', '用户 OpenID', 'Union ID'];
     for (const label of columns) {
       const th = make('th', '', label); th.scope = 'col'; titles.append(th);
     }
@@ -135,30 +134,73 @@
       const row = make('tr'), cell = make('td'), identity = make('div', 'identity'), avatar = make('div', 'avatar'), details = make('div'), hint = make('div', 'hint', '头像待加载');
       avatar.append(icon(kind)); details.append(make('strong', '', item.id), hint);
       identity.append(avatar, details); cell.append(identity); row.append(cell);
-      const source = make('td', 'mapping-value', item.source === 'auto' ? '自动绑定' : '手动绑定');
+      const source = make('td', 'mapping-value', item.source === 'union' ? '官方身份' : item.source === 'auto' ? '静默匹配' : '手动关联');
       const state = make('td', `mapping-status${item.conflict ? ' conflict' : ''}`, item.status);
       if (group) row.append(make('td', 'openid', item.openid), source, state);
       else {
         const membership = make('td', 'mapping-value', item.group_id || '全局');
         if (item.group_openid) membership.append(make('div', 'hint openid', item.group_openid));
         row.append(make('td', 'mapping-value', item.nickname || '—'), make('td', 'mapping-value', item.cardname || '—'),
-          membership, source, state, make('td', 'openid', item.openid));
+          membership, source, state, make('td', 'openid', item.openid), make('td', 'openid', item.union_openid || '尚未观察到'));
       }
       body.append(row);
       jobs.set(avatar, {kind, item, avatar, hint}); observer.observe(avatar);
     }
     return panel;
   }
+  function migrationSection(data) {
+    const panel = make('section', 'maibot-card');
+    const heading = make('h2', '', '迁回 OpenID');
+    const pending = data.candidates.filter(item => !['migrated', 'empty'].includes(item.status));
+    heading.append(make('span', 'badge', `${data.candidates.length - pending.length} / ${data.candidates.length} 已处理`));
+    panel.append(heading);
+    const table = make('table'), head = make('tr');
+    for (const label of ['QQ 号', '目标 OpenID', '迁移状态', '操作']) head.append(make('th', '', label));
+    const thead = make('thead'); thead.append(head); table.append(thead);
+    const body = make('tbody'); table.append(body);
+    for (const item of data.candidates) {
+      const row = make('tr'), targetCell = make('td');
+      const select = make('select', 'maibot-input');
+      const placeholder = make('option', '', '选择目标 OpenID'); placeholder.value = ''; select.append(placeholder);
+      for (const target of item.targets) { const option = make('option', '', target); option.value = target; select.append(option); }
+      select.value = item.target || (item.targets.length === 1 ? item.targets[0] : '');
+      select.disabled = item.status !== 'pending'; targetCell.append(select);
+      const action = make('td'), button = make('button', 'maibot-button', '迁移预览');
+      button.disabled = item.status !== 'pending' || !select.value;
+      select.onchange = () => { button.disabled = !select.value; };
+      button.onclick = () => maibot.navigate('group-mappings', {view: 'injection', fromMapping: true, source: item.source, target: select.value});
+      action.append(button);
+      const labels = {migrated: '已迁移', pending: '待迁移', empty: '无人物或消息数据', conflict: '身份冲突，需核对'};
+      row.append(make('td', 'openid', item.source), targetCell, make('td', item.status === 'conflict' ? 'conflict' : '', labels[item.status]), action);
+      body.append(row);
+    }
+    const wrap = make('div', 'table-wrap'); wrap.append(table); panel.append(wrap);
+    const finish = make('button', 'maibot-button maibot-button-primary', '完成并关闭映射');
+    finish.disabled = pending.length > 0;
+    finish.onclick = async () => {
+      finish.disabled = true;
+      try { await request('action', 'finish_mapping'); await refresh(); }
+      catch (error) { document.getElementById('status').textContent = String(error); finish.disabled = false; }
+    };
+    panel.append(finish);
+    return panel;
+  }
+  let view = 'group';
   async function refresh() {
     const button = document.getElementById('refresh'), status = document.getElementById('status');
     button.disabled = true; status.className = 'muted'; status.textContent = '正在加载…';
     observer.disconnect(); queue = []; document.getElementById('sections').replaceChildren();
     try {
       const result = await request('query', 'mappings');
-      document.getElementById('sections').replaceChildren(section('group', result.group), section('user', result.user));
+      if (!result.mapping_enabled) {
+        status.textContent = '非映射模式 · 使用原始 OpenID';
+        return;
+      }
+      document.getElementById('sections').replaceChildren(section(view, result[view]));
       const automatic = result.user.filter(item => item.source === 'auto').length;
       const conflicts = result.user.filter(item => item.conflict).length;
-      status.textContent = `共 ${result.group.length} 条群映射 · ${result.user.length} 条用户映射（自动 ${automatic} 条 · 冲突 ${conflicts} 条）`;
+      status.textContent = '映射模式 · ' + (view === 'user' ? `自动 ${automatic} · 冲突 ${conflicts}` : `${result.group.length} 条群映射`);
+
     } catch (error) { status.className = 'error'; status.textContent = `映射加载失败：${error.message || error}`; }
     finally { button.disabled = false; }
   }
@@ -177,7 +219,7 @@
     else loginQr.removeAttribute('src');
     const connection = data.connected ? '已连接' : data.enabled ? '连接未就绪' : '未启用连接';
     document.getElementById('connection-status').textContent = `${connection}${data.bot_name ? ' · ' + data.bot_name : ''}${data.configured_app_id ? ' · AppID ' + data.configured_app_id : ''}`;
-    if (data.state === 'success' && lastLoginState !== 'success') void refresh();
+    if (data.state === 'success' && lastLoginState !== 'success' && view !== 'login') void refresh();
     lastLoginState = data.state;
     return pending ? 2000 : 10000;
   }
@@ -190,7 +232,7 @@
       loginMessage.className = 'error'; loginQr.hidden = true;
       loginStart.disabled = false;
     }
-    loginTimer = setTimeout(pollLogin, delay);
+    if (view === 'login') loginTimer = setTimeout(pollLogin, delay);
   }
   async function loginAction(action) {
     if (loginBusy) return;
@@ -201,14 +243,31 @@
       loginMessage.textContent = `操作未完成：${error.message || error}`;
       loginMessage.className = 'error';
       loginBusy = false; loginStart.disabled = false; loginCancel.disabled = false;
-      loginTimer = setTimeout(pollLogin, 10000); return;
+      if (view === 'login') loginTimer = setTimeout(pollLogin, 10000); return;
     }
-    loginBusy = false; await pollLogin();
+    loginBusy = false; if (view === 'login') await pollLogin();
   }
   loginStart.onclick = () => loginAction('login_start');
   loginCancel.onclick = () => loginAction('login_cancel');
   window.addEventListener('pagehide', () => clearTimeout(loginTimer));
-  maibot.ready.then(() => { void refresh(); void pollLogin(); });
+  function showView(next) {
+    view = next;
+    clearTimeout(loginTimer);
+    document.getElementById('login-panel').hidden = view !== 'login';
+    document.getElementById('refresh').hidden = view === 'login';
+    document.getElementById('status').hidden = view === 'login';
+    document.getElementById('sections').hidden = view === 'login';
+    if (view === 'login') void pollLogin();
+    else void refresh();
+  }
+  maibot.ready.then(() => {
+    const selected = maibot.page.state.view;
+    document.getElementById('views').hidden = !!selected;
+    for (const button of document.querySelectorAll('[data-view]')) {
+      button.onclick = () => showView(button.dataset.view);
+    }
+    showView(['group', 'user', 'login'].includes(selected) ? selected : 'group');
+  });
 </script>
 </body>
 </html>

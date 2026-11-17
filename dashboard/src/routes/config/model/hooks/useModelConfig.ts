@@ -46,7 +46,7 @@ import { useModelAutoSave } from './useModelAutoSave'
 import { useEmbeddingWarning, type PendingEmbeddingUpdate } from './useEmbeddingWarning'
 import { readWebSearchConfig, type WebSearchConfig } from '../../webSearch/types'
 
-const ADVANCED_MODEL_TASK_NAMES = new Set(['memory', 'learner', 'emoji', 'voice'])
+const ADVANCED_MODEL_TASK_NAMES = new Set(['memory', 'learner', 'voice'])
 
 /** Unwrap backend `{ success, config }` envelope to get the actual config */
 function unwrapModelConfig(data: unknown): Record<string, unknown> {

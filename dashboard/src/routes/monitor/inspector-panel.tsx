@@ -1,10 +1,10 @@
 /**
  * 麦麦观察 - 检查器右侧栏
  *
- * 「统计」「当前上下文」「子代理」共用一个右侧栏：卡片标题条 + 一块数据屏，
+ * 「统计」「当前上下文」「子代理」「事项」共用一个右侧栏：卡片标题条 + 一块数据屏，
  * 屏里只有分节标题和虚线分隔的行，不再嵌套卡片。
  */
-import { Activity, Bot, Brain, ChevronRight, X } from 'lucide-react'
+import { Activity, Bot, Brain, ChevronRight, ListTodo, X } from 'lucide-react'
 import { Fragment, useEffect, useState } from 'react'
 
 import { Button } from '@/components/ui/button'
@@ -20,6 +20,7 @@ import {
 } from './subagent-panel-state'
 import { InspectorRow, InspectorSection } from './inspector-rows'
 import { SubagentInspectorView } from './subagent-panel'
+import { ScheduleInspectorView } from './schedule-panel'
 import { useMaisakaMonitorSession } from './use-maisaka-monitor'
 
 /** 上下文分段：token 由该轮真实 prompt token 按字符占比换算 */
@@ -271,9 +272,10 @@ const VIEW_META: Record<InspectorView, { label: string; icon: typeof Activity }>
   stats: { label: '统计', icon: Activity },
   context: { label: '上下文', icon: Brain },
   subagents: { label: '子代理', icon: Bot },
+  schedules: { label: '事项', icon: ListTodo },
 }
 
-/** 时间线工具栏上的检查器开关；三个视图共用一个右侧栏，选中项是按下的键。 */
+/** 时间线工具栏上的检查器开关；各视图共用一个右侧栏，选中项是按下的键。 */
 export function InspectorToggleButton({ view, disabled }: { view: InspectorView; disabled?: boolean }) {
   const { open, view: activeView } = useSubagentPanelState()
   const { subagentTasks } = useMaisakaMonitorSession()
@@ -309,7 +311,7 @@ export function InspectorPanel({ stats, sessionId }: { stats: MonitorStats; sess
 
   const label = VIEW_META[view].label
   const meta =
-    view === 'stats' ? '本聊天流累计' : view === 'subagents' ? `${subagentTasks.length} 个任务` : null
+    view === 'stats' ? '本聊天流累计' : view === 'subagents' ? `${subagentTasks.length} 个任务` : view === 'schedules' ? '所有聊天流' : null
 
   return (
     <PageFrame
@@ -339,6 +341,7 @@ export function InspectorPanel({ stats, sessionId }: { stats: MonitorStats; sess
           {view === 'stats' && <StatsView stats={stats} />}
           {view === 'context' && <ContextView sessionId={sessionId} />}
           {view === 'subagents' && <SubagentInspectorView />}
+          {view === 'schedules' && <ScheduleInspectorView />}
         </DataPanel>
       </aside>
     </PageFrame>

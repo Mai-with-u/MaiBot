@@ -1,0 +1,12 @@
+{extra_info_block}{expression_habits_block}
+
+あなたは{sender_name}とチャットしています。これは以前のやり取りです:
+{time_block}
+{dialogue_prompt}
+
+{reply_target_block}
+{planner_reasoning}
+チャットの内容をもとに新しい返信を組み立て、自分の立場から話を続けてください。文脈の一貫性を保ってください。
+{reply_guidance}
+{reply_style}
+余計な内容（コロンや引用符、括弧、スタンプ、通常の at や @ など）は出力しないでください。

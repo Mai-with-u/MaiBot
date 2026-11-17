@@ -26,7 +26,6 @@ from src.common.prompt_i18n import (
     extract_prompt_placeholders,
     get_builtin_prompt_name,
     get_custom_prompt_storage_name,
-    get_prompt_template_info,
     iter_prompt_files,
     list_prompt_templates,
 )
@@ -115,6 +114,7 @@ class PromptFileInfo(BaseModel):
     """Prompt 文件信息。"""
 
     name: str = Field(..., description="Prompt 文件名")
+    relative_path: str = Field(..., description="相对于语言目录的模板路径，包含根分类和文件夹")
     size: int = Field(..., description="文件大小")
     modified_at: float = Field(..., description="最后修改时间戳")
     display_name: str = Field(default="", description="Prompt 展示名称")
@@ -172,6 +172,12 @@ class PromptVersionListResponse(BaseModel):
     filename: str
     active_version_id: str | None = None
     versions: List[PromptVersionInfo] = Field(default_factory=list)
+
+
+class DefaultPromptUpdateRequest(BaseModel):
+    """源码默认 Prompt 保存请求。"""
+
+    content: str
 
 
 class PromptUpdateRequest(BaseModel):
@@ -252,7 +258,7 @@ def _safe_prompt_path(language: str, filename: str) -> Path:
         raise HTTPException(status_code=400, detail="无效的 Prompt 文件名")
 
     prompt_name = get_builtin_prompt_name(normalized_filename.removesuffix(".prompt"))
-    info = get_prompt_template_info(prompt_name, normalized_language, PROMPTS_DIR)
+    info = list_prompt_templates(locale=normalized_language, prompts_root=PROMPTS_DIR).get(prompt_name)
     if info is None or info.path.relative_to(PROMPTS_DIR.resolve()).parts[0] != normalized_language:
         raise HTTPException(status_code=404, detail="Prompt 文件不存在")
     prompt_path = info.path.resolve()
@@ -876,6 +882,22 @@ def _coerce_config_numeric_values(data: Dict[str, Any], config_type: type[Config
 # ===== 架构获取接口 =====
 
 
+@router.get("/prompt-blocks/{language}")
+def get_prompt_block_instructions(language: str, filename: str = "") -> Dict[str, Dict[str, str]]:
+    """返回与回复生成共用的短指令，预览不执行模型请求。"""
+    from src.chat.replyer.creative_language import GROUP_REPLY_GUIDANCE, PRIVATE_REPLY_GUIDANCE
+
+    _safe_prompt_path(language, "reply_group_system.prompt")
+    guidance = PRIVATE_REPLY_GUIDANCE if filename in {
+        "reply_private_system.prompt", "reply_private.prompt", "reply_private_followup.prompt",
+        "reply_private_mai_replier.prompt", "reply_private_followup_mai_replier.prompt",
+        "reply_mai_replier_private_system.prompt",
+    } else GROUP_REPLY_GUIDANCE
+    return {
+        "reply_guidance": guidance[language],
+    }
+
+
 @router.get("/prompts", response_model=PromptCatalogResponse)
 def list_prompt_files():
     """列出 prompts 目录下的语言和 Prompt 文件。"""
@@ -909,6 +931,7 @@ def list_prompt_files():
                 prompt_files.append(
                     PromptFileInfo(
                         name=prompt_file.name,
+                        relative_path=prompt_file.relative_to(language_dir).as_posix(),
                         size=stat.st_size,
                         modified_at=stat.st_mtime,
                         display_name=metadata.display_name if metadata else "",
@@ -986,6 +1009,24 @@ def get_default_prompt_file(language: str, filename: str):
     except Exception as e:
         logger.error(f"读取默认 Prompt 文件失败: {prompt_path} {e}", exc_info=True)
         raise HTTPException(status_code=500, detail=f"读取默认 Prompt 文件失败: {str(e)}") from e
+
+
+@router.put("/prompts/{language}/{filename}/default", response_model=PromptFileResponse)
+def update_default_prompt_file(language: str, filename: str, request: DefaultPromptUpdateRequest):
+    """直接更新源码默认模板，保留现有自定义版本及其启用状态。"""
+
+    prompt_path = _safe_prompt_path(language, filename)
+    if not prompt_path.is_file():
+        raise HTTPException(status_code=404, detail="Prompt 文件不存在")
+
+    _ensure_prompt_parameters_match(prompt_path, request.content)
+    try:
+        prompt_path.write_text(request.content, encoding="utf-8", newline="\n")
+        clear_prompt_cache()
+    except OSError as exc:
+        logger.error(f"保存默认 Prompt 文件失败: {prompt_path} {exc}", exc_info=True)
+        raise HTTPException(status_code=500, detail=f"保存默认 Prompt 文件失败: {exc}") from exc
+    return get_default_prompt_file(language, filename)
 
 
 @router.get("/prompts/{language}/{filename}/versions", response_model=PromptVersionListResponse)

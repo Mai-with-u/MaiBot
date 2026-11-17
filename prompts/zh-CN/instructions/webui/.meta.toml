@@ -1,0 +1,40 @@
+[webui_help_skill_setup]
+display_name = "部署与配置流程"
+advanced = true
+description = "定位配置入口，核对当前值，给出可验证的操作步骤。"
+
+[webui_help_skill_troubleshoot]
+display_name = "故障定位流程"
+advanced = true
+description = "用报错与实际设置缩小故障范围，并给出下一项核验。"
+
+[webui_help_skill_plugin]
+display_name = "插件选型与操作流程"
+advanced = true
+description = "根据实际需求核查兼容性，并用对应工具处理安装和配置。"
+
+[webui_help_skill_develop]
+display_name = "插件开发指导流程"
+advanced = true
+description = "根据对应 SDK 文档给出最小实现、入口和验证步骤。"
+
+[webui_ai_search_input]
+display_name = "WebUI 答疑会话输入"
+advanced = true
+description = "将当前问题和历史问答整理成供 WebUI 答疑 Agent 参考的会话数据。"
+
+[webui_ai_search_final]
+display_name = "WebUI AI 搜索定稿指令"
+advanced = true
+description = "用于在 AI 搜索的工具轮次用尽或未按格式作答时，要求模型停止检索并返回最终 JSON。"
+
+[webui_ai_search_correction]
+display_name = "WebUI AI 搜索纠错指令"
+advanced = true
+description = "用于在 AI 搜索回答未通过证据校验时，要求模型删除无依据内容并重写最终 JSON。"
+
+[webui_ai_search_evidence]
+display_name = "WebUI AI 搜索证据消息"
+advanced = true
+description = "用于把 AI 搜索中只读工具的返回结果包装成无工具请求可用的证据消息。"
+

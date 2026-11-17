@@ -21,6 +21,7 @@ from src.common.database.database_model import (
     HighFrequencyTerm,
     Jargon,
     Messages,
+    Individual,
     PersonInfo,
     StatisticsMessageHourly,
     ToolRecord,
@@ -59,7 +60,7 @@ router = APIRouter(prefix="/api/chat", tags=["LocalChat"])
 
 
 class TalkFrequencyUpdateRequest(BaseModel):
-    """聊天流发言频率编辑请求。"""
+    """聊天流查看频率编辑请求。"""
 
     previous_time: Optional[str] = None
     time: str = Field(default="*")
@@ -478,7 +479,7 @@ def _format_frequency(value: float) -> str:
 def _talk_rule_to_dict(
     rule: TalkRulesItem, session_id: str, is_group_chat: bool, now_min: int
 ) -> Optional[Dict[str, Any]]:
-    """序列化一条匹配当前聊天流的发言频率规则。"""
+    """序列化一条匹配当前聊天流的查看频率规则。"""
 
     target_priority = ChatConfigUtils._talk_rule_target_priority(rule, session_id, is_group_chat)
     if target_priority is None:
@@ -505,7 +506,7 @@ def _talk_rule_to_dict(
 
 
 def _get_talk_rule_details(chat_session: ChatSession) -> Dict[str, Any]:
-    """获取聊天流发言频率默认值、生效值与匹配规则。"""
+    """获取聊天流查看频率默认值、生效值与匹配规则。"""
 
     session_id = chat_session.session_id
     is_group_chat = _get_chat_type(chat_session) == "group"
@@ -707,7 +708,7 @@ def _get_chat_prompt_details(chat_session: ChatSession) -> Dict[str, Any]:
 
 
 def _normalize_talk_rule_time(rule_time: Optional[str]) -> str:
-    """校验并规范化发言频率规则时间。"""
+    """校验并规范化查看频率规则时间。"""
 
     normalized_time = str(rule_time or "").strip()
     if normalized_time in {"", "*"}:
@@ -730,7 +731,7 @@ def _is_same_talk_rule_target(rule: TalkRulesItem, chat_session: ChatSession) ->
 def _read_talk_rule_groups(reply_timing: Any, expected_group: Optional[str]) -> TalkRuleGroups:
     groups = TalkRuleGroups.model_validate(reply_timing.unwrap().get("talk_rule_groups", {}))
     if expected_group is not None and expected_group != groups.active_group:
-        raise HTTPException(status_code=409, detail="当前发言频率规则组已切换，请刷新后重试")
+        raise HTTPException(status_code=409, detail="当前查看频率规则组已切换，请刷新后重试")
     return groups
 
 
@@ -738,7 +739,7 @@ async def _save_chat_talk_frequency_rule(
     chat_session: ChatSession,
     request: TalkFrequencyUpdateRequest,
 ) -> None:
-    """写入当前聊天流的精确发言频率规则，并热重载配置。"""
+    """写入当前聊天流的精确查看频率规则，并热重载配置。"""
 
     await asyncio.to_thread(_write_chat_talk_frequency_rule, chat_session, request)
     if not await config_manager.reload_config(changed_scopes=["bot"], changed_sections=["chat.reply_timing"]):
@@ -748,7 +749,7 @@ async def _save_chat_talk_frequency_rule(
 def _write_chat_talk_frequency_rule(chat_session: ChatSession, request: TalkFrequencyUpdateRequest) -> None:
     """在线程池中保存群聊频率，拒绝继续创建已停用的私聊频率规则。"""
     if _get_chat_type(chat_session) != "group":
-        raise HTTPException(status_code=400, detail="私聊不再使用回复频率，请使用暂停回复开关")
+        raise HTTPException(status_code=400, detail="私聊不再使用查看频率，请使用暂停回复开关")
     config_path = BOT_CONFIG_PATH
     if not config_path.exists():
         raise HTTPException(status_code=404, detail="配置文件不存在")
@@ -798,7 +799,7 @@ def _write_chat_talk_frequency_rule(chat_session: ChatSession, request: TalkFreq
 async def _delete_chat_talk_frequency_rule(
     chat_session: ChatSession, rule_time: Optional[str], active_group: Optional[str]
 ) -> None:
-    """删除当前聊天流的一条精确发言频率规则，并热重载配置。"""
+    """删除当前聊天流的一条精确查看频率规则，并热重载配置。"""
 
     await asyncio.to_thread(_remove_chat_talk_frequency_rule, chat_session, rule_time, active_group)
     if not await config_manager.reload_config(changed_scopes=["bot"], changed_sections=["chat.reply_timing"]):
@@ -810,7 +811,7 @@ def _remove_chat_talk_frequency_rule(
 ) -> None:
     """在线程池中删除群聊频率规则。"""
     if _get_chat_type(chat_session) != "group":
-        raise HTTPException(status_code=400, detail="私聊不再使用回复频率，请使用暂停回复开关")
+        raise HTTPException(status_code=400, detail="私聊不再使用查看频率，请使用暂停回复开关")
     config_path = BOT_CONFIG_PATH
     if not config_path.exists():
         raise HTTPException(status_code=404, detail="配置文件不存在")
@@ -828,7 +829,7 @@ def _remove_chat_talk_frequency_rule(
         if not (_is_same_talk_rule_target(rule, chat_session) and rule.time.strip() == normalized_time)
     ]
     if len(next_rules) == len(group.rules):
-        raise HTTPException(status_code=404, detail="未找到可删除的当前聊天流发言频率规则")
+        raise HTTPException(status_code=404, detail="未找到可删除的当前聊天流查看频率规则")
 
     group.rules = next_rules
     reply_timing_config["talk_rule_groups"] = recursive_parse_item_to_table(groups)
@@ -1319,6 +1320,36 @@ def get_available_platforms() -> Dict[str, object]:
         return {"success": False, "error": str(e), "platforms": []}
 
 
+@router.get("/targets")
+def search_config_targets(
+    target_type: Literal["group", "user"] = Query(...),
+    platform: Optional[str] = Query(default=None),
+    search: str = Query(default="", max_length=200),
+    limit: int = Query(default=50, ge=1, le=100),
+) -> Dict[str, object]:
+    """配置目标搜索：用户直接查人物账号，包含未建立私聊的用户。"""
+    with get_db_session() as session:
+        if target_type == "group":
+            statement = select(ChatSession.platform, ChatSession.group_id, func.max(ChatSession.group_name)).where(
+                col(ChatSession.group_id).is_not(None), ChatSession.group_id != "",
+            )
+            if platform:
+                statement = statement.where(ChatSession.platform == platform)
+            if search:
+                statement = statement.where(col(ChatSession.group_name).contains(search) | col(ChatSession.group_id).contains(search))
+            statement = statement.group_by(ChatSession.platform, ChatSession.group_id).order_by(ChatSession.platform, ChatSession.group_id).limit(limit)
+        else:
+            statement = select(PersonInfo.platform, PersonInfo.user_id, func.max(PersonInfo.user_nickname))
+            if platform:
+                statement = statement.where(PersonInfo.platform == platform)
+            if search:
+                statement = statement.where(col(PersonInfo.user_nickname).contains(search) | col(PersonInfo.person_name).contains(search) | col(PersonInfo.user_id).contains(search))
+            statement = statement.group_by(PersonInfo.platform, PersonInfo.user_id).order_by(PersonInfo.platform, PersonInfo.user_id).limit(limit)
+        targets = [{"platform": p, "type": target_type, "id": identity, "name": name or identity}
+                   for p, identity, name in session.exec(statement).all()]
+    return {"success": True, "targets": targets}
+
+
 @router.get("/persons")
 def get_persons_by_platform(
     platform: str = Query(..., description="平台名称"),
@@ -1327,10 +1358,10 @@ def get_persons_by_platform(
 ) -> Dict[str, object]:
     """获取指定平台的用户列表。"""
     try:
-        statement = select(PersonInfo).where(col(PersonInfo.platform) == platform)
+        statement = select(PersonInfo).join(Individual, PersonInfo.individual_id == Individual.individual_id).where(col(PersonInfo.platform) == platform)
         if search:
             statement = statement.where(
-                (col(PersonInfo.person_name).contains(search))
+                (col(Individual.display_name).contains(search))
                 | (col(PersonInfo.user_nickname).contains(search))
                 | (col(PersonInfo.user_id).contains(search))
             )
@@ -1346,11 +1377,11 @@ def get_persons_by_platform(
                 {
                     "person_id": person.person_id,
                     "user_id": person.user_id,
-                    "person_name": person.person_name,
+                    "person_name": person.individual.display_name,
                     "nickname": person.user_nickname,
-                    "is_known": person.is_known,
+                    "is_known": person.individual.is_known,
                     "platform": person.platform,
-                    "display_name": person.person_name or person.user_nickname or person.user_id,
+                    "display_name": person.individual.display_name or person.user_nickname or person.user_id,
                 }
                 for person in persons
             ]
@@ -1487,7 +1518,7 @@ async def update_chat_session_talk_frequency(
     session_id: str,
     request: TalkFrequencyUpdateRequest,
 ) -> Dict[str, object]:
-    """为当前聊天流新增或更新一条精确发言频率规则。"""
+    """为当前聊天流新增或更新一条精确查看频率规则。"""
 
     chat_session = await asyncio.to_thread(_get_settings_chat_session, session_id)
     await _save_chat_talk_frequency_rule(chat_session, request)
@@ -1500,7 +1531,7 @@ async def delete_chat_session_talk_frequency(
     time: Optional[str] = Query(default=None),
     active_group: Optional[str] = Query(default=None),
 ) -> Dict[str, object]:
-    """删除当前聊天流的一条精确发言频率规则。"""
+    """删除当前聊天流的一条精确查看频率规则。"""
 
     chat_session = await asyncio.to_thread(_get_settings_chat_session, session_id)
     await _delete_chat_talk_frequency_rule(chat_session, time, active_group)

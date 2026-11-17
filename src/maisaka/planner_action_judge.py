@@ -1,6 +1,7 @@
 """将工具式 Planner 遗漏的动作补成标准工具调用。"""
 
 from dataclasses import dataclass
+from jsonschema import ValidationError, validate
 from typing import Any, Dict, List, Optional, Sequence
 
 import asyncio
@@ -12,7 +13,7 @@ from src.common.data_models.llm_service_data_models import LLMGenerationOptions
 from src.common.logger import get_logger
 from src.common.prompt_i18n import load_prompt
 from src.core.tooling import filter_tool_arguments
-from src.llm_models.exceptions import LLMTaskTimeoutError, RespParseException
+from src.llm_models.exceptions import RespParseException
 from src.llm_models.payload_content.context_item import (
     ContextItem, ContextItemBuilder, ContextItemMeta, ContextToolCall, FunctionCallItem, RoleType,
     get_response_text, get_response_tool_calls,
@@ -24,7 +25,6 @@ from .context.messages import LLMContextMessage, SessionBackedMessage
 
 logger = get_logger("maisaka_planner_action_judge")
 
-JUDGE_TIMEOUT_SECONDS = 10.0
 JUDGE_SOURCE = "action_judge"
 
 
@@ -95,43 +95,29 @@ async def complete_missing_planner_action(
     ]
     client = LLMServiceClient("fast_model", request_type="maisaka.planner_action_judge", session_id=session_id)
     started = time.perf_counter()
-    try:
-        async with asyncio.timeout(JUDGE_TIMEOUT_SECONDS):
-            result = await client.generate_response_with_context(
-                context_factory=lambda _: messages,
-                options=LLMGenerationOptions(
-                    temperature=0, interrupt_flag=interrupt_flag,
-                ),
-            )
-    except TimeoutError as exc:
-        raise LLMTaskTimeoutError("fast_model", "planner_action_judge", JUDGE_TIMEOUT_SECONDS) from exc
+    result = await client.generate_response_with_context(
+        context_factory=lambda _: messages,
+        options=LLMGenerationOptions(
+            temperature=0, interrupt_flag=interrupt_flag,
+            tool_options=[tools["reply"], tools["wait"]],
+        ),
+    )
 
-    decision = result.response.strip()
-    if result.tool_calls or result.native_tool_calls:
-        raise RespParseException(message="Planner 动作判断器应只返回 JSON 对象，不应调用工具")
+    # 文本工具调用的兼容解析及解析失败重试由 LLM 层统一处理。
+    calls = get_response_tool_calls(result.output_items)
+    if len(calls) != 1:
+        raise RespParseException(message="Planner 动作判断器必须返回且仅返回一个 reply 或 wait 工具调用")
+    action = calls[0].func_name
+    arguments = calls[0].materialize_args()
+    if action not in {"reply", "wait"}:
+        raise RespParseException(message=f"Planner 动作判断器返回了无效工具：{action!r}")
+    schema = tools[action].parameters_schema
+    if filter_tool_arguments(arguments, schema) != arguments:
+        raise RespParseException(message=f"Planner 动作判断器返回了未声明的工具参数：{arguments!r}")
     try:
-        parsed = json.loads(decision)
-    except json.JSONDecodeError as exc:
-        raise RespParseException(message=f"Planner 动作判断器返回了无效 JSON：{decision!r}") from exc
-    if not isinstance(parsed, dict) or "action" not in parsed:
-        raise RespParseException(message=f"Planner 动作判断器返回了无效字段：{decision!r}")
-    action = parsed["action"]
-    decision_properties = {"action": {}}
-    if action == "reply" and routes:
-        decision_properties["session_id"] = {}
-    parsed = filter_tool_arguments(parsed, {"properties": decision_properties})
-    arguments: Dict[str, Any] = {}
-    if action == "wait" and set(parsed) == {"action"}:
-        if routes:
-            arguments["session_id"] = routes[0]
-    elif action == "reply" and not routes and set(parsed) == {"action"}:
-        pass
-    elif action == "reply" and routes and set(parsed) == {"action", "session_id"} and parsed["session_id"] in routes:
-        arguments["session_id"] = parsed["session_id"]
-    else:
-        raise RespParseException(message=f"Planner 动作判断器返回了无效选项：{decision!r}")
-    if action == "reply":
-        arguments["chat_anlyze"] = content
+        await asyncio.to_thread(validate, arguments, schema)
+    except ValidationError as exc:
+        raise RespParseException(message=f"Planner 动作判断器的 {action} 参数不符合工具声明：{exc.message}") from exc
 
     turn_id = logical_turn_id or next(
         (item.meta.logical_turn_id for item in output_items if item.meta.logical_turn_id), uuid.uuid4().hex,

@@ -266,7 +266,7 @@ export function TaskAssignmentBoard({
                     </span>
                     {empty ? (
                       <DashedButton className="h-7" data-task-row-add="true" onClick={() => onOpenTaskChange(field.name)}>
-                        + 开启
+                        + 设置
                       </DashedButton>
                     ) : (
                       <Button type="button" size="sm" variant="outline" onClick={() => onOpenTaskChange(field.name)}>

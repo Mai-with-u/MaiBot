@@ -1,0 +1,15 @@
+[heuristic_memory_impression]
+display_name = "Memory Retrieval Impression"
+advanced = true
+description = "Template for generating a natural-language impression of the current chat to guide semantic long-term memory retrieval."
+
+[planner_memory_group]
+display_name = "Group chat memory policy"
+advanced = false
+description = "Instruction template loaded for its triggering scenario; edited separately from main prompts."
+
+[planner_memory_private]
+display_name = "Private chat memory policy"
+advanced = false
+description = "Instruction template loaded for its triggering scenario; edited separately from main prompts."
+

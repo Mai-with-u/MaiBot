@@ -1,7 +1,7 @@
 /**
  * 仪表盘首页领域类型（页面逻辑下沉）。
  *
- * 从 routes/index.tsx 抽出，供 home/hooks 下的领域 hook 与主渲染层共享。
+ * 供首页领域 hook 与观察面板共享。
  */
 import type { LucideIcon } from 'lucide-react'
 
@@ -27,9 +27,9 @@ export interface StatisticsSummary {
   cache_hit_tokens: number
   cache_miss_tokens: number
   cache_hit_rate: number | null
-  chat_cache_hit_tokens: number
-  chat_cache_miss_tokens: number
-  chat_cache_hit_rate: number | null
+  core_cache_hit_tokens: number
+  core_cache_miss_tokens: number
+  core_cache_hit_rate: number | null
   online_time: number
   total_messages: number
   total_replies: number

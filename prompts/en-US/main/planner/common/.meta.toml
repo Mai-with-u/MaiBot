@@ -1,0 +1,4 @@
+[planner_action_judge]
+display_name = "Action judgment"
+advanced = true
+description = "Judges the next action when planner output is missing an explicit action. Shared by regular and Focus modes."

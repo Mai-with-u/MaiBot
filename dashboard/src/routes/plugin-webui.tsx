@@ -1,8 +1,11 @@
+import { USER_DATA_MIGRATION_ENABLED } from '@/lib/release-features'
 import { Link, useParams } from '@tanstack/react-router'
 import { useCallback, useEffect, useRef, useState } from 'react'
 import { useTranslation } from 'react-i18next'
 
 import { ErrorBoundary } from '@/components/error-boundary'
+import { QQAdapterPage } from '@/components/qq-adapter-page'
+import { useHostRuntime } from '@/host/state'
 import { PluginCustomPage } from '@/components/plugin-custom-page'
 import { PluginWebUIRenderer } from '@/components/plugin-webui-renderer'
 import { Alert, AlertDescription } from '@/components/ui/alert'
@@ -328,7 +331,7 @@ function ExtensionPage({ pluginId, page }: { pluginId: string; page: Declarative
   )
 }
 
-export function PluginWebUIPage() {
+function PluginWebUIContent({ view }: { view?: string }) {
   const { pluginId, pageId } = useParams({ from: '/protected/extensions/$pluginId/$pageId' })
   const registry = usePluginWebUI()
   const { t } = useTranslation()
@@ -369,10 +372,39 @@ export function PluginWebUIPage() {
   return (
     <ErrorBoundary key={`${pluginId}/${pageId}/${JSON.stringify(page)}`}>
       {page.mode === 'custom' ? (
-        <PluginCustomPage pluginId={pluginId} page={page} pages={extension!.pages} />
+        <PluginCustomPage
+          pluginId={pluginId}
+          page={page}
+          pages={extension!.pages}
+          embedded={!!view}
+          initialState={view ? { view, host: 'true' } : undefined}
+        />
       ) : (
         <ExtensionPage pluginId={pluginId} page={page} />
       )}
     </ErrorBoundary>
+  )
+}
+
+export function PluginWebUIPage() {
+  const { pluginId, pageId } = useParams({ from: '/protected/extensions/$pluginId/$pageId' })
+  const runtime = useHostRuntime()
+  const [pageState] = useState(readPluginPageState)
+  const qqPage = runtime.host && pluginId === 'Mai-with-u.qq-adapter' && pageId === 'group-mappings'
+  useEffect(() => {
+    if (USER_DATA_MIGRATION_ENABLED && qqPage && pageState.view === 'injection') {
+      const search = new URLSearchParams({ tab: 'user-migration' })
+      if (typeof pageState.source === 'string') search.set('source', pageState.source)
+      if (typeof pageState.target === 'string') search.set('target', pageState.target)
+      if (pageState.fromMapping === true) search.set('fromMapping', 'true')
+      window.location.replace(`/data-transfer?${search}`)
+    }
+  }, [qqPage, pageState])
+  if (!qqPage) return <PluginWebUIContent />
+  return (
+    <QQAdapterPage
+      key={runtime.selected_bot_id}
+      initialTab={pageState.view === 'user' ? 'user' : 'users'}
+    />
   )
 }

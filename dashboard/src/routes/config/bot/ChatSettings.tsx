@@ -22,22 +22,20 @@ const CHAT_PANELS: Record<ChatScope, ChatGroup[][]> = {
       title: '回复节奏',
       fields: [
         'max_context_size',
+        'use_token_limit',
+        'max_context_tokens',
         'talk_value',
         'message_debounce_mode',
         'group_quote_frequency',
-        'no_action_backoff_base_seconds',
-        'no_action_backoff_cap_seconds',
-        'no_action_backoff_start_count',
-        'no_action_backoff_bypass_pending_count',
       ],
     }],
     [
       { title: '触发回复', fields: ['mentioned_bot_reply', 'inevitable_at_reply', 'enable_reply_at', 'planner_message_steering'] },
-      { title: '动态发言规则', fields: ['talk_rule_groups'] },
+      { title: '动态查看规则', fields: ['talk_rule_groups'] },
     ],
   ],
   private: [
-    [{ title: '回复节奏', fields: ['max_private_context_size', 'private_message_debounce_mode', 'private_quote_frequency'] }],
+    [{ title: '回复节奏', fields: ['max_private_context_size', 'private_use_token_limit', 'private_max_context_tokens', 'private_message_debounce_mode', 'private_quote_frequency'] }],
     [{ title: '暂停回复', titleSwitch: 'private_reply_paused', fields: ['private_reply_pause_rules'] }],
   ],
 }
@@ -66,6 +64,11 @@ export function ChatSettings({ schema, values, onChange, scope, onScopeChange, a
   const renderField = ({ field, schema: owner, path }: ChatField, displayField: FieldSchema = field) => {
     const fieldPath = ['chat', ...path, field.name].join('.')
     const sectionValues = path.reduce<Record<string, unknown>>((current, key) => current[key] as Record<string, unknown>, values)
+    const tokenModeField = field.name === 'max_context_size' ? 'use_token_limit'
+      : field.name === 'max_private_context_size' ? 'private_use_token_limit' : undefined
+    if (tokenModeField && sectionValues[tokenModeField] === true) {
+      displayField = { ...displayField, readOnly: true }
+    }
     const form = (
       <DynamicConfigForm
         schema={{ ...owner, fields: [{ ...displayField, advanced: false }], nested: owner.nested?.[field.name] ? { [field.name]: owner.nested[field.name] } : {} }}
@@ -78,11 +81,17 @@ export function ChatSettings({ schema, values, onChange, scope, onScopeChange, a
       />
     )
     const dialog = field['x-chat-settings']!.dialog
+    const disabled = displayField.readOnly === true || (
+      displayField['x-depends-on'] !== undefined && sectionValues[displayField['x-depends-on']] !== true
+    )
+    const content = disabled
+      ? <fieldset disabled className="min-w-0 pointer-events-none opacity-50">{form}</fieldset>
+      : form
     return dialog ? (
       <ConfigSectionDialog label={dialog} open={openDialog === fieldPath} onOpenChange={(open) => onDialogChange(open ? fieldPath : null)}>
-        {form}
+        {content}
       </ConfigSectionDialog>
-    ) : form
+    ) : content
   }
   const hasCommon = entries.some(({ field }) => field['x-chat-settings']!.scope === 'common')
   const scopeEntries = entries.filter(({ field }) => field['x-chat-settings']!.scope === scope)

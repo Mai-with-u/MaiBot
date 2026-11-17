@@ -2,8 +2,16 @@ import { backendApi } from '@/lib/http'
 
 const API_BASE = '/api/webui/config/prompts'
 
+export function getPromptBlockInstructions(
+  language: string,
+  filename?: string
+): Promise<Record<string, Record<string, string>>> {
+  return backendApi.get(`/api/webui/config/prompt-blocks/${encodeURIComponent(language)}?filename=${encodeURIComponent(filename ?? '')}`)
+}
+
 export interface PromptFileInfo {
   name: string
+  relative_path: string
   size: number
   modified_at: number
   display_name: string
@@ -80,6 +88,20 @@ export async function getDefaultPromptFile(
     `${API_BASE}/${encodeURIComponent(language)}/${encodeURIComponent(filename)}/default`,
     {
       errorMessage: '获取默认 Prompt 文件失败',
+    }
+  )
+}
+
+export async function updateDefaultPromptFile(
+  language: string,
+  filename: string,
+  content: string
+): Promise<PromptFileContent> {
+  return backendApi.put<PromptFileContent>(
+    `${API_BASE}/${encodeURIComponent(language)}/${encodeURIComponent(filename)}/default`,
+    {
+      body: { content },
+      errorMessage: '保存默认 Prompt 文件失败',
     }
   )
 }

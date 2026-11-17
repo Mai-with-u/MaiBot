@@ -1,0 +1,9 @@
+[planner_default_private]
+display_name = "Default planner · Private chat"
+advanced = false
+description = "Planning template for Private chat outside Focus mode, using tools to perform actions and initiate replies."
+
+[planner_passive_private]
+display_name = "Passive reply planner · Private chat"
+advanced = true
+description = "Planning template for Private chat outside Focus mode with Passive Replyer enabled. The final analysis text guides reply generation."

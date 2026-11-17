@@ -3,6 +3,9 @@ import {
   ArrowRight,
   CheckCircle2,
   Globe,
+  Monitor,
+  Moon,
+  Sun,
 } from 'lucide-react'
 import { useContext, useEffect, useEffectEvent, useLayoutEffect, useState } from 'react'
 import { useTranslation } from 'react-i18next'
@@ -11,6 +14,7 @@ import { useHostRuntime } from '@/host/state'
 import { DashboardStylePicker } from '@/components/dashboard-style-picker'
 import { useTheme } from '@/components/use-theme'
 import { Button } from '@/components/ui/button'
+import { SegmentedControl } from '@/components/ui/management'
 import { Label } from '@/components/ui/label'
 import { Switch } from '@/components/ui/switch'
 import { SetupWizardLayout } from './SetupWizardLayout'
@@ -36,6 +40,7 @@ import { findTemplateByBaseUrl } from '@/routes/config/providerTemplates'
 import { APP_NAME } from '@/lib/version'
 import { useToast } from '@/hooks/use-toast'
 import { validateToken } from '@/lib/token-validator'
+import { getPluginConfig, togglePlugin } from '@/lib/plugin-api'
 import type { ModelListItem } from '@/lib/config-api'
 import type { DashboardStyle } from '@/lib/theme/tokens'
 import { DashboardStylePreviewContext } from '@/lib/theme-context'
@@ -75,6 +80,7 @@ import {
   updateAccessToken,
 } from './api'
 import { ConnectionTestPanel } from './ConnectionTestPanel'
+import { PlatformSetupForm } from './PlatformSetupForm'
 import type { ConnectionTestState } from './ConnectionTestPanel'
 import { PERSONALITY_MODES, readSetupDraft, writeSetupDraft } from './draft'
 import type { PersonalityMode } from './draft'
@@ -115,7 +121,7 @@ function SetupPageContent({ draftKey }: { draftKey: string }) {
   const navigate = useNavigate()
   const { t, i18n: i18nInstance } = useTranslation()
   const { toast } = useToast()
-  const { themeConfig, updateThemeConfig } = useTheme()
+  const { theme, setTheme, themeConfig, updateThemeConfig } = useTheme()
   const setDashboardStylePreview = useContext(DashboardStylePreviewContext)
   const currentLang = i18nInstance.resolvedLanguage || i18nInstance.language || 'zh'
   const createDefaultPersonalityConfig = (): PersonalityConfig => ({
@@ -142,6 +148,7 @@ function SetupPageContent({ draftKey }: { draftKey: string }) {
   const [basicSettings, setBasicSettings] = useState<BasicSetupConfig | null>(null)
   const [desktopPetDraft, setDesktopPetDraft] = useState<boolean | null>(null)
   const [dashboardStyleDraft, setDashboardStyleDraft] = useState<DashboardStyle | null>(null)
+  const [chatPlatformId, setChatPlatformId] = useState<string | null>(null)
   const [needsApiKey, setNeedsApiKey] = useState(false)
   const [resumeModelStep, setResumeModelStep] = useState<SetupModelRole | null>(null)
 
@@ -241,6 +248,7 @@ function SetupPageContent({ draftKey }: { draftKey: string }) {
     step('group-replies', 'groupReplies', basics),
     step('desktop-pet', 'desktopPet', basics),
     step('dashboard-appearance', 'dashboardAppearance', basics),
+    step('chat-platform', 'chatPlatform'),
   ]
 
   const currentStep = requiresCustomToken ? 0 : Math.max(0, steps.findIndex((item) => item.id === activeStep))
@@ -412,6 +420,7 @@ function SetupPageContent({ draftKey }: { draftKey: string }) {
           setPersonalityPresetId(draft.personalityPresetId)
           setDesktopPetDraft(draft.desktopPetDraft)
           setDashboardStyleDraft(draft.dashboardStyleDraft)
+          setChatPlatformId(draft.chatPlatformId ?? null)
         }
         setDraftReady(true)
       } catch (error) {
@@ -442,9 +451,10 @@ function SetupPageContent({ draftKey }: { draftKey: string }) {
       basicSettings,
       desktopPetDraft,
       dashboardStyleDraft,
+      chatPlatformId,
     })
   }, [
-    activeStep, apiProviderSetup, basicSettings, botBasic, dashboardStyleDraft, desktopPetDraft,
+    activeStep, apiProviderSetup, basicSettings, botBasic, chatPlatformId, dashboardStyleDraft, desktopPetDraft,
     draftKey, draftReady, modelSetup, needsApiKey, personalityDrafts, personalityMode,
     personalityPresetId, personalityTemplate, resumeModelStep,
   ])
@@ -465,6 +475,7 @@ function SetupPageContent({ draftKey }: { draftKey: string }) {
         case 'define-model':
         case 'replyer':
         case 'desktop-pet':
+        case 'chat-platform':
           return true
         case 'planner':
           await saveApiProviderSetupConfig(apiProviderSetup)
@@ -643,10 +654,24 @@ function SetupPageContent({ draftKey }: { draftKey: string }) {
     setIsCompleting(true)
 
     try {
-      // 保存桌宠设置，完成引导后应用界面风格并进入试聊。
+      // 完成引导后应用界面风格，进入所选平台配置或本地试聊。
       const saved = await saveCurrentStep()
       if (!saved) {
         return
+      }
+
+      if (chatPlatformId) {
+        const config = await getPluginConfig(chatPlatformId)
+        const plugin = config.plugin as { enabled?: boolean } | undefined
+        if (typeof plugin?.enabled !== 'boolean') {
+          throw new Error('无法确认适配器启用状态，请重试')
+        }
+        if (!plugin.enabled) {
+          const result = await togglePlugin(chatPlatformId)
+          if (!result.success || !result.enabled || result.runtime_status === 'failed' || result.runtime_status === 'config_error') {
+            throw new Error(result.note || result.message || '适配器启用失败')
+          }
+        }
       }
 
       await completeSetup()
@@ -659,13 +684,17 @@ function SetupPageContent({ draftKey }: { draftKey: string }) {
 
       toast({
         title: t('setupPage.toast.completeSuccessTitle'),
-        description: t('setupPage.toast.completeSuccessDescription', {
+        description: t(chatPlatformId ? 'setupPage.platform.completeDescription' : 'setupPage.toast.completeSuccessDescription', {
           appName: APP_NAME,
         }),
       })
 
-      // MaiBot 会热加载配置文件，完成后进入聊聊体验本地对话。
-      navigate({ to: '/chat', search: { setupTrial: true } })
+      // 所选适配器已启用，进入配置页继续扫码授权或填写连接信息。
+      if (chatPlatformId) {
+        navigate({ to: '/adapter-management', search: { plugin: chatPlatformId } })
+      } else {
+        navigate({ to: '/chat', search: { setupTrial: true } })
+      }
     } catch (error) {
       toast({
         title: t('setupPage.toast.completeFailedTitle'),
@@ -814,15 +843,32 @@ function SetupPageContent({ draftKey }: { draftKey: string }) {
         )
       case 'dashboard-appearance':
         return (
-          <fieldset aria-label={t('setupPage.steps.dashboardAppearance.title')}>
+          <fieldset className="space-y-6" aria-label={t('setupPage.steps.dashboardAppearance.title')} disabled={isSaving || isCompleting}>
             <DashboardStylePicker
               value={dashboardStyleDraft ?? themeConfig.dashboardStyle}
               onChange={setDashboardStyleDraft}
               disabled={isSaving || isCompleting}
               className="grid gap-3 sm:grid-cols-3"
             />
+            <div className="space-y-3">
+              <h3 className="text-base font-semibold">{t('settings.appearance.themeMode')}</h3>
+              <SegmentedControl
+                aria-label={t('settings.appearance.themeMode')}
+                value={theme}
+                onValueChange={(value) => {
+                  if (value === 'light' || value === 'dark' || value === 'system') setTheme(value)
+                }}
+                options={[
+                  { value: 'light', label: <span className="inline-flex items-center gap-2"><Sun />{t('settings.appearance.light')}</span> },
+                  { value: 'dark', label: <span className="inline-flex items-center gap-2"><Moon />{t('settings.appearance.dark')}</span> },
+                  { value: 'system', label: <span className="inline-flex items-center gap-2"><Monitor />{t('settings.appearance.system')}</span> },
+                ]}
+              />
+            </div>
           </fieldset>
         )
+      case 'chat-platform':
+        return <PlatformSetupForm value={chatPlatformId} onChange={setChatPlatformId} disabled={isSaving || isCompleting} />
       default:
         return null
     }
@@ -936,7 +982,7 @@ function SetupPageContent({ draftKey }: { draftKey: string }) {
                     </>
                   ) : (
                     <>
-                      {t('setupPage.actions.complete')}
+                      {t(chatPlatformId ? 'setupPage.platform.connect' : 'setupPage.platform.startChat')}
                       <CheckCircle2 className="ml-2 h-4 w-4" strokeWidth={2} fill="none" />
                     </>
                   )}

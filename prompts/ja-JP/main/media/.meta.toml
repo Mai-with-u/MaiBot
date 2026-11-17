@@ -1,0 +1,25 @@
+[emoji_content_analysis]
+display_name = "絵文字内容分析"
+advanced = true
+description = "絵文字やスタンプ画像の内容を分析するためのテンプレート。"
+
+[emoji_grouped_tags]
+display_name = "スタンプの分類タグ"
+advanced = true
+description = "スタンプの感情と画像内の内容を分けて識別します。"
+
+[emoji_content_filtration]
+display_name = "絵文字内容フィルタ"
+advanced = true
+description = "絵文字やスタンプの内容がフィルタ条件を満たすか判断するためのテンプレート。"
+
+[emoji_replace]
+display_name = "絵文字置換"
+advanced = true
+description = "テキスト文脈に応じて絵文字やスタンプを選択・置換するためのテンプレート。"
+
+[image_description]
+display_name = "画像説明"
+advanced = false
+description = "画像内容をテキスト説明へ変換するためのテンプレート。"
+

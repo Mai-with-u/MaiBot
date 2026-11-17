@@ -110,7 +110,7 @@ def test_corrupt_sessions_are_preserved_and_can_be_recreated(tmp_path):
     assert backup.read_bytes() == bytes(4096)
 
 
-@pytest.mark.parametrize("columns", ["digest TEXT PRIMARY KEY", "expires_at REAL NOT NULL"])
+@pytest.mark.parametrize("columns", ["origin TEXT", "expires_at REAL NOT NULL"])
 def test_missing_session_column_keeps_webui_login_available(tmp_path, columns):
     host = tmp_path / "host"
     credentials = HostCredentials(host / "webui.json")

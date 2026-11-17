@@ -521,15 +521,6 @@ class ModelTaskConfig(ConfigBase):
     )
     """快速模型配置，用于表达方式选择、回复断句等需要快速完成的小任务，建议选择响应快的模型；留空时用 utils 模型"""
 
-    emoji: TaskConfig = Field(
-        default_factory=TaskConfig,
-        json_schema_extra={
-            "x-widget": "custom",
-            "advanced": True,
-        },
-    )
-    """表情包发送模型配置；留空时保持原有 planner/vlm 选择逻辑"""
-
     vlm: TaskConfig = Field(
         default_factory=TaskConfig,
         json_schema_extra={

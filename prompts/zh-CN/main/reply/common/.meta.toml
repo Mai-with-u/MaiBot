@@ -1,0 +1,9 @@
+[maisaka_expression_selector]
+display_name = "表达方式挑选"
+advanced = true
+description = "根据聊天上下文，从候选表达方式中挑选适合本次回复的若干条。"
+
+[reply_supplement]
+display_name = "回复补充编排"
+advanced = true
+description = "在正文并行生成时，编排引用、附件与发送顺序等回复补充内容。"

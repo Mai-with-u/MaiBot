@@ -26,11 +26,21 @@ STRICT_ENV_KEYS = ("MAIBOT_PROMPT_I18N_STRICT", "MAIBOT_I18N_STRICT")
 STRICT_ENV_VALUES = {"1", "true", "yes", "on"}
 # 内置模板按场景命名，用户覆盖和版本历史沿用原来的存储名。
 _CUSTOM_PROMPT_STORAGE_NAMES = {
+    "planner_default_group": "maisaka_chat",
+    "planner_passive_group": "maisaka_chat_passive",
+    "planner_default_private": "maisaka_chat_private",
+    "planner_passive_private": "maisaka_chat_private_passive",
+    "planner_focus": "maisaka_chat_focus",
     "reply_group": "retro_replyer",
     "reply_private": "retro_private_replyer",
     "reply_private_followup": "retro_private_replyer_self",
 }
 _RENAMED_PROMPTS = {old_name: name for name, old_name in _CUSTOM_PROMPT_STORAGE_NAMES.items()}
+_RENAMED_PROMPTS.update({
+    "reply_creative_group": "reply_group",
+    "reply_creative_private": "reply_private",
+    "reply_creative_private_followup": "reply_private_followup"
+})
 _PROMPT_CACHE_REVISION = 0
 
 extract_prompt_placeholders = extract_placeholders

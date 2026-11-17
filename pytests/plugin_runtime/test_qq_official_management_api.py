@@ -44,6 +44,7 @@ async def test_ban_resolves_ids_and_unmutes(adapter, duration, op):
 
 @pytest.mark.asyncio
 async def test_ban_preserves_policies_with_openid_input(adapter):
+    adapter.config.qq_official.enable_mapping = True
     adapter.config.mute.admin_users = ["456"]
     assert not (await adapter.api_set_group_ban("group-openid", "user-openid", 60))["success"]
     adapter._api_post.assert_not_awaited()
@@ -145,6 +146,7 @@ async def test_kick_rejects_disallowed_targets(adapter, blocked):
     if blocked == "whitelist":
         adapter.config.kick.allowed_groups = ["789"]
     elif blocked == "protected_id":
+        adapter.config.qq_official.enable_mapping = True
         adapter.config.kick.admin_users = ["456"]
     elif blocked == "protected_openid":
         adapter.config.kick.admin_users = ["user-openid"]

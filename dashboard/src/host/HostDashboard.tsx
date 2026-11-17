@@ -1,6 +1,7 @@
 import {
   ChevronDown,
   CircleAlert,
+  Copy,
   Folder,
   Loader2,
   Play,
@@ -37,6 +38,35 @@ import { useHostRuntime } from './state'
 
 function errorMessage(reason: unknown): string {
   return reason instanceof Error ? reason.message : String(reason)
+}
+
+function BotError({ error }: { error: string }) {
+  const { t } = useTranslation()
+  const [copied, setCopied] = useState(false)
+  const [copyError, setCopyError] = useState('')
+
+  async function copy() {
+    try {
+      await navigator.clipboard.writeText(error)
+      setCopied(true)
+      setCopyError('')
+    } catch (reason) {
+      setCopyError(errorMessage(reason))
+    }
+  }
+
+  return (
+    <Alert variant="destructive" className="min-w-0 overflow-hidden p-2.5 text-xs">
+      <AlertDescription className="min-w-0 space-y-2">
+        <pre tabIndex={0} className="max-h-60 overflow-auto whitespace-pre-wrap break-all font-mono text-xs [overflow-wrap:anywhere]">{error}</pre>
+        <Button size="sm" variant="outline" onClick={() => void copy()}>
+          <Copy className="size-3.5" />
+          {t(copied ? 'errorBoundary.copiedToClipboard' : 'errorBoundary.copyError')}
+        </Button>
+        {copyError && <p role="status" className="break-all text-xs">{copyError}</p>}
+      </AlertDescription>
+    </Alert>
+  )
 }
 
 function statusKey(bot: HostBot): string {
@@ -396,7 +426,7 @@ export function HostDashboard({ embedded = false }: { embedded?: boolean }) {
                 asChild
                 key={bot.bot_id}
                 className={cn(
-                  'flex flex-col gap-2.5 p-3.5 transition-shadow',
+                  'flex min-w-0 flex-col gap-2.5 p-3.5 transition-shadow',
                   selected && 'ring-primary/65 ring-2'
                 )}
               >
@@ -429,13 +459,8 @@ export function HostDashboard({ embedded = false }: { embedded?: boolean }) {
                   </header>
 
                   {/* 中央下沉数据屏：遥测读数 + 错误/阶段说明 + 内嵌折叠目录详情 */}
-                  <DataPanel className="flex flex-col gap-2.5 p-3">
-                    {error && (
-                      <Alert variant="destructive" className="p-2.5 text-xs">
-                        <CircleAlert className="h-3.5 w-3.5" />
-                        <AlertDescription className="text-xs break-words">{error}</AlertDescription>
-                      </Alert>
-                    )}
+                  <DataPanel className="flex min-w-0 flex-col gap-2.5 p-3">
+                    {error && <BotError key={error} error={error} />}
 
                     {bot.detail && (
                       <p className="text-muted-foreground text-xs break-words" role="status">

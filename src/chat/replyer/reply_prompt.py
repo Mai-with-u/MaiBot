@@ -1,0 +1,514 @@
+"""聊天回复提示词组装。
+
+- 群聊、私聊和私聊补充自己发言按场景选择模板；
+- 普通回复的 System 包含人设、聊天背景和注意力提示；Mai Replier 默认仅包含人设；
+- 聊天记录和本轮回复要求填入 User 模板，视觉内容跟随对应发言。
+
+历史 Planner 模型输出直接丢弃，用户消息与麦麦实际发送的消息一起填入 `{dialogue_prompt}`。
+"""
+
+from __future__ import annotations
+
+from copy import copy
+from dataclasses import replace
+from datetime import datetime
+from functools import partial
+from io import BytesIO
+from PIL import Image, ImageOps
+from typing import Any, Dict, List, Optional, Set, Tuple
+from uuid import uuid4
+
+import base64
+
+from src.chat.message_receive.message import SessionMessage
+from src.chat.utils.utils import is_bot_self
+from src.common.data_models.message_component_data_model import (
+    EmojiComponent,
+    ImageComponent,
+    MessageSequence,
+    ReplyComponent,
+    TextComponent,
+)
+from src.common.i18n import get_locale
+from src.common.utils.math_utils import translate_timestamp_to_human_readable
+from src.config.config import global_config
+from src.llm_models.payload_content.context_item import (
+    ContextImagePart,
+    ContextItem,
+    ContextItemBuilder,
+    RoleType,
+    UserMessageItem,
+)
+from src.maisaka.context.history import build_session_message_visible_text
+from src.maisaka.context.message_adapter import (
+    build_visible_text_from_sequence,
+    format_speaker_content,
+    parse_speaker_content,
+)
+from src.maisaka.context.messages import (
+    IMAGE_QUALITY_MAX_SIDE,
+    ContentContextMessage,
+    LLMContextMessage,
+    SessionBackedMessage,
+    build_context_items_from_history_entry,
+)
+from src.maisaka.visual.deferred_images import transform_context_image
+from .creative_language import EXPRESSION_INTENT_GUIDANCE, GROUP_REPLY_GUIDANCE, PRIVATE_REPLY_GUIDANCE
+
+REPLY_TARGET_CONTENT_LIMIT = 300
+"""聊天回复模板里目标消息内容的截断长度。"""
+
+REPLY_RECENT_IMAGE_COUNT = 3
+REPLY_RECENT_IMAGE_MAX_SIDE = 640
+REPLY_OLDER_IMAGE_MAX_SIDE = 128
+
+
+def _resize_reply_image(part: ContextImagePart, max_side: int) -> ContextImagePart:
+    """等比例缩小本次请求的图片，小图保持原样；缩放时取首帧并保留透明度。"""
+    with Image.open(BytesIO(base64.b64decode(part.image_base64, validate=True))) as image:
+        if max(image.size) <= max_side:
+            return part
+        # 编码后不携带 EXIF，先摆正照片，再约束长边，极窄图片至少保留一个像素。
+        frame = ImageOps.exif_transpose(image)
+        frame = frame.convert("RGBA" if frame.has_transparency_data else "RGB")
+        scale = max_side / max(frame.size)
+        frame = frame.resize(
+            (max(1, int(frame.width * scale)), max(1, int(frame.height * scale))),
+            Image.Resampling.LANCZOS,
+        )
+        output = BytesIO()
+        if frame.has_transparency_data:
+            frame.convert("RGBA").save(output, format="PNG")
+            image_format = "png"
+        else:
+            frame.convert("RGB").save(output, format="JPEG", quality=95)
+            image_format = "jpeg"
+    return ContextImagePart(image_format, base64.b64encode(output.getvalue()).decode("ascii"))
+
+
+class ChatReplyPromptMixin:
+    """按聊天场景拼装回复请求。"""
+
+    def _build_reply_request_messages(
+        self,
+        *,
+        chat_history: List[LLMContextMessage],
+        reply_message: Optional[SessionMessage],
+        reply_reason: str,
+        expression_habits: str = "",
+        reply_requirements: str = "",
+        stream_id: Optional[str] = None,
+        think_level: int = 1,
+        reply_tool_args: Optional[Dict[str, Any]] = None,
+        enable_visual_message: bool = False,
+        mai_replier: bool = False,
+    ) -> List[ContextItem]:
+        """构建首条人设与注意事项 system 消息，以及聊天回复模板 user 消息。
+
+        聊天记录渲染进模板的对话块；启用视觉输入时，图片在同一 user 消息中跟随对应发言。
+        """
+
+        # Planner 模型输出不是真实发言；guided_reply 是已发送消息，必须保留在聊天记录中。
+        chat_history = [
+            message
+            for message in chat_history
+            if not self._is_replyer_filtered_history_message(message)
+        ]
+        visual_parts: Dict[int, List[ContextImagePart]] = {}
+        if enable_visual_message:
+            chat_history, visual_parts = self._prepare_reply_visual_history(chat_history)
+            # 目标消息和引用共用去掉视觉描述后的副本，不修改真实消息及其缓存。
+            if reply_message is not None:
+                for message_index, message in enumerate(chat_history):
+                    if (
+                        isinstance(message, SessionBackedMessage)
+                        and message_index in visual_parts
+                        and message.message_id == reply_message.message_id
+                    ):
+                        reply_message = message.original_message
+                        break
+        prompt_name = self._select_reply_prompt_name(
+            reply_message=reply_message,
+            stream_id=stream_id,
+            mai_replier=mai_replier,
+        )
+        session_id = self._resolve_session_id(stream_id)
+        scene = self._get_reply_scene(session_id)
+        scene_name = "group" if scene.is_group else "private"
+        system_template = f"reply_mai_replier_{scene_name}_system" if mai_replier else f"reply_{scene_name}_system"
+        # Mai Replier 默认模板保持 persona-only，其余背景和注意力提示仅供普通回复使用。
+        system_prompt = self._load_prompt(
+            system_template,
+            identity=self._build_personality_prompt(),
+            chat_attention_block="" if mai_replier else self._build_chat_attention_block(session_id),
+            attention_drift_block="" if mai_replier else scene.prompts.attention_drift_block(),
+        ).strip()
+        if not mai_replier:
+            # 普通回复保留附件参考和重复回复提醒。
+            extra_blocks = [reply_requirements]
+            args = reply_tool_args or {}
+            extra_blocks.append(str(args.get("_duplicate_target_reply_reminder", "")).strip())
+            attachment_prompt = self._build_reply_attachment_prompt(
+                chat_history=chat_history, reply_message=reply_message, reply_tool_args=reply_tool_args,
+            )
+            if attachment_prompt.strip():
+                extra_blocks.append("【额外发送内容参考】\n" + attachment_prompt.strip())
+            reply_requirements = "\n\n".join(block for block in extra_blocks if block.strip())
+        requested_style = str((reply_tool_args or {}).get("reply_style") or "").strip()
+        # think_level=0 的轻量回复在未指定风格时使用简短表达。
+        if not mai_replier and not requested_style and think_level == 0:
+            requested_style = "简短表达"
+        scene_guidance = GROUP_REPLY_GUIDANCE if scene.is_group else PRIVATE_REPLY_GUIDANCE
+        guidance_by_style = scene_guidance.get(get_locale(), scene_guidance["zh-CN"])
+        reply_guidance = guidance_by_style.get(requested_style, guidance_by_style["正常回复"])
+        template_context = self._build_reply_template_context(
+            chat_history=chat_history,
+            reply_message=reply_message,
+            reply_reason=reply_reason,
+            chat_anlyze=str((reply_tool_args or {}).get("chat_anlyze") or ""),
+            expression_intent=(reply_tool_args or {}).get("expression_intent"),
+            expression_habits=expression_habits,
+            reply_requirements=reply_requirements,
+            mai_replier=mai_replier,
+        )
+        template_context["reply_guidance"] = reply_guidance
+        user_builder = ContextItemBuilder().set_role(RoleType.User)
+        if enable_visual_message:
+            dialogue_marker = uuid4().hex
+            template_context["dialogue_prompt"] = dialogue_marker
+            prefix, suffix = self._load_prompt(prompt_name, **template_context).split(dialogue_marker)
+            pending_text = prefix
+            history_by_id = {
+                message.message_id: message
+                for message in chat_history
+                if isinstance(message, ContentContextMessage) and message.message_id
+            }
+            history_started = False
+            for message_index, message in enumerate(chat_history):
+                if not isinstance(message, ContentContextMessage):
+                    continue
+                history_line = self._render_reply_history_line(message, history_by_id)
+                if not history_line:
+                    continue
+                pending_text += ("\n" if history_started else "") + history_line
+                history_started = True
+                image_parts = visual_parts.get(message_index, [])
+                if image_parts:
+                    # 在历史发言处插入图片，模板后半段的回复指令始终保持在最后。
+                    user_builder.add_text_content(pending_text)
+                    pending_text = ""
+                    for part in image_parts:
+                        user_builder.add_image_content(part.image_format, part.image_base64)
+            user_builder.add_text_content(pending_text + suffix)
+        else:
+            user_builder.add_text_content(self._load_prompt(prompt_name, **template_context))
+        items = [
+            ContextItemBuilder().set_role(RoleType.System).add_text_content(system_prompt).build(),
+            user_builder.build(),
+        ]
+        return items
+
+    @staticmethod
+    def _prepare_reply_visual_history(
+        chat_history: List[LLMContextMessage],
+    ) -> Tuple[List[LLMContextMessage], Dict[int, List[ContextImagePart]]]:
+        """确定实际发送的图片并按新旧缩小，仅在本次模板副本中去掉对应的图片和表情包描述。"""
+
+        candidates: List[Tuple[int, int, ContextImagePart, bool]] = []
+        for message_index, message in enumerate(chat_history):
+            if not isinstance(message, ContentContextMessage):
+                continue
+            media_index = -1
+            for component in message.raw_message.components:
+                if not isinstance(component, (ImageComponent, EmojiComponent)):
+                    continue
+                media_index += 1
+                component_message = replace(message, raw_message=MessageSequence([component]))
+                for item in build_context_items_from_history_entry(component_message, enable_visual_message=True):
+                    if isinstance(item, UserMessageItem):
+                        candidates.extend(
+                            (message_index, media_index, part, isinstance(component, ImageComponent))
+                            for part in item.parts
+                            if isinstance(part, ContextImagePart)
+                        )
+
+        image_limit = max(0, int(global_config.visual.max_image_num))
+        retained = candidates[-image_limit:] if image_limit else []
+        visual_parts: Dict[int, List[ContextImagePart]] = {}
+        visual_indices: Dict[int, Set[int]] = {}
+        recent_start = max(0, len(retained) - REPLY_RECENT_IMAGE_COUNT)
+        for image_index, (message_index, media_index, part, is_image) in enumerate(retained):
+            # 按实际发送的图片计数，同一发言中的多张图片和表情包也各占一个位置。
+            max_side = REPLY_RECENT_IMAGE_MAX_SIDE if image_index >= recent_start else REPLY_OLDER_IMAGE_MAX_SIDE
+            if is_image:
+                max_side = min(max_side, IMAGE_QUALITY_MAX_SIDE[global_config.visual.image_quality])
+            visual_parts.setdefault(message_index, []).append(
+                transform_context_image(part, partial(_resize_reply_image, max_side=max_side))
+            )
+            visual_indices.setdefault(message_index, set()).add(media_index)
+
+        def without_visual_descriptions(sequence: MessageSequence, sent_indices: Set[int]) -> MessageSequence:
+            # 保留媒体类型标记；未发送的媒体仍使用原描述，包括超出图片配额的旧图片。
+            components = []
+            media_index = 0
+            for component in sequence.components:
+                if isinstance(component, (ImageComponent, EmojiComponent)):
+                    if media_index in sent_indices:
+                        components.append(
+                            TextComponent("[表情包]" if isinstance(component, EmojiComponent) else "[图片]")
+                        )
+                    else:
+                        components.append(component)
+                    media_index += 1
+                else:
+                    components.append(component)
+            return MessageSequence(components)
+
+        rendered_history: List[LLMContextMessage] = []
+        for message_index, message in enumerate(chat_history):
+            if not isinstance(message, ContentContextMessage) or message_index not in visual_indices:
+                rendered_history.append(message)
+                continue
+            sent_indices = visual_indices[message_index]
+            sequence = without_visual_descriptions(message.raw_message, sent_indices)
+            if isinstance(message, SessionBackedMessage):
+                original = copy(message.original_message)
+                original.raw_message = without_visual_descriptions(original.raw_message, sent_indices)
+                rendered_history.append(replace(
+                    message, raw_message=sequence, original_message=original,
+                    visible_text=build_session_message_visible_text(original),
+                ))
+            else:
+                speaker, _ = parse_speaker_content(message.visible_text)
+                _, content = parse_speaker_content(build_visible_text_from_sequence(sequence))
+                rendered_history.append(replace(
+                    message, raw_message=sequence, visible_text=format_speaker_content(speaker or "", content),
+                ))
+        return rendered_history, visual_parts
+
+    def _select_reply_prompt_name(
+        self,
+        *,
+        reply_message: Optional[SessionMessage],
+        stream_id: Optional[str],
+        mai_replier: bool = False,
+    ) -> str:
+        """按会话类型、模型和是否补充自己发言挑选模板。"""
+
+        session_id = self._resolve_session_id(stream_id)
+        scene = self._get_reply_scene(session_id)
+        self_reply = reply_message is not None and is_bot_self(
+            reply_message.platform, reply_message.message_info.user_info.user_id,
+        )
+        return scene.prompts.select_chat_reply_template(
+            self_reply=self_reply,
+            mai_replier=mai_replier,
+        )
+
+    def _build_reply_template_context(
+        self,
+        *,
+        chat_history: List[LLMContextMessage],
+        reply_message: Optional[SessionMessage],
+        reply_reason: str,
+        chat_anlyze: str,
+        expression_habits: str,
+        reply_requirements: str,
+        mai_replier: bool = False,
+        expression_intent: Optional[Dict[str, Any]] = None,
+    ) -> Dict[str, str]:
+        """准备回复模板的占位符内容。"""
+
+        combined_reference = self._build_chat_anlyze_message(reply_reason, chat_anlyze)
+        intent_guidance = self._build_expression_intent_guidance(expression_intent)
+        combined_reference = "\n\n".join(block for block in (combined_reference, intent_guidance) if block)
+        reply_target_block = self._build_reply_target_block(reply_message, chat_history)
+        if reply_target_block:
+            reply_target_block += "." if self._get_prompt_locale().startswith("en") else "。"
+        # 按配置概率用备选表达风格整体替换人设里的表达风格
+        reply_style = self._select_temporary_reply_style() or self._select_reply_style()
+        return {
+            "bot_name": global_config.bot.nickname,
+            "sender_name": self._build_reply_sender_name(chat_history, reply_message),
+            "reply_style": reply_style,
+            # Mai Replier 对齐训练分布：表达习惯参考块在训练数据中仅 bdpan 源少量出现，
+            # 线上动态注入会把回复带向套用句式模板、变书面。Mai Replier 路径跳过该块。
+            "expression_habits_block": "" if mai_replier else expression_habits.strip(),
+            "extra_info_block": self._build_reply_extra_info_block(reply_requirements),
+            "dialogue_prompt": self._build_reply_dialogue_block(chat_history),
+            "time_block": f"当前时间：{datetime.now().strftime('%Y-%m-%d %H:%M:%S')}",
+            "reply_target_block": reply_target_block,
+            "planner_reasoning": combined_reference,
+        }
+
+    @staticmethod
+    def _build_expression_intent_guidance(expression_intent: Optional[Dict[str, Any]]) -> str:
+        """将本轮表达倾向整理为回复器可直接参考的平文本，未填写的项不生成指令。"""
+        if not expression_intent:
+            return ""
+        locale = get_locale()
+        templates = EXPRESSION_INTENT_GUIDANCE.get(locale, EXPRESSION_INTENT_GUIDANCE["zh-CN"])
+        clauses: List[str] = []
+        for name, template in templates.items():
+            value = expression_intent.get(name)
+            text = value.strip() if value else ""
+            if text:
+                clauses.append(template.format(value=text))
+        guidance = "".join(clauses).strip()
+        if locale == "zh-CN" and guidance.endswith("，"):
+            guidance = guidance[:-1] + "。"
+        return guidance
+
+    @staticmethod
+    def _build_reply_extra_info_block(reply_requirements: str) -> str:
+        """包裹本次回复要求、重试约束和插件追加信息。"""
+
+        normalized_requirements = reply_requirements.strip()
+        if not normalized_requirements:
+            return ""
+        return (
+            "以下是你在回复时需要参考的信息，现在请你阅读以下内容，进行决策\n"
+            f"{normalized_requirements}\n"
+            "以上是你在回复时需要参考的信息，现在请你阅读以下内容，进行决策"
+        )
+
+    def _build_reply_sender_name(
+        self,
+        chat_history: List[LLMContextMessage],
+        reply_message: Optional[SessionMessage],
+    ) -> str:
+        """取私聊模板里的对话者名字，优先使用本次回复的目标消息发送者。"""
+
+        if reply_message is not None:
+            user_info = reply_message.message_info.user_info
+            sender_name = user_info.user_cardname or user_info.user_nickname or user_info.user_id
+            if sender_name:
+                return sender_name
+
+        # 没有目标消息时（插件直接调用回复器），沿用最近一条对方发言的发送者
+        for message in reversed(chat_history):
+            if not isinstance(message, SessionBackedMessage) or message.source_kind != "user":
+                continue
+            speaker, _ = parse_speaker_content(message.processed_plain_text)
+            if speaker:
+                return speaker
+        return ""
+
+    def _build_reply_target_block(
+        self,
+        reply_message: Optional[SessionMessage],
+        chat_history: Optional[List[LLMContextMessage]] = None,
+    ) -> str:
+        """描述本次要回复的目标消息。"""
+
+        if reply_message is None:
+            return ""
+
+        user_info = reply_message.message_info.user_info
+        sender_name = user_info.user_cardname or user_info.user_nickname or user_info.user_id
+        _, visible_content = parse_speaker_content(
+            build_session_message_visible_text(reply_message, include_reply_components=False)
+        )
+        history_by_id = {
+            message.message_id: message
+            for message in (chat_history or [])
+            if isinstance(message, ContentContextMessage) and message.message_id
+        }
+        references = self._build_reply_references(reply_message.raw_message, history_by_id)
+        target_content = self._normalize_content(
+            visible_content,
+            limit=REPLY_TARGET_CONTENT_LIMIT,
+        )
+        if not target_content and not references:
+            return ""
+
+        reference_text = " ".join(references)
+        if is_bot_self(reply_message.platform, user_info.user_id):
+            if references:
+                return f"你现在想补充说明你刚刚自己的发言内容：你{reference_text} 说：{target_content}"
+            return f"你现在想补充说明你刚刚自己的发言内容：{target_content}"
+        if references:
+            return f"现在{sender_name}{reference_text} 说：{target_content} 引起了你的注意"
+        return f"现在{sender_name}说的：{target_content} 引起了你的注意"
+
+    def _build_reply_dialogue_block(self, chat_history: List[LLMContextMessage]) -> str:
+        """把聊天历史渲染为可读文本块。"""
+
+        lines: List[str] = []
+        history_by_id = {
+            message.message_id: message
+            for message in chat_history
+            if isinstance(message, ContentContextMessage) and message.message_id
+        }
+
+        for message in chat_history:
+            # 复用普通上下文的可见文本渲染，只调整聊天回复模式的时间与说话人外层格式。
+            history_line = self._render_reply_history_line(message, history_by_id)
+            if history_line:
+                lines.append(history_line)
+
+        return "\n".join(lines)
+
+    def _render_reply_history_line(
+        self,
+        message: LLMContextMessage,
+        history_by_id: Optional[Dict[str, ContentContextMessage]] = None,
+    ) -> str:
+        """渲染历史正文与引用关系，引用图片优先使用上下文中的最新描述。"""
+
+        if not isinstance(message, ContentContextMessage):
+            return ""
+
+        speaker, content = parse_speaker_content(message.render_visible_text(include_reply_components=False))
+        content = content.strip()
+        sequence = message.media_sequence
+        references = self._build_reply_references(sequence, history_by_id)
+
+        if not content and not references:
+            return ""
+        bot_name = global_config.bot.nickname
+        if message.source_kind == "guided_reply":
+            speaker = f"{bot_name}(你)"
+        elif bot_name and speaker == bot_name:
+            speaker = "你"
+
+        timestamp = translate_timestamp_to_human_readable(message.timestamp.timestamp(), mode="normal_no_YMD")
+        reference_text = " ".join(references)
+        if references:
+            prefix = f"[{timestamp}] {speaker or ''}{reference_text} 说："
+        else:
+            prefix = f"[{timestamp}] {speaker}说：" if speaker else f"[{timestamp}]"
+        return f"{prefix}{content}"
+
+    @staticmethod
+    def _build_reply_references(
+        sequence: MessageSequence,
+        history_by_id: Optional[Dict[str, ContentContextMessage]] = None,
+    ) -> List[str]:
+        """统一渲染聊天历史和当前回复目标的引用，优先使用上下文中最新的原消息。"""
+
+        references: List[str] = []
+        for component in sequence.components:
+            if not isinstance(component, ReplyComponent):
+                continue
+            target = history_by_id.get(component.target_message_id) if history_by_id is not None else None
+            if target is not None:
+                target_speaker, target_content = parse_speaker_content(
+                    target.render_visible_text(include_reply_components=False)
+                )
+            else:
+                # 引用目标不在当前上下文时，使用引用组件已保存的原消息内容，不查询数据库。
+                target_speaker = (
+                    component.target_message_sender_cardname
+                    or component.target_message_sender_nickname
+                    or component.target_message_sender_id
+                )
+                target_content = component.target_message_content or ""
+            target_name = target_speaker or component.target_message_id
+            target_content = target_content.strip()
+            reference = (
+                f"[回复了{target_name}的消息: {target_content}]" if target_content else f"[回复了{target_name}的消息]"
+            )
+            references.append(reference)
+
+        return references

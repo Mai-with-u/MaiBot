@@ -53,6 +53,8 @@
       "stop": "Bot 및 하위 프로세스가 종료되기를 기다립니다. 1분 이상 걸릴 수 있습니다…",
       "restart": "Bot을 중지하고 다시 시작하는 중…"
     },
+    "multiBotManagement": "다중 Bot 관리",
+    "managePage": "관리 페이지",
     "currentBot": "현재 Bot",
     "noSelection": "선택된 Bot 없음",
     "selectedStopped": "현재 Bot이 실행 중이 아닙니다",
@@ -139,6 +141,9 @@
       "errorTitle": "펫 창이 실행되지 않았습니다",
       "unsupported": "이 시스템은 로컬 창을 지원하지 않습니다. 원격 클라이언트를 사용하세요.",
       "show": "표시",
+      "reload": "펫 다시 시작",
+      "reloadHint": "현재 설정으로 펫을 중지하고 다시 시작합니다. 보내지 않은 초안은 지워집니다",
+      "reloadFailed": "펫을 다시 시작하지 못했습니다",
       "showFailed": "펫을 표시하지 못했습니다",
       "inputPlaceholder": "펫에게 말 걸기…",
       "send": "보내기",
@@ -265,6 +270,8 @@
       "learning": "학습",
       "expressionManagement": "표현 관리",
       "slangManagement": "슬랭 관리",
+      "contactPeople": "인물",
+      "contacts": "연락처",
       "personInfo": "인물 정보",
       "knowledgeGraph": "장기 기억 그래프",
       "knowledgeBase": "장기 기억",
@@ -771,10 +778,6 @@
           "description": "향수를 불러일으키는 밀레니엄 스타일"
         }
       },
-      "layoutVersion": "레이아웃",
-      "layoutVersionDesc": "클래식은 상단 바와 카드형 홈을 유지합니다. 관찰 레이아웃은 상단 바를 없애고 사이드바 위쪽에 설정, 아래쪽에 모든 대화를 표시하며 홈은 상태 보드가 됩니다. 데스크톱 너비에서만 적용됩니다.",
-      "layoutClassic": "클래식",
-      "layoutObservation": "관찰",
       "themeMode": "테마 모드",
       "themeModeDesc": "라이트 / 다크 / 시스템 따라가기",
       "light": "라이트",
@@ -1018,6 +1021,11 @@
       "resetNotificationStatesAction": "초기화",
       "notificationsResetDone": "알림 상태를 초기화했습니다",
       "notificationsResetDoneDesc": "{{count}}개 항목을 지웠습니다. 해당 페이지에 다시 들어가면 적용됩니다.",
+      "editDefaultPrompt": "기본 Prompt 편집",
+      "editDefaultPromptDesc": "활성화하면 Prompt 관리자에서 기본 버전을 저장할 때 소스 템플릿을 직접 덮어씁니다. 프로그램 업데이트 시 변경 사항이 사라질 수 있습니다.",
+      "saveDefaultPrompt": "기본 Prompt 덮어쓰기",
+      "defaultPromptSaved": "기본 Prompt 저장됨",
+      "editingDefaultPromptDesc": "저장하면 사용자 지정 버전을 만들지 않고 현재 언어의 소스 템플릿을 덮어씁니다. 기존 사용자 지정 버전은 계속 적용됩니다. 이 템플릿을 사용하려면 기본 버전을 적용하세요.",
       "alwaysShowUpdateButton": "업데이트 버튼 항상 표시",
       "alwaysShowUpdateButtonDesc": "업데이트 감지 여부와 관계없이 오른쪽 상단에 메인 프로그램 업데이트 버튼을 항상 표시합니다. 즉시 적용됩니다.",
       "alwaysShowUpdateNotice": "업데이트 로그 항상 표시",
@@ -1185,7 +1193,23 @@
     "switchToDark": "다크 모드로 전환"
   },
   "setupPage": {
+    "platform": {
+      "local": "연결 없이 바로 대화하기",
+      "localHint": "WebUI 채팅에서 대화를 시작합니다. 나중에 어댑터 관리에서 플랫폼을 연결할 수 있습니다.",
+      "loading": "내장 채팅 플랫폼을 불러오는 중…",
+      "loadFailed": "채팅 플랫폼을 불러오지 못했습니다",
+      "retry": "다시 불러오기",
+      "empty": "사용 가능한 내장 채팅 플랫폼이 없습니다. 나중에 어댑터 관리에서 연결을 추가할 수 있습니다.",
+      "connectHint": "설정을 마치면 선택한 플랫폼의 연결 설정에서 계정을 구성하고 로그인합니다.",
+      "connect": "완료하고 연결 설정",
+      "startChat": "완료하고 대화 시작",
+      "completeDescription": "기본 설정을 저장했습니다. 선택한 채팅 플랫폼의 연결 설정을 계속하세요."
+    },
     "steps": {
+      "chatPlatform": {
+        "title": "채팅 플랫폼 선택",
+        "description": "내장 채팅 플랫폼에 연결하거나 연결 없이 바로 마이봇과 대화하세요."
+      },
       "nickname": {
         "title": "이름 정하기",
         "label": "닉네임",
@@ -2136,7 +2160,7 @@
       "description": "입력 토큰 캐시 적중 현황",
       "hitRate": "캐시 적중률",
       "all": "전체",
-      "chat": "채팅",
+      "core": "코어",
       "hitTokens": "적중 Token",
       "missTokens": "미적중 Token",
       "eligibleTokens": "통계 대상 {{value}} Token"
@@ -2372,5 +2396,26 @@
         "content": "변경한 설정은 모두 왼쪽 메뉴에서 언제든 다시 조정할 수 있습니다. 이제 봇과 이야기해 보세요!"
       }
     }
+  },
+  "promptCompare": {
+    "title": "두 열 편집",
+    "description": "양쪽 Prompt를 각각 편집하고 저장합니다. 현재 언어: {{language}}.",
+    "left": "왼쪽 Prompt",
+    "right": "오른쪽 Prompt",
+    "choose": "Prompt 선택",
+    "current": "현재 편집 내용",
+    "applied": "현재 적용된 버전",
+    "chooseFromDirectory": "왼쪽 목록에서 두 번째 Prompt를 선택하세요",
+    "exit": "두 열 종료",
+    "rightVersion": "오른쪽 Prompt 버전",
+    "defaultVersion": "기본 버전",
+    "saveNew": "새 버전으로 저장",
+    "saveChanges": "변경 사항 저장",
+    "saving": "저장 중",
+    "saved": "저장됨",
+    "saveFailed": "Prompt 저장 실패",
+    "loadFailed": "Prompt 버전 불러오기 실패",
+    "unsavedRight": "오른쪽 Prompt에 저장하지 않은 변경 사항이 있거나 처리 중입니다",
+    "saveRightFirst": "오른쪽 변경 사항을 저장하고 처리가 완료된 후 템플릿을 전환하거나 두 열 모드를 종료하세요."
   }
 }

@@ -1,0 +1,9 @@
+[reply_group_system]
+display_name = "Group chat · System"
+advanced = false
+description = "System template for persona, chat background, and attention guidance."
+
+[reply_group]
+display_name = "Group chat · User"
+advanced = false
+description = "Reply template combining chat history and turn requirements in one user message."

@@ -58,7 +58,7 @@ class FocusChatLoopService(MaisakaChatLoopService):
     """组级请求没有默认聊天，不把某个成员的身份或额外规则冒充成整个组。"""
 
     def _get_chat_prompt_name(self) -> str:
-        return "maisaka_chat_focus"
+        return "planner_focus"
 
 
 class FocusGroupRuntime:
@@ -531,7 +531,8 @@ class FocusGroupRuntime:
                 response = await self._service.chat_loop_step(
                     history,
                     tool_definitions=self.tools.definitions(),
-                    injected_user_messages=[self._roster(), self.tools.deferred_notice(), *references],
+                    deferred_tools_reminder=self.tools.deferred_notice(),
+                    injected_user_messages=[self._roster(), *references],
                     tail_user_messages=build_consecutive_wait_reminders(self._consecutive_waits),
                     max_context_size=max(self.max_context_size, sum(message.count_in_context for message in history) + 1),
                     logical_turn_id=logical_turn_id,
@@ -606,7 +607,6 @@ class FocusGroupRuntime:
             injected = await member._reasoning_engine._build_planner_injected_user_messages(
                 profile_message=messages[-1],
                 source_messages=messages,
-                deferred_tools_reminder="",
             )
             jargon = member._reasoning_engine._refresh_jargon_reference_message()
             if jargon is not None:
@@ -834,6 +834,8 @@ class FocusGroupRuntime:
         history = self.history
         plan = process_chat_history_after_cycle(
             history, max_context_size=self.max_context_size,
+            max_context_tokens=global_config.chat.max_context_tokens if global_config.chat.use_token_limit else None,
+            prompt_tokens=self._service.last_planner_prompt_tokens,
             consume_references=False,
         )
         if not plan.removed_messages:
@@ -891,6 +893,7 @@ class FocusGroupRuntime:
             entry = FocusContextEntry(summaries, related, watermarks=watermarks)
         self.entries[:split] = [entry]
         self._service.planner_request_snapshot = None
+        self._service.last_planner_prompt_tokens = 0
         if self.members:
             await emit_flow_step(
                 session_id=self.monitor_id,
@@ -914,9 +917,13 @@ class FocusGroupRuntime:
             if own:
                 await runtime._trigger_trimmed_history_learning(own)
             # Focus 成员历史只保存本聊天材料；不包含组级模型—工具协议段。
-            keep = max(20, runtime._max_context_size * 2)
-            if len(runtime._chat_history) > keep:
-                runtime._chat_history = runtime._chat_history[-keep:]
+            if runtime._max_context_tokens is not None:
+                own_ids = {id(message) for message in own}
+                runtime._chat_history = [message for message in runtime._chat_history if id(message) not in own_ids]
+            else:
+                keep = max(20, runtime._max_context_size * 2)
+                if len(runtime._chat_history) > keep:
+                    runtime._chat_history = runtime._chat_history[-keep:]
 
     async def _cancel_worker(self) -> None:
         worker = self._worker

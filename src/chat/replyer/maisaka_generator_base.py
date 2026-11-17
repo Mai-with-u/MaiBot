@@ -1,5 +1,4 @@
 from dataclasses import dataclass, field, replace
-from datetime import datetime
 from typing import Any, Awaitable, Callable, Dict, List, Optional, Tuple
 
 import asyncio
@@ -8,12 +7,11 @@ import time
 
 from src.chat.message_receive.chat_manager import BotChatSession
 from src.chat.message_receive.message import SessionMessage
-from src.agent.planner import ACPPlannerSnapshot, generate_planner_response
-from src.chat.utils.utils import is_bot_self
 from src.common.data_models.llm_service_data_models import LLMGenerationOptions, LLMResponseResult
 from src.common.data_models.message_component_data_model import (
     AtComponent,
     EmojiComponent,
+    FileComponent,
     ImageComponent,
     ReplyComponent,
     TextComponent,
@@ -29,11 +27,11 @@ from src.common.i18n import get_locale, use_locale
 from src.common.logger import get_logger
 from src.common.utils.utils_config import ChatConfigUtils
 from src.config.config import global_config
-from src.maisaka.context.message_id_alias import to_display_message_id
 from src.config.model_configs import ModelInfo
+from src.llm_models.exceptions import LLMRequestError
 from src.llm_models.payload_content.context_item import (
-    AssistantMessageItem,
     CONTEXT_ITEM_SCHEMA_VERSION,
+    AssistantMessageItem,
     ContextItem,
     ContextItemBuilder,
     ContextTextPart,
@@ -47,42 +45,31 @@ from src.llm_models.payload_content.context_protocol import ContextProtocolMode
 from src.llm_models.payload_content.context_snapshot import (
     serialize_context_items_snapshot,
 )
+from src.maisaka.context.message_id_alias import to_display_message_id
+from src.maisaka.context.messages import (
+    LLMContextMessage,
+    SessionBackedMessage,
+)
+from src.maisaka.display.prompt_cli_renderer import PromptCLIVisualizer
 from src.maisaka.scenes.base import ChatScene
 from src.maisaka.scenes.factory import get_scene, get_session_scene
-from src.maisaka.context.message_adapter import parse_speaker_content
-from src.maisaka.context.messages import (
-    IMAGE_QUALITY_MAX_SIDE,
-    ContentContextMessage,
-    LLMContextMessage,
-    ModelOutputContextMessage,
-    SessionBackedMessage,
-    build_context_items_from_history_entry,
-)
-from src.maisaka.context.compaction import PlannerRequestSnapshot
-from src.llm_models.model_client.base_client import ResponseRequest
-from src.maisaka.display.prompt_cli_renderer import PromptCLIVisualizer
-from src.maisaka.visual.message_limiter import limit_latest_images_in_messages
 from src.maisaka.visual.deferred_images import defer_context_image_encoding
 from src.maisaka.visual.mode_utils import resolve_enable_visual_planner
 from src.plugin_runtime.hook_payloads import deserialize_prompt_items, serialize_prompt_items
 from src.plugin_runtime.host.hook_dispatcher import HookAbortedError
-
 from .creative_language import (
     CLASSICAL_TRANSLATION_INSTRUCTION,
     OUTPUT_LANGUAGE,
-    REPLY_LENGTH_INSTRUCTIONS,
     TRANSLATION_INSTRUCTION,
     load_reply_prompt,
 )
 from .gemini_output import GeminiReplyFormatError, normalize_gemini_reply
 from .maisaka_expression_selector import maisaka_expression_selector
-from .retro_prompt import RetroReplyPromptMixin
-from .reply_cache import build_cached_reply_request
+from .reply_prompt import ChatReplyPromptMixin
 
 logger = get_logger("replyer")
 
 REPLYER_MAX_HOOK_RETRIES = 3
-DUPLICATE_TARGET_REPLY_REMINDER_ARG = "_duplicate_target_reply_reminder"
 
 
 @dataclass
@@ -95,7 +82,7 @@ class MaisakaReplyContext:
     hook_abort: Optional[Dict[str, Any]] = None
 
 
-class BaseMaisakaReplyGenerator(RetroReplyPromptMixin):
+class BaseMaisakaReplyGenerator(ChatReplyPromptMixin):
     """Maisaka replyer 的共享实现。"""
 
     def __init__(
@@ -164,44 +151,8 @@ class BaseMaisakaReplyGenerator(RetroReplyPromptMixin):
             return normalized[:limit] + "..."
         return normalized
 
-    @staticmethod
-    def _extract_visible_assistant_reply(message: ModelOutputContextMessage) -> str:
-        del message
-        return ""
 
-    def _extract_guided_bot_reply(self, message: SessionBackedMessage) -> str:
-        # 只能根据结构化来源字段判断是否为 bot 自身写回的历史消息，
-        # 不能依赖昵称/群名片等可控文本，避免误判和提示注入。
-        if message.source_kind != "guided_reply":
-            return ""
 
-        plain_text = message.processed_plain_text.strip()
-        _, body = parse_speaker_content(plain_text)
-        normalized_body = body.strip()
-        return self._normalize_content(normalized_body) if normalized_body else ""
-
-    def _build_target_message_block(self, reply_message: Optional[SessionMessage]) -> str:
-        if reply_message is None:
-            return ""
-
-        user_info = reply_message.message_info.user_info
-        if not is_bot_self(reply_message.platform, user_info.user_id):
-            return ""
-
-        sender_name = user_info.user_cardname or user_info.user_nickname or user_info.user_id
-        bot_name = global_config.bot.nickname.strip() or sender_name
-        target_message_id = to_display_message_id(reply_message.message_id) if reply_message.message_id else "未知"
-        target_content = self._normalize_content(self._build_target_message_content(reply_message), limit=300)
-        if not target_content:
-            target_content = "[无可见文本内容]"
-
-        return "\n".join(
-            [
-                f"你想要补充说明你自己（{bot_name}） 发送的 msg_id为 {target_message_id} 的消息，"
-                "你可以在这条目标消息的基础上补充发言，不要把你自己的发言当成别人的发言。",
-                f"- 你之前的发言内容：{target_content}",
-            ]
-        )
 
     @staticmethod
     def _render_target_at_component(component: AtComponent) -> str:
@@ -236,6 +187,9 @@ class BaseMaisakaReplyGenerator(RetroReplyPromptMixin):
 
             if isinstance(component, VoiceComponent):
                 rendered_parts.append(component.content.strip() or "[语音消息]")
+
+            if isinstance(component, FileComponent):
+                rendered_parts.append(component.to_plain_text())
 
         normalized_content = " ".join(part.strip() for part in rendered_parts if part and part.strip()).strip()
         if normalized_content:
@@ -397,27 +351,6 @@ class BaseMaisakaReplyGenerator(RetroReplyPromptMixin):
             return "zh-cn"
 
     @staticmethod
-    def _build_replyer_output_instruction() -> str:
-        """构建 replyer 的最终输出格式说明。"""
-
-        locale = BaseMaisakaReplyGenerator._get_prompt_locale()
-        if locale.startswith("en"):
-            return (
-                "Please do not output any extra content (including unnecessary prefixes or suffixes, "
-                "colons, brackets, stickers, plain at, or @). Only output the message content itself."
-            )
-        if locale.startswith("ru"):
-            return "Не добавляйте лишнего (вступлений, окончаний, двоеточий, скобок, стикеров, at или @); выводите только текст сообщения."
-        if locale.startswith("fr"):
-            return "N’ajoutez rien de superflu (préambules, conclusions, deux-points, parenthèses, autocollants, at ou @) ; produisez uniquement le message."
-        if locale.startswith("ja"):
-            return (
-                "余計な内容（不要な前置きや後置き、コロン、括弧、スタンプ、通常の at や @ など）は出力せず、"
-                "発言内容だけを出力してください。"
-            )
-        return "请注意不要输出多余内容(包括不必要的前后缀，冒号，括号，表情包，@等 )，只输出发言内容就好。"
-
-    @staticmethod
     def _build_text_from_message_sequence(message: SessionBackedMessage) -> str:
         text_parts: List[str] = []
         for component in message.raw_message.components:
@@ -460,141 +393,16 @@ class BaseMaisakaReplyGenerator(RetroReplyPromptMixin):
                 return match_text
         return ""
 
-    def _build_system_prompt(
-        self,
-        reply_message: Optional[SessionMessage],
-        reply_reason: str,
-        expression_habits: str = "",
-        stream_id: Optional[str] = None,
-    ) -> str:
-        del reply_message
-        del reply_reason
-        del expression_habits
-        session_id = self._resolve_session_id(stream_id)
-
-        try:
-            system_prompt = self._load_prompt(
-                "maisaka_replyer",
-                bot_name=global_config.bot.nickname,
-                group_chat_attention_block=self._build_chat_attention_block(session_id),
-                replyer_output_instruction=self._build_replyer_output_instruction(),
-                identity=self._build_personality_prompt(),
-                reply_style=self._select_reply_style(),
-            )
-        except Exception:
-            system_prompt = "你是一个友好的 AI 助手，请根据聊天记录自然回复。"
-
-        if session_id:
-            if attention_drift := self._get_reply_scene(session_id).prompts.attention_drift_block():
-                system_prompt += f"\n\n{attention_drift}"
-        return system_prompt
-
-    def _build_reply_instruction(self) -> str:
-        return (
-            "请自然地回复。不要输出多余说明、括号、@ 或额外标记，"
-            "只输出实际要发言的内容。"
-        )
-
-    @staticmethod
-    def _build_chat_anlyze_message(reply_reason: str, chat_anlyze: str) -> str:
+    def _build_chat_anlyze_message(self, reply_reason: str, chat_anlyze: str) -> str:
         """优先使用对话分析，否则使用 Planner 正文，作为对话局面与关键事实注入。"""
 
         thought = chat_anlyze.strip() or reply_reason.strip()
         if not thought:
             return ""
-        locale = BaseMaisakaReplyGenerator._get_prompt_locale()
-        if locale.startswith("en"):
-            return f'Conversation situation and key facts:\n"{thought}"'
-        if locale.startswith("ja"):
-            return f"会話の状況と重要な事実：\n「{thought}」"
-        return f"对话局面与关键事实：\n“{thought}”"
+        return self._load_prompt("reply_conversation_analysis", chat_anlyze=thought).strip()
 
-    def _build_final_user_message(
-        self,
-        chat_history: List[LLMContextMessage],
-        reply_message: Optional[SessionMessage],
-        reply_requirements: str = "",
-        keywords_reaction_prompt: str = "",
-        reply_tool_args: Optional[Dict[str, Any]] = None,
-    ) -> str:
-        current_time = datetime.now().strftime("%Y-%m-%d %H:%M:%S")
-        sections: List[str] = [f"当前时间：{current_time}"]
-        target_message_block = self._build_target_message_block(reply_message)
-        if target_message_block:
-            sections.append(target_message_block)
-        duplicate_target_reply_reminder = str(
-            (reply_tool_args or {}).get(DUPLICATE_TARGET_REPLY_REMINDER_ARG) or ""
-        ).strip()
-        if duplicate_target_reply_reminder:
-            sections.append(duplicate_target_reply_reminder)
-        if reply_requirements.strip():
-            sections.append(reply_requirements.strip())
-        if keywords_reaction_prompt.strip():
-            sections.append(keywords_reaction_prompt.strip())
-        attachment_prompt = self._build_reply_attachment_prompt(
-            chat_history=chat_history,
-            reply_message=reply_message,
-            reply_tool_args=reply_tool_args,
-        )
-        if attachment_prompt.strip():
-            sections.append("【额外发送内容参考】\n" + attachment_prompt.strip())
-        sections.append(self._build_reply_instruction())
-        return "\n\n".join(sections)
 
-    @staticmethod
-    def _build_temporary_reply_style_message(reply_style: str) -> str:
-        normalized_reply_style = reply_style.strip()
-        if not normalized_reply_style:
-            return ""
-        return f"你的说话风格可以尝试：\n{normalized_reply_style}"
 
-    @staticmethod
-    def _build_requested_reply_style_message(reply_style: str) -> str:
-        """根据 reply 工具参数构建本次回复的篇幅要求。"""
-
-        style_messages = REPLY_LENGTH_INSTRUCTIONS.get(get_locale(), REPLY_LENGTH_INSTRUCTIONS["zh-CN"])
-        normalized_reply_style = reply_style.strip() or "正常回复"
-        if normalized_reply_style not in style_messages:
-            logger.warning(f"reply 工具返回了未知的回复风格 {normalized_reply_style!r}，按默认「正常回复」处理")
-            return style_messages["正常回复"]
-        return style_messages[normalized_reply_style]
-
-    def _build_history_messages(
-        self,
-        chat_history: List[LLMContextMessage],
-        enable_visual_message: bool,
-    ) -> List[ContextItem]:
-        items: List[ContextItem] = []
-
-        for message in chat_history:
-            if self._is_replyer_filtered_history_message(message):
-                continue
-
-            if isinstance(message, ContentContextMessage):
-                guided_reply = self._extract_guided_bot_reply(message) if isinstance(message, SessionBackedMessage) else ""
-                if guided_reply:
-                    items.append(
-                        ContextItemBuilder().set_role(RoleType.Assistant).add_text_content(guided_reply).build()
-                    )
-                    continue
-
-                context_items = build_context_items_from_history_entry(
-                    message,
-                    enable_visual_message=enable_visual_message,
-                    limit_emoji_size=True,
-                    max_image_side=IMAGE_QUALITY_MAX_SIDE[global_config.visual.image_quality],
-                )
-                items.extend(context_items)
-                continue
-
-            if isinstance(message, ModelOutputContextMessage):
-                visible_reply = self._extract_visible_assistant_reply(message)
-                if visible_reply:
-                    items.append(
-                        ContextItemBuilder().set_role(RoleType.Assistant).add_text_content(visible_reply).build()
-                    )
-
-        return items
 
     def _resolve_prompt_profile(self, model_info: Optional[ModelInfo] = None) -> str:
         """按本次实际模型选适配；不修改会话实例状态，避免并发请求互相污染。"""
@@ -602,7 +410,7 @@ class BaseMaisakaReplyGenerator(RetroReplyPromptMixin):
             names = (value.strip().lower().replace("_", "-") for value in (model_info.name, model_info.model_identifier))
             if any("mai-replier" in name or name in {"v2p1-contract", "v2p1-raw"} for name in names):
                 return "mai_replier"
-        return "retro" if global_config.chat.creative_mode else "standard"
+        return "reply"
 
     @defer_context_image_encoding(lambda items: items)
     def _build_request_messages(
@@ -618,70 +426,21 @@ class BaseMaisakaReplyGenerator(RetroReplyPromptMixin):
         think_level: int = 1,
         prompt_profile: Optional[str] = None,
     ) -> List[ContextItem]:
-        # 通用复古保留注意事项，Mai Replier 仅保留训练适配的人设。
         profile = prompt_profile or self._resolve_prompt_profile()
-        if profile in {"retro", "mai_replier"}:
-            return self._build_retro_request_messages(
-                mai_replier=profile == "mai_replier",
-                chat_history=chat_history,
-                reply_message=reply_message,
-                reply_reason=reply_reason,
-                expression_habits=expression_habits,
-                reply_requirements=reply_requirements,
-                stream_id=stream_id,
-                think_level=think_level,
-                reply_tool_args=reply_tool_args,
-                enable_visual_message=enable_visual_message,
-            )
-
-        items: List[ContextItem] = []
-        # 关键词反应由内置插件通过 maisaka.replyer.before_request 追加到回复要求里。
-        keywords_reaction_prompt = ""
-        system_prompt = self._build_system_prompt(
+        if profile not in {"reply", "mai_replier"}:
+            raise ValueError(f"不支持的聊天回复模板模式：{profile}")
+        return self._build_reply_request_messages(
+            mai_replier=profile == "mai_replier",
+            chat_history=chat_history,
             reply_message=reply_message,
             reply_reason=reply_reason,
             expression_habits=expression_habits,
-            stream_id=stream_id,
-        )
-        final_user_message = self._build_final_user_message(
-            chat_history=chat_history,
-            reply_message=reply_message,
             reply_requirements=reply_requirements,
-            keywords_reaction_prompt=keywords_reaction_prompt,
+            stream_id=stream_id,
+            enable_visual_message=enable_visual_message,
             reply_tool_args=reply_tool_args,
+            think_level=think_level,
         )
-        temporary_reply_style_message = self._build_temporary_reply_style_message(self._select_temporary_reply_style())
-        chat_anlyze_message = self._build_chat_anlyze_message(
-            reply_reason,
-            str((reply_tool_args or {}).get("chat_anlyze") or ""),
-        )
-        requested_reply_style_message = self._build_requested_reply_style_message(
-            str((reply_tool_args or {}).get("reply_style") or "")
-        )
-
-        items.append(ContextItemBuilder().set_role(RoleType.System).add_text_content(system_prompt).build())
-        items.extend(self._build_history_messages(chat_history, enable_visual_message))
-        if expression_habits.strip():
-            items.append(
-                ContextItemBuilder().set_role(RoleType.User).add_text_content(expression_habits.strip()).build()
-            )
-        if temporary_reply_style_message:
-            items.append(
-                ContextItemBuilder().set_role(RoleType.User).add_text_content(temporary_reply_style_message).build()
-            )
-        if chat_anlyze_message:
-            items.append(ContextItemBuilder().set_role(RoleType.User).add_text_content(chat_anlyze_message).build())
-        items.append(ContextItemBuilder().set_role(RoleType.User).add_text_content(final_user_message).build())
-        if requested_reply_style_message:
-            items.append(
-                ContextItemBuilder().set_role(RoleType.User).add_text_content(requested_reply_style_message).build()
-            )
-        if enable_visual_message:
-            return limit_latest_images_in_messages(
-                items,
-                max_image_num=global_config.visual.max_image_num,
-            )
-        return items
 
     async def _invoke_before_model_request_hook(
         self,
@@ -925,7 +684,7 @@ class BaseMaisakaReplyGenerator(RetroReplyPromptMixin):
             # 同一次保存收集请求和输出图片，监控结果只保留已提交保存的图片引用。
             preview = PromptCLIVisualizer.build_prompt_preview_access(
                 result.request_messages,
-                category=self.request_type,
+                category="replyer",
                 chat_id=self._resolve_session_id(stream_id),
                 request_kind=self.request_type,
                 selection_reason=reply_reason,
@@ -933,6 +692,7 @@ class BaseMaisakaReplyGenerator(RetroReplyPromptMixin):
                 generation_attempts=result.generation_attempts,
                 keep_base64=False,
             )
+            result.prompt_html_uri = preview.preview_web_uri
             result.request_messages = preview.payload["request_items"]
             result.output_items = preview.payload["output_items"]
 
@@ -1047,8 +807,7 @@ class BaseMaisakaReplyGenerator(RetroReplyPromptMixin):
         sub_agent_runner: Optional[Callable[[str], Awaitable[str]]] = None,
         reply_tool_args: Optional[Dict[str, Any]] = None,
         image_recognition_refresher: Optional[Callable[[List[LLMContextMessage]], Awaitable[int]]] = None,
-        retro_history_builder: Optional[Callable[[], Awaitable[List[LLMContextMessage]]]] = None,
-        planner_snapshot: Optional[PlannerRequestSnapshot] = None,
+        reply_history_builder: Optional[Callable[[], Awaitable[List[LLMContextMessage]]]] = None,
         tool_call_id: str = "",
     ) -> Tuple[bool, ReplyGenerationResult]:
         async def finalize(success_value: bool) -> Tuple[bool, ReplyGenerationResult]:
@@ -1072,14 +831,10 @@ class BaseMaisakaReplyGenerator(RetroReplyPromptMixin):
 
         result = ReplyGenerationResult()
         overall_started_at = time.perf_counter()
-        # 一轮生成（含 Hook 重试）固定模式；超级创意要求 Replyer 模型，不复用 Planner 缓存模型。
+        # 一轮生成（含 Hook 重试）固定超级创意的开关与生成语言。
         super_creative_mode = global_config.experimental.super_creative_mode
         creative_language = global_config.experimental.super_creative_language
-        cache_snapshot = (
-            await asyncio.to_thread(planner_snapshot.request.detached_snapshot)
-            if planner_snapshot is not None and not super_creative_mode else None
-        )
-        if self.express_model is None and cache_snapshot is None:
+        if self.express_model is None:
             logger.error("回复模型未初始化")
             result.error_message = "回复模型尚未初始化"
             return await finalize(False)
@@ -1099,7 +854,7 @@ class BaseMaisakaReplyGenerator(RetroReplyPromptMixin):
 
         # 模型可能被插件改写或在请求内切换；选定模型后再召回表达，Mai 不产生无效调用。
         reply_context: Optional[MaisakaReplyContext] = None
-        retro_history: Optional[List[LLMContextMessage]] = None
+        reply_history: Optional[List[LLMContextMessage]] = None
         merged_expression_habits = expression_habits.strip()
         result.selected_expression_ids = list(selected_expression_ids or [])
         result.selected_expression_details = list(selected_expressions or [])
@@ -1126,13 +881,9 @@ class BaseMaisakaReplyGenerator(RetroReplyPromptMixin):
         reasoning_continuation_count = 0
         translation_count = 0
         reasoning_regeneration_requested = False
-        retro_period_regeneration_requested = False
+        mai_period_regeneration_requested = False
         gemini_regeneration_requested = False
-        default_task_name = (
-            "planner" if cache_snapshot is not None
-            else str(getattr(self.express_model, "task_name", "") or "replyer").strip() or "replyer"
-        )
-        cache_model_name = cache_snapshot.model_info.name if isinstance(cache_snapshot, ResponseRequest) else ""
+        default_task_name = self.express_model.task_name
 
         while True:
             try:
@@ -1145,7 +896,7 @@ class BaseMaisakaReplyGenerator(RetroReplyPromptMixin):
                     session_id=preview_chat_id,
                     request_type=self.request_type,
                     task_name=default_task_name,
-                    model_name=cache_model_name,
+                    model_name="",
                     extra_prompt=plugin_reply_prompt,
                     match_text=self._extract_keyword_reaction_match_text(chat_history, reply_message),
                     attempt=retry_count + 1,
@@ -1170,10 +921,6 @@ class BaseMaisakaReplyGenerator(RetroReplyPromptMixin):
             if not active_task_name:
                 active_task_name = default_task_name
             active_model_name = str(before_request_kwargs.get("model_name") or "").strip() or None
-            if cache_snapshot is not None:
-                # 缓存模式绑定实际 Planner 模型，Hook 仍可改写回复要求和内容，但不另选模型。
-                active_task_name = "planner"
-                active_model_name = cache_model_name or None
             active_reply_requirements = self._build_reply_requirements(
                 str(before_request_kwargs.get("extra_prompt") or ""),
                 retry_constraints,
@@ -1197,18 +944,18 @@ class BaseMaisakaReplyGenerator(RetroReplyPromptMixin):
             ) -> List[ContextItem]:
                 nonlocal reply_message
                 nonlocal active_client_type, prompt_ms, prompt_preview, request_messages
-                nonlocal reply_context, retro_history, active_prompt_profile, active_expression_habits
+                nonlocal reply_context, reply_history, active_prompt_profile, active_expression_habits
                 api_provider = getattr(_client, "api_provider", None)
                 active_client_type = str(getattr(api_provider, "client_type", "") or "")
                 prompt_started_at = time.perf_counter()
-                active_prompt_profile = "retro" if cache_snapshot is not None else self._resolve_prompt_profile(model_info)
-                if cache_snapshot is None and "reply_target" in self.generation_dependencies(model_info) and resolve_reply_target is not None:
+                active_prompt_profile = self._resolve_prompt_profile(model_info)
+                if "reply_target" in self.generation_dependencies(model_info) and resolve_reply_target is not None:
                     reply_message = await resolve_reply_target()
                 attempt_history = filtered_history
-                if active_prompt_profile in {"retro", "mai_replier"} and retro_history_builder is not None:
-                    if retro_history is None:
-                        retro_history = await retro_history_builder()
-                    attempt_history = retro_history
+                if reply_history_builder is not None:
+                    if reply_history is None:
+                        reply_history = await reply_history_builder()
+                    attempt_history = reply_history
                 attempt_expression_habits = ""
                 if active_prompt_profile != "mai_replier":
                     if reply_context is None:
@@ -1241,16 +988,13 @@ class BaseMaisakaReplyGenerator(RetroReplyPromptMixin):
                     ]
                 # 视觉请求构建会解码、缩放和编码图片，在工作线程中执行，避免阻塞聊天事件循环。
                 prompt_reply_tool_args = dict(reply_tool_args_for_attempt)
-                if cache_snapshot is not None:
-                    # 对话分析以 assistant 消息承接 Planner；表达选择和 Hook 仍接收完整参数。
-                    prompt_reply_tool_args.pop("chat_anlyze", None)
                 built_request_messages = await asyncio.to_thread(
                     self._build_generation_messages,
                     super_creative_mode=super_creative_mode,
                     language=creative_language,
                     chat_history=attempt_history,
                     reply_message=reply_message,
-                    reply_reason="" if cache_snapshot is not None else reply_reason or "",
+                    reply_reason=reply_reason or "",
                     expression_habits=attempt_expression_habits,
                     reply_requirements=reply_requirements_for_attempt,
                     stream_id=stream_id,
@@ -1280,43 +1024,23 @@ class BaseMaisakaReplyGenerator(RetroReplyPromptMixin):
             llm_started_at = time.perf_counter()
             try:
                 active_model = self.express_model
-                if cache_snapshot is not None or active_task_name != default_task_name:
+                if active_task_name != default_task_name:
                     active_model = self._llm_client_cls(
                         task_name=active_task_name,
                         request_type=self.request_type,
                         session_id=preview_chat_id,
                     )
                 generation_options = self._build_generation_options(active_model_name)
-                if cache_snapshot is None:
-                    generation_result = await active_model.generate_response_with_context(
-                        context_factory=context_factory,
-                        options=generation_options,
-                    )
-                else:
-                    model_info = cache_snapshot.model_info if isinstance(cache_snapshot, ResponseRequest) else None
-                    reply_messages = await context_factory(active_model, model_info)
-                    chat_anlyze = str(active_reply_tool_args.get("chat_anlyze") or "").strip() or (reply_reason or "").strip()
-                    request = await asyncio.to_thread(
-                        build_cached_reply_request, cache_snapshot, reply_messages, chat_anlyze,
-                    )
-                    request_messages = request.context_items
-                    prompt_preview = await asyncio.to_thread(PromptCLIVisualizer.build_prompt_dump_text, request_messages)
-                    if isinstance(request, ACPPlannerSnapshot):
-                        generation_result = await generate_planner_response(
-                            request.config, preview_chat_id, request.context_items, [],
-                            history_item_ids=request.history_item_ids,
-                        )
-                    else:
-                        generation_result = await active_model.generate_response_from_snapshot(request)
-                    if generation_result.tool_calls or generation_result.native_tool_calls:
-                        raise ValueError("回复缓存模式只允许回复正文，不接受工具调用")
+                generation_result = await active_model.generate_response_with_context(
+                    context_factory=context_factory,
+                    options=generation_options,
+                )
                 aggregate_prompt_tokens += generation_result.prompt_tokens
                 aggregate_completion_tokens += generation_result.completion_tokens
                 aggregate_total_tokens += generation_result.total_tokens
 
                 if (
-                    cache_snapshot is None
-                    and reasoning_continuation_count == 0
+                    reasoning_continuation_count == 0
                     and active_client_type == "openai_responses"
                     and self._is_reasoning_only_response(generation_result)
                 ):
@@ -1402,7 +1126,10 @@ class BaseMaisakaReplyGenerator(RetroReplyPromptMixin):
             except HookAbortedError as exc:
                 return await finalize_abort(exc)
             except Exception as exc:
-                logger.exception("Maisaka 回复器调用失败")
+                if isinstance(exc, LLMRequestError):
+                    logger.error(f"Maisaka 回复器调用失败: {exc}")
+                else:
+                    logger.exception("Maisaka 回复器调用失败")
                 result.error_message = str(exc)
                 result.metrics = GenerationMetrics(
                     prompt_ms=prompt_ms,
@@ -1524,14 +1251,14 @@ class BaseMaisakaReplyGenerator(RetroReplyPromptMixin):
                         generation_result.output_items = replace_output_projection(
                             generation_result.output_items, content=response_text, replace_content=True,
                         )
-            # 复古回复偶尔会脱离话题询问句号；每次生成流程仅为这两种句式重生成一次。
+            # Mai Replier 偶尔会脱离话题询问句号；每次生成流程仅为这两种句式重生成一次。
             if (
                 active_prompt_profile == "mai_replier"
-                and not retro_period_regeneration_requested
+                and not mai_period_regeneration_requested
                 and any(phrase in response_text for phrase in ("发个句号", "一个句号"))
                 and retry_count < REPLYER_MAX_HOOK_RETRIES
             ):
-                retro_period_regeneration_requested = True
+                mai_period_regeneration_requested = True
                 retry_requested = True
                 retry_reason = "；".join(filter(None, (
                     retry_reason,

@@ -22,36 +22,93 @@ CLASSICAL_TRANSLATION_INSTRUCTION = (
     "待翻译内容："
 )
 
-REPLY_LENGTH_INSTRUCTIONS = {
+EXPRESSION_INTENT_GUIDANCE: Dict[str, Dict[str, str]] = {
     "zh-CN": {
-        "简短表达": "用一到两句口语短句回复，像平时接话一样自然。",
-        "正常回复": "篇幅与当前话题相称，保持简洁。",
-        "长回复": "本次篇幅以说清问题为准，可以展开解释关键细节。",
+        "reply_act": "你的回复目的是{value}。",
+        "focus": "表达重点是{value}，",
+        "tone": "可以用{value}的语气表达。",
     },
     "en-US": {
-        "简短表达": "Reply in one or two short sentences, as you would in a casual conversation.",
-        "正常回复": "Keep the reply concise and give the topic as much space as it needs.",
-        "长回复": "Use as much space as needed to make the point clear, and expand on key details.",
+        "reply_act": "The purpose of your reply is {value}. ",
+        "focus": "Focus on {value}. ",
+        "tone": "You may use a {value} tone.",
     },
     "ja-JP": {
-        "简短表达": "普段の会話のように、短い一文か二文で自然に返信してください。",
-        "正常回复": "話題に合った長さで、簡潔に返信してください。",
-        "长回复": "要点が伝わる長さを目安に、重要な点は掘り下げて説明してください。",
+        "reply_act": "あなたの返信の目的は{value}です。",
+        "focus": "伝える重点は{value}です。",
+        "tone": "{value}という口調で表現できます。",
     },
-    "ru-RU": {
-        "简短表达": "Ответьте одной или двумя короткими фразами, как в обычном разговоре.",
-        "正常回复": "Отвечайте кратко и соразмерно теме.",
-        "长回复": "Пишите столько, сколько нужно для ясности, и поясните важные детали.",
+}
+
+GROUP_REPLY_GUIDANCE = {
+    "zh-CN": {
+        "简短表达": (
+            "你正在群里聊天,现在请你读读之前的聊天记录，然后给出日常且口语化的回复。\n"
+            "请简短的回复，符合口语习惯，1-2句短句即可。不要长篇大论，无复杂修辞和比喻。"
+        ),
+        "正常回复": (
+            "你正在群里聊天,现在请你读读之前的聊天记录，把握当前的话题，然后给出日常且口语化的回复。\n"
+            "最好一次对一个话题进行回复，免得啰嗦或者回复内容太乱。"
+        ),
+        "长回复": (
+            "你正在群里聊天,现在请你读读之前的聊天记录，把握当前的话题，给出回复。\n"
+            "可以针对问题做出较为详细的评论和说明。"
+        ),
     },
-    "fr-FR": {
-        "简短表达": "Répondez en une ou deux phrases courtes, comme dans une conversation ordinaire.",
-        "正常回复": "Restez concis et adaptez la longueur de la réponse au sujet.",
-        "长回复": "Prenez la place nécessaire pour être clair et développez les points importants.",
+    "en-US": {
+        "简短表达": (
+            "You are chatting in a group. Read the chat log above and reply naturally in a conversational tone.\n"
+            "Keep your reply to one or two short, conversational sentences. Avoid long explanations, elaborate rhetoric, and metaphors."
+        ),
+        "正常回复": (
+            "You are chatting in a group. Read the chat log above, follow the current topic, and reply naturally in a conversational tone.\n"
+            "Try to reply to one topic at a time, so that your reply does not get wordy or messy."
+        ),
+        "长回复": (
+            "You are chatting in a group. Read the chat log above, follow the current topic, and reply.\n"
+            "You may comment on and explain the question in detail."
+        ),
     },
+    "ja-JP": {
+        "简短表达": (
+            "あなたはグループでチャットしています。上の履歴を読み、日常的な話し言葉で返信してください。\n"
+            "口語的な短い一文か二文で簡潔に返信してください。長々と説明せず、複雑な修辞や比喩は使わないでください。"
+        ),
+        "正常回复": (
+            "あなたはグループでチャットしています。上の履歴を読み、今の話題を踏まえて、日常的な話し言葉で返信してください。\n"
+            "一度にひとつの話題へ返信すると、くどくなったり内容が乱れたりしません。"
+        ),
+        "长回复": (
+            "あなたはグループでチャットしています。上の履歴を読み、今の話題を踏まえて返信してください。\n"
+            "質問について詳しく意見を述べたり説明したりして構いません。"
+        ),
+    },
+}
+
+PRIVATE_REPLY_GUIDANCE = {
+    "zh-CN": {
+        "简短表达": "你正在和对方私聊,现在请你读读之前的聊天记录，然后给出日常且口语化的回复。\n请简短的回复，符合口语习惯，1-2句短句即可。不要长篇大论，无复杂修辞和比喻。",
+        "正常回复": "你正在和对方私聊,现在请你读读之前的聊天记录，把握当前的话题，然后给出日常且口语化的回复。\n最好一次对一个话题进行回复，免得啰嗦或者回复内容太乱。",
+        "长回复": "你正在和对方私聊,现在请你读读之前的聊天记录，把握当前的话题，给出回复。\n可以针对问题做出较为详细的评论和说明。"
+    },
+    "en-US": {
+        "简短表达": "You are chatting privately with someone. Read the chat log above and reply naturally in a conversational tone.\nKeep your reply to one or two short, conversational sentences. Avoid long explanations, elaborate rhetoric, and metaphors.",
+        "正常回复": "You are chatting privately with someone. Read the chat log above, follow the current topic, and reply naturally in a conversational tone.\nTry to reply to one topic at a time, so that your reply does not get wordy or messy.",
+        "长回复": "You are chatting privately with someone. Read the chat log above, follow the current topic, and reply.\nYou may comment on and explain the question in detail."
+    },
+    "ja-JP": {
+        "简短表达": "あなたは相手と個別チャットしています。上の履歴を読み、日常的な話し言葉で返信してください。\n口語的な短い一文か二文で簡潔に返信してください。長々と説明せず、複雑な修辞や比喩は使わないでください。",
+        "正常回复": "あなたは相手と個別チャットしています。上の履歴を読み、今の話題を踏まえて、日常的な話し言葉で返信してください。\n一度にひとつの話題へ返信すると、くどくなったり内容が乱れたりしません。",
+        "长回复": "あなたは相手と個別チャットしています。上の履歴を読み、今の話題を踏まえて返信してください。\n質問について詳しく意見を述べたり説明したりして構いません。"
+    }
 }
 
 # 日语沿用现有译本；俄语/法语只保存中文固定行的翻译，不复制模板结构和占位符行。
 TEXT_TRANSLATIONS: Dict[str, Tuple[str, str]] = {
+    "请注意不要输出多余内容(包括不必要的前后缀，冒号，括号，表情包，@等 )，只输出发言内容就好。": (
+        "Не добавляйте лишнего (вступлений, окончаний, двоеточий, скобок, стикеров, at или @); выводите только текст сообщения.",
+        "N’ajoutez rien de superflu (préambules, conclusions, deux-points, parenthèses, autocollants, at ou @) ; produisez uniquement le message.",
+    ),
     "你正在qq群里聊天，下面是群里正在聊的内容，其中包含聊天记录和聊天中的图片": (
         "Вы общаетесь в группе QQ. Ниже приведено текущее обсуждение, включая историю сообщений и изображения из чата.",
         "Vous discutez dans un groupe QQ. Voici les échanges en cours, avec l’historique et les images du chat.",
@@ -100,13 +157,13 @@ TEXT_TRANSLATIONS: Dict[str, Tuple[str, str]] = {
         "Вы общаетесь с {sender_name}. Прочитайте предыдущие сообщения и ответьте просто, непринуждённо и разговорно.",
         "Vous discutez avec {sender_name}. Lisez les échanges précédents et répondez sur un ton simple et familier.",
     ),
-    "{keywords_reaction_prompt}请注意把握聊天内容，不要回复的太有条理。": (
-        "{keywords_reaction_prompt}Учитывайте содержание разговора и не делайте ответ слишком упорядоченным.",
-        "{keywords_reaction_prompt}Tenez compte du contenu de la conversation sans donner une réponse trop structurée.",
+    "请注意把握聊天内容，不要回复的太有条理。": (
+        "Учитывайте содержание разговора и не делайте ответ слишком упорядоченным.",
+        "Tenez compte du contenu de la conversation sans donner une réponse trop structurée.",
     ),
-    "尽量简短一些。{keywords_reaction_prompt}请注意把握聊天内容，不要回复的太有条理。": (
-        "постарайтесь быть краткими.{keywords_reaction_prompt}Учитывайте содержание разговора и не делайте ответ слишком упорядоченным.",
-        "essayez de rester bref.{keywords_reaction_prompt}Tenez compte de la conversation sans donner une réponse trop structurée.",
+    "尽量简短一些。请注意把握聊天内容，不要回复的太有条理。": (
+        "постарайтесь быть краткими. Учитывайте содержание разговора и не делайте ответ слишком упорядоченным.",
+        "essayez de rester bref. Tenez compte de la conversation sans donner une réponse trop structurée.",
     ),
     "请注意不要输出多余内容(包括前后缀，冒号和引号，括号，表情等)，只输出回复内容。": (
         "Не добавляйте лишнего (вступлений и окончаний, двоеточий и кавычек, скобок, эмодзи и т. п.); выводите только текст ответа.",
@@ -116,13 +173,13 @@ TEXT_TRANSLATIONS: Dict[str, Tuple[str, str]] = {
         "На основе разговора составьте новый ответ и продолжите со своей точки зрения. Сохраняйте связность контекста.",
         "À partir de la conversation, composez une nouvelle réponse et poursuivez selon votre propre point de vue. Préservez la cohérence du contexte.",
     ),
-    "尽量简短一些。{keywords_reaction_prompt}请注意把握聊天内容，不要回复的太有条理，可以有个性。": (
-        "Постарайтесь быть краткими.{keywords_reaction_prompt}Учитывайте содержание разговора, не делайте ответ слишком упорядоченным; можно проявить индивидуальность.",
-        "Essayez de rester bref.{keywords_reaction_prompt}Tenez compte de la conversation sans trop structurer votre réponse ; vous pouvez montrer votre personnalité.",
+    "尽量简短一些。请注意把握聊天内容，不要回复的太有条理，可以有个性。": (
+        "Постарайтесь быть краткими. Учитывайте содержание разговора, не делайте ответ слишком упорядоченным; можно проявить индивидуальность.",
+        "Essayez de rester bref. Tenez compte de la conversation sans trop structurer votre réponse ; vous pouvez montrer votre personnalité.",
     ),
-    "{keywords_reaction_prompt}请注意把握聊天内容，不要回复的太有条理，可以有个性。": (
-        "{keywords_reaction_prompt}Учитывайте содержание разговора, не делайте ответ слишком упорядоченным; можно проявить индивидуальность.",
-        "{keywords_reaction_prompt}Tenez compte du contenu de la conversation sans trop structurer votre réponse ; vous pouvez montrer votre personnalité.",
+    "请注意把握聊天内容，不要回复的太有条理，可以有个性。": (
+        "Учитывайте содержание разговора, не делайте ответ слишком упорядоченным; можно проявить индивидуальность.",
+        "Tenez compte du contenu de la conversation sans trop structurer votre réponse ; vous pouvez montrer votre personnalité.",
     ),
     "请注意不要输出多余内容(包括冒号和引号，括号，表情包，at或 @等 )。": (
         "Не добавляйте лишнего (двоеточий и кавычек, скобок, стикеров, at или @ и т. п.).",
@@ -131,10 +188,6 @@ TEXT_TRANSLATIONS: Dict[str, Tuple[str, str]] = {
     "现在请你读读之前的聊天记录，把握当前的话题，然后给出日常且口语化的回复，": (
         "Прочитайте предыдущие сообщения, уловите текущую тему и ответьте в повседневной разговорной манере,",
         "Lisez les échanges précédents, saisissez le sujet actuel, puis répondez de façon quotidienne et familière,",
-    ),
-    "你可以参考【回复信息参考】中的信息，但是视情况而定，不用完全遵守。": (
-        "Можно учитывать сведения из 【Справочной информации для ответа】, но в зависимости от ситуации необязательно следовать им полностью.",
-        "Vous pouvez vous inspirer des 【Informations de référence pour la réponse】, mais sans devoir les suivre entièrement : adaptez-vous à la situation.",
     ),
     "你现在以自己的身份撰写一篇完整的文章或社区帖子。结合给定材料和自己的兴趣表达观察、感想与思考，保留自己的性格和口吻。": (
         "Вы пишете полноценную статью или пост от своего имени. Опираясь на предоставленные материалы и свои интересы, выражайте наблюдения, впечатления и размышления, сохраняя свой характер и тон.",

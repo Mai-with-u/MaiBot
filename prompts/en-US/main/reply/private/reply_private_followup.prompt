@@ -1,0 +1,12 @@
+{extra_info_block}{expression_habits_block}
+
+You are chatting with {sender_name}. This is what you talked about before:
+{time_block}
+{dialogue_prompt}
+
+{reply_target_block}
+{planner_reasoning}
+Based on the chat, organize a new reply and keep talking from your own point of view. Keep the context coherent.
+{reply_guidance}
+{reply_style}
+Do not output anything extra (no colons, quotes, brackets, stickers, plain at, or @).

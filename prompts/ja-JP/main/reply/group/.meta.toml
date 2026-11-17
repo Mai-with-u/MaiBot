@@ -1,0 +1,9 @@
+[reply_group_system]
+display_name = "グループ · System"
+advanced = false
+description = "人格、チャットの背景、注意力の指示を含む System テンプレート。"
+
+[reply_group]
+display_name = "グループ · User"
+advanced = false
+description = "履歴と今回の返信要件を一つの User メッセージにまとめる返信テンプレート。"

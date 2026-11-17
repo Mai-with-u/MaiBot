@@ -11,7 +11,6 @@ import json
 import pytest
 
 from src.config.model_configs import ModelInfo
-from src.config.config import global_config
 from src.core.tooling import ToolExecutionResult, ToolInvocation, ToolSpec
 from src.llm_models.model_client.base_client import ResponseRequest
 from src.llm_models.model_client.openai_client import _convert_messages
@@ -37,11 +36,6 @@ from src.maisaka.tool_discovery import TOOL_LOADED_INSTRUCTION
 from src.maisaka.tool_result_condenser import should_condense_tool_result
 
 
-@pytest.fixture(autouse=True)
-def tail_loading_enabled(monkeypatch):
-    monkeypatch.setattr(global_config.experimental, "tool_search_tail_loading", True)
-
-
 def plugin_spec():
     return ToolSpec(name="plugin_query", description="查询插件", provider_name="plugin", provider_type="plugin", parameters_schema={"type": "object", "properties": {"query": {"type": "string"}}, "required": ["query"]})
 
@@ -53,7 +47,6 @@ def runtime(spec=None):
     chat._chat_history = []
     chat.deferred_tool_specs_by_name = {}
     chat.discovered_tool_names = set()
-    chat._tool_search_tail_loading = True
     chat._current_action_tool_names = set()
     search = get_tool_spec()
     search.metadata.update(builtin_stage="action", visibility="visible")
@@ -142,9 +135,7 @@ async def test_invalid_search_arguments_fail_explicitly(arguments):
 
 
 @pytest.mark.asyncio
-@pytest.mark.parametrize("enabled", [False, True])
-async def test_focus_search_routes_target_in_both_modes(monkeypatch, enabled):
-    monkeypatch.setattr(global_config.experimental, "tool_search_tail_loading", enabled)
+async def test_focus_search_routes_target_and_keeps_definitions_stable():
     spec = plugin_spec()
     chat = runtime(spec)
     chat.expand_message_id_aliases = lambda arguments: arguments
@@ -164,16 +155,10 @@ async def test_focus_search_routes_target_in_both_modes(monkeypatch, enabled):
     assert [tool["name"] for tool in before] == ["tool_search"]
     notice = router.deferred_notice()
     _, result, _, _ = await router.invoke("tool_search", {"query": "plugin_query", "session_id": chat.session_id}, "search", "")
-    if enabled:
-        schema = json.loads(result.get_history_content())["tools"][0]["parameters"]
-        assert schema["properties"]["session_id"]["enum"] == [chat.session_id]
-    else:
-        assert "tools" not in result.structured_content
+    schema = json.loads(result.get_history_content())["tools"][0]["parameters"]
+    assert schema["properties"]["session_id"]["enum"] == [chat.session_id]
     await router.refresh()
-    if enabled:
-        assert router.definitions() == before
-    else:
-        assert [tool["name"] for tool in router.definitions()] == ["tool_search", "plugin_query"]
+    assert router.definitions() == before
     assert router.deferred_notice() == notice
     invocation, executed, target, _ = await router.invoke("plugin_query", {"query": "games", "session_id": chat.session_id}, "call", "")
     assert executed.success and target is chat
@@ -196,35 +181,3 @@ def test_old_native_search_history_is_only_replayed_as_plain_function():
     request = ResponseRequest(model_info=ModelInfo(name="model", model_type="llm", model_identifier="model", api_provider="provider"), context_items=[call])
     wire = _convert_context_items([call], request, "provider", "https://example.test")
     assert wire == [{"type": "function_call", "call_id": "old-search", "name": "tool_search", "arguments": '{"query":"plugin_query"}'}]
-
-
-@pytest.mark.asyncio
-async def test_disabling_experiment_restores_legacy_activation(monkeypatch):
-    monkeypatch.setattr(global_config.experimental, "tool_search_tail_loading", False)
-    chat = runtime()
-    engine = MaisakaReasoningEngine(chat)
-    engine._turn_passive_replyer = False
-    before, directory = await engine._build_action_tool_definitions()
-    result = await handle_tool(BuiltinToolRuntimeContext(engine, chat), ToolInvocation(tool_name="tool_search", arguments={"query": "plugin_query"}))
-    assert "status" not in result.structured_content
-    assert "tools" not in result.structured_content
-    assert "加入可用工具列表" in result.content
-    append_search(chat, result)
-    after, next_directory = await engine._build_action_tool_definitions()
-    assert [tool["name"] for tool in before] == ["tool_search"]
-    assert [tool["name"] for tool in after] == ["tool_search", "plugin_query"]
-    assert "plugin_query" in directory and next_directory == ""
-
-
-@pytest.mark.asyncio
-async def test_experiment_switch_takes_effect_at_next_tool_decision(monkeypatch):
-    chat = runtime()
-    engine = MaisakaReasoningEngine(chat)
-    engine._turn_passive_replyer = False
-    await engine._build_action_tool_definitions()
-    monkeypatch.setattr(global_config.experimental, "tool_search_tail_loading", False)
-    result = await handle_tool(BuiltinToolRuntimeContext(engine, chat), ToolInvocation(tool_name="tool_search", arguments={"query": "plugin_query"}))
-    assert result.structured_content["status"] == "loaded"
-    append_search(chat, result)
-    after, _ = await engine._build_action_tool_definitions()
-    assert [tool["name"] for tool in after] == ["tool_search", "plugin_query"]

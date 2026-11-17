@@ -182,11 +182,10 @@ class GitMirrorService:
                 }
 
         target = f"origin/{branch}" if branch else "@{upstream}"
-        return await self._apply_plugin_code(repository_path, target, force, expected_commit, branch)
+        return await self._apply_plugin_code(repository_path, target, force, expected_commit)
 
     async def _apply_plugin_code(
         self, repository_path: Path, target: str, force: bool, expected_commit: Optional[str] = None,
-        branch: Optional[str] = None,
     ) -> Dict[str, Any]:
         def apply() -> Dict[str, Any]:
             commit = git(repository_path, "rev-parse", target).strip()
@@ -198,14 +197,9 @@ class GitMirrorService:
             manifest = json.loads(git(repository_path, "show", f"{selected}:_manifest.json"))
             if manifest["id"] != installed["id"]:
                 return {"success": False, "status_code": 400, "error": "新版本插件 ID 与已安装插件不一致"}
-            conflict = update_conflict(repository_path, selected)
+            conflict = update_conflict(repository_path, repository_path, selected)
             if conflict and not force:
                 return {"success": False, "status_code": 409, "error": conflict["message"], "conflict": conflict}
-            if not force:
-                if branch:
-                    git(repository_path, "checkout", branch)
-                git(repository_path, "merge", "--ff-only", selected)
-                return {"success": True, "path": str(repository_path)}
             backup = repository_path.parent / ".update_backups" / f"{repository_path.name}.{uuid4().hex}"
             backup_code(repository_path, backup, selected)
             try:
@@ -250,7 +244,7 @@ class GitMirrorService:
                 return {"success": False, "error": f"Git fetch 失败: {fetched.stderr.strip() or fetched.stdout.strip()}",
                         "commands": executed, "mirror_used": source.id, "status_code": 502}
             # FETCH_HEAD 是本次实际下载的分支；不改变 origin 身份或触碰用户配置文件。
-            return await self._apply_plugin_code(repository_path, "FETCH_HEAD", force, expected_commit, branch)
+            return await self._apply_plugin_code(repository_path, "FETCH_HEAD", force, expected_commit)
         except (FileNotFoundError, subprocess.TimeoutExpired) as exc:
             return {"success": False, "error": str(exc), "commands": executed}
 

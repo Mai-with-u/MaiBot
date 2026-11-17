@@ -1,0 +1,11 @@
+{extra_info_block}{expression_habits_block}
+
+あなたは{sender_name}とチャットしています。これは以前のやり取りです:
+{time_block}
+{dialogue_prompt}
+
+{reply_target_block}
+{planner_reasoning}
+{reply_guidance}
+{reply_style}
+余計な内容（不要な前置きや後置き、コロン、引用符、括弧、スタンプなど）は出力せず、返信内容だけを出力してください。

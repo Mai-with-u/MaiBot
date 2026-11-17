@@ -19,7 +19,7 @@ from .prompting import GroupPromptProfile
 
 class GroupChatScene(ChatScene):
     is_group = True
-    silent_reason = "回复频率为 0"
+    silent_reason = "查看频率为 0"
     prompts = GroupPromptProfile()
 
     def create_scheduler(self, runtime: "MaisakaHeartFlowChatting") -> "MessageTurnScheduler":
@@ -49,7 +49,7 @@ class GroupChatScene(ChatScene):
     def effective_reply_frequency(self, runtime: "MaisakaHeartFlowChatting") -> float:
         if runtime._is_focus_mode_active_for_current_chat():
             return 1.0
-        if self.base_reply_frequency(runtime.session_id) <= 0 or runtime._talk_frequency_adjust <= 0:
+        if runtime._talk_frequency_adjust <= 0:
             return 0.0
         talk_value = float(ChatConfigUtils.get_talk_value(runtime.session_id, is_group_chat=True))
         if talk_value <= 0:

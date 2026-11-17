@@ -1,0 +1,14 @@
+[reply_private_system]
+display_name = "私聊 · System"
+advanced = false
+description = "System 模板：人设、当前聊天背景与注意力提示。"
+
+[reply_private]
+display_name = "私聊 · User"
+advanced = false
+description = "回复模板，聊天记录和本轮回复要求组织为一条 User 消息。"
+
+[reply_private_followup]
+display_name = "私聊补充发言 · User"
+advanced = false
+description = "回复模板，聊天记录和本轮回复要求组织为一条 User 消息。"

@@ -47,13 +47,13 @@ function buildPerson(overrides: Partial<PersonInfo> = {}): PersonInfo {
     id: 1,
     is_known: true,
     person_id: 'p-1',
+    individual_id: 'individual-1',
+    source_person_name: '麦麦',
     person_name: '麦麦',
-    name_reason: '自称',
     platform: 'qq',
     user_id: '10001',
     nickname: '麦麦酱',
     group_nick_name: null,
-    memory_points: null,
     know_times: 3,
     know_since: 1700000000,
     last_know: 1700000600,
@@ -96,6 +96,7 @@ describe('getPersonList', () => {
         is_known: false,
         platform: undefined,
         user_id: '10086',
+        exclude_numeric_user_ids: undefined,
       },
       errorMessage: '获取人物列表失败',
     })
@@ -184,7 +185,7 @@ describe('deletePerson', () => {
 
 describe('getPersonStats', () => {
   it('从 stats/summary 端点读取并解包 data 字段', async () => {
-    const stats = { total: 10, known: 6, unknown: 4, platforms: { qq: 10 } }
+    const stats = { total: 10, individuals: 8, linked_individuals: 2, known: 6, unknown: 4, platforms: { qq: 10 } }
     getMock.mockResolvedValue({ success: true, data: stats })
 
     await expect(getPersonStats()).resolves.toBe(stats)

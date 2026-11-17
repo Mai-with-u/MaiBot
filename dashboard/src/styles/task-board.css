@@ -149,6 +149,16 @@
   margin-top: 0.625rem;
 }
 
+/* 奇数项时补齐最后一行空位的分割线。 */
+[data-task-board-list]:has(> [data-task-row]:last-child:nth-child(odd))::after {
+  content: '';
+  border-left: 1px solid hsl(var(--border));
+}
+
+[data-task-board-list]:has(> [data-task-row]:last-child:nth-child(2n + 3))::after {
+  border-top: 1px dashed hsl(var(--border));
+}
+
 [data-task-row] {
   display: grid;
   grid-template-columns: 0.5625rem 5.5rem minmax(0, 1fr) auto;
@@ -204,6 +214,10 @@
 @media (max-width: 1100px) {
   [data-task-board-list] {
     grid-template-columns: minmax(0, 1fr);
+  }
+
+  [data-task-board-list]::after {
+    display: none;
   }
 
   [data-task-row]:nth-child(even) {
@@ -326,7 +340,8 @@
   border-color: var(--mil-lo);
 }
 
-:root[data-dashboard-style='millennium'] :is([data-task-card-foot], [data-task-row], [data-task-order] > li) {
+:root[data-dashboard-style='millennium'] :is([data-task-card-foot], [data-task-row], [data-task-order] > li),
+:root[data-dashboard-style='millennium'] [data-task-board-list]::after {
   border-color: var(--mil-lo);
 }
 

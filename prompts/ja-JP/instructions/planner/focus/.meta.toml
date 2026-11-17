@@ -1,0 +1,9 @@
+[planner_turn_focus]
+display_name = "Focus の今回の行動指示"
+advanced = false
+description = "Focus の共有計画に使う指示。グループと Focus が有効な個別チャットに適用する。"
+
+[planner_action_judge_focus]
+display_name = "Focus の行動判定補足"
+advanced = true
+description = "Focus の共有計画に使う指示。グループと Focus が有効な個別チャットに適用する。"

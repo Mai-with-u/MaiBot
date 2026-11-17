@@ -20,6 +20,7 @@ import { parse as parseToml } from 'smol-toml'
 
 import { DesktopPetCurrentTaskField } from '@/components/DesktopPetCurrentTaskField'
 import { DesktopPetSkinField } from '@/components/DesktopPetSkinField'
+import { DesktopPetSoundField } from '@/components/DesktopPetSoundField'
 import { AgentACPField, AgentConnectionSettings, AgentCustomArgs, AgentDesktopField } from '@/components/agent/AgentConnectionSettings'
 import { Alert, AlertDescription } from '@/components/ui/alert'
 import {
@@ -80,7 +81,6 @@ import {
   ExpressionLearningListHook,
   LearningBlacklistHook,
   FocusWhitelistHook,
-  LightweightPrivateChatsHook,
   JargonGroupsHook,
   JargonLearningListHook,
   HiddenFieldHook,
@@ -357,6 +357,7 @@ function BotConfigPageContent() {
     const hookEntries = [
       ['desktop_pet.skin_id', DesktopPetSkinField],
       ['desktop_pet.show_current_task', DesktopPetCurrentTaskField],
+      ['desktop_pet.message_sound', DesktopPetSoundField, 'wrapper'],
       ['agent.connection', AgentConnectionSettings, 'wrapper'],
       ['agent.desktop_manifest', AgentDesktopField, 'wrapper'],
       ['agent.acp_args', AgentCustomArgs, 'wrapper'],
@@ -375,7 +376,6 @@ function BotConfigPageContent() {
       ['chat.reply_timing.talk_rule_groups', ChatTalkRuleGroupsHook],
       ['chat.reply_timing.private_reply_pause_rules', PrivateReplyPauseRulesHook],
       ['experimental.focus_chat_whitelist', FocusWhitelistHook],
-      ['experimental.lightweight_private_chats', LightweightPrivateChatsHook],
       ['experimental.focus_groups', FocusGroupsHook],
       ['expression.expression_groups', ExpressionGroupsHook],
       ['expression.learning_list', ExpressionLearningListHook],

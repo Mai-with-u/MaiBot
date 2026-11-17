@@ -60,7 +60,7 @@ engine = create_engine(
 # 已加载到内存中的 ORM 实例属性被标记为过期。否则会话关闭后实例进入 detached 状态，
 # 任何属性访问都会触发刷新而抛出
 # "Instance ... is not bound to a Session; attribute refresh operation cannot proceed".
-# 当前数据库模型不包含 SQLAlchemy Relationship，因此不会引入 lazy-load 副作用。
+# 跨会话使用的关联需要预加载；PersonInfo.individual 使用 joined 加载，避免会话关闭后再发起查询。
 SessionLocal = sessionmaker(
     autocommit=False,
     autoflush=False,

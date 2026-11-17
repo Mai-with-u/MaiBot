@@ -401,7 +401,18 @@ class BotSupervisor:
         """按登记顺序逐个启动：前一个就绪或失败后再启动下一个，避免多个大数据迁移同时争抢磁盘。"""
         if self._start_blocker():
             return []
+        bots = await asyncio.to_thread(self.workspace.registry.list_bots)
+        if not any(bot.desired_state == "running" and bot.initialization == "initialized" for bot in bots):
+            print("没有待自动启动的 Bot，宿主正在等待启动操作。请在 WebUI 机器人管理页启动 Bot。", flush=True)
+            for bot in bots:
+                print(
+                    f"  {bot.name}: 期望状态={bot.desired_state}，初始化状态={bot.initialization}；"
+                    f"启动命令：uv run maibot host start --bot-id {bot.bot_id}",
+                    flush=True,
+                )
+            return []
         if self.prepare_dependencies is not None:
+            print("正在检查并准备插件依赖，完成后启动 Bot…", flush=True)
             try:
                 await self.prepare_dependencies()
             except Exception as exc:

@@ -1,0 +1,5 @@
+[webui_ai_search]
+display_name = "WebUI AI 検索"
+advanced = true
+description = "自然言語の意図に基づき、WebUI が提供する実在のページと設定候補から関連結果を選択します。"
+

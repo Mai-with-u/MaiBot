@@ -1,3 +1,5 @@
+import { USER_DATA_MIGRATION_ENABLED } from '@/lib/release-features'
+import { UserDataInjection } from '@/components/user-data-injection'
 import { useHostRuntime } from '@/host/state'
 import { useNavigate, useSearch } from '@tanstack/react-router'
 import { useTranslation } from 'react-i18next'
@@ -19,7 +21,12 @@ export function DataTransferPage() {
 
 function BotDataTransferPage() {
   const { t } = useTranslation()
-  const { tab = 'transfer' } = useSearch({ from: '/protected/data-transfer' })
+  const {
+    tab = 'transfer',
+    source,
+    target,
+    fromMapping,
+  } = useSearch({ from: '/protected/data-transfer' })
   const navigate = useNavigate()
   const { flags } = useFeatureFlags()
   const viewModel = useDataTransfer()
@@ -27,6 +34,7 @@ function BotDataTransferPage() {
     <TabsList aria-label={t('sidebar.menu.dataTransfer')} className="shrink-0">
       <TabsTrigger value="transfer">{t('dataManagement.transfer')}</TabsTrigger>
       <TabsTrigger value="chat-migration">聊天迁移</TabsTrigger>
+      {USER_DATA_MIGRATION_ENABLED && <TabsTrigger value="user-migration">用户数据灌注</TabsTrigger>}
       {(flags?.files || tab === 'files') && (
         <TabsTrigger value="files">{t('files.title')}</TabsTrigger>
       )}
@@ -41,15 +49,31 @@ function BotDataTransferPage() {
     >
       <div className="mx-auto w-full max-w-6xl space-y-6 p-4 sm:p-6">
         <Tabs
-          value={tab}
+          value={tab === 'user-migration' && !USER_DATA_MIGRATION_ENABLED ? 'transfer' : tab}
           onValueChange={(value) => {
-            if (value !== 'transfer' && value !== 'files' && value !== 'chat-migration') return
-            void navigate({ to: '/data-transfer', search: { tab: value === 'transfer' ? undefined : value } })
+            if (
+              value !== 'transfer' &&
+              value !== 'files' &&
+              value !== 'chat-migration' &&
+              value !== 'user-migration'
+            )
+              return
+            void navigate({
+              to: '/data-transfer',
+              search: { tab: value === 'transfer' ? undefined : value },
+            })
           }}
           className="min-w-0"
         >
-          <TabsContent value="transfer" forceMount className="mt-0 space-y-6 data-[state=inactive]:hidden">
-            <DataTransferWorkspace viewModel={viewModel} headerActions={tab === 'transfer' ? pageTabs : undefined} />
+          <TabsContent
+            value="transfer"
+            forceMount
+            className="mt-0 space-y-6 data-[state=inactive]:hidden"
+          >
+            <DataTransferWorkspace
+              viewModel={viewModel}
+              headerActions={tab === 'transfer' ? pageTabs : undefined}
+            />
             <Separator variant="groove" />
             <details id="local-cache" className="group">
               <summary className="cursor-pointer py-2 text-sm font-medium">本地缓存管理</summary>
@@ -61,6 +85,14 @@ function BotDataTransferPage() {
           <TabsContent value="chat-migration" className="mt-0">
             <ChatMigrationWorkspace headerActions={pageTabs} />
           </TabsContent>
+          {USER_DATA_MIGRATION_ENABLED && <TabsContent value="user-migration" className="mt-0 space-y-4">
+            {pageTabs}
+            <UserDataInjection
+              initialSource={source}
+              initialTarget={target}
+              fromMapping={fromMapping}
+            />
+          </TabsContent>}
           <TabsContent value="files" className="mt-0">
             <FilesPage headerActions={pageTabs} />
           </TabsContent>

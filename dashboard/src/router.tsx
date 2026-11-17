@@ -1,3 +1,5 @@
+import { USER_DATA_MIGRATION_ENABLED } from '@/lib/release-features'
+import { migrationUserId } from '@/lib/person-migration-navigation'
 import {
   createRootRoute,
   createRoute,
@@ -28,17 +30,20 @@ const rootRoute = createRootRoute({
       return
     }
 
-    return checkAuth().then((authenticated) => {
-      if (!authenticated) {
+    return checkAuth().then(
+      (authenticated) => {
+        if (!authenticated) {
+          throw redirect({ to: '/auth' })
+        }
+        if (getHostRuntime().host && !getHostRuntime().selected_bot_running) {
+          throw redirect({ to: '/bots' })
+        }
+      },
+      () => {
+        // 认证服务未就绪时，由认证页显示等待连接并重试。
         throw redirect({ to: '/auth' })
       }
-      if (getHostRuntime().host && !getHostRuntime().selected_bot_running) {
-        throw redirect({ to: '/bots' })
-      }
-    }, () => {
-      // 认证服务未就绪时，由认证页显示等待连接并重试。
-      throw redirect({ to: '/auth' })
-    })
+    )
   },
 })
 
@@ -56,7 +61,7 @@ const setupRoute = createRoute({
   component: lazyRouteComponent(() => import('./routes/setup/index.tsx'), 'SetupPage'),
 })
 
-// 受保护的路由 Root（带外壳：按设置使用经典布局或麦麦观察布局）
+// 受保护的路由 Root（统一使用麦麦观察布局）
 const protectedRoute = createRoute({
   getParentRoute: () => rootRoute,
   id: 'protected',
@@ -106,7 +111,6 @@ const statisticsRoute = createRoute({
   component: lazyRouteComponent(() => import('./routes/logs'), 'StatisticsLogViewerPage'),
 })
 
-
 // 配置路由 - 麦麦主程序配置
 const botConfigRoute = createRoute({
   getParentRoute: () => protectedRoute,
@@ -132,7 +136,8 @@ const desktopPetRoute = createRoute({
   beforeLoad: async () => {
     const { host, selected_bot_running } = getHostRuntime()
     if (host && !selected_bot_running) throw redirect({ to: '/bots', replace: true })
-    if (!isDesktopPetEnabled(await getBotConfig())) throw redirect({ to: '/config/bot', replace: true })
+    if (!isDesktopPetEnabled(await getBotConfig()))
+      throw redirect({ to: '/config/bot', replace: true })
   },
   component: lazyRouteComponent(() => import('./routes/desktop-pet'), 'DesktopPetPage'),
 })
@@ -164,7 +169,9 @@ const emojiManagementRoute = createRoute({
 const learningRoute = createRoute({
   getParentRoute: () => protectedRoute,
   path: '/resource/learning',
-  validateSearch: (search: Record<string, unknown>): { tab: 'expression' | 'jargon' | 'emoji' } => ({
+  validateSearch: (
+    search: Record<string, unknown>
+  ): { tab: 'expression' | 'jargon' | 'emoji' } => ({
     tab: search.tab === 'jargon' || search.tab === 'emoji' ? search.tab : 'expression',
   }),
   component: lazyRouteComponent(() => import('./routes/resource/learning'), 'LearningPage'),
@@ -183,7 +190,7 @@ const expressionManagementRoute = createRoute({
 const personManagementRoute = createRoute({
   getParentRoute: () => protectedRoute,
   path: '/resource/person',
-  component: lazyRouteComponent(() => import('./routes/person'), 'PersonManagementPage'),
+  component: lazyRouteComponent(() => import('./routes/contacts'), 'ContactsPage'),
 })
 
 // 旧黑话地址进入学习页的黑话页签。
@@ -256,7 +263,9 @@ const manageRoute = createRoute({
 const chatRoute = createRoute({
   getParentRoute: () => protectedRoute,
   path: '/chat',
-  validateSearch: (search: Record<string, unknown>): { setupTrial?: boolean; observe?: string; agent?: boolean } => ({
+  validateSearch: (
+    search: Record<string, unknown>
+  ): { setupTrial?: boolean; observe?: string; agent?: boolean } => ({
     agent: search.agent === true || search.agent === 'true' ? true : undefined,
     setupTrial: search.setupTrial === true || search.setupTrial === 'true' ? true : undefined,
     observe: typeof search.observe === 'string' && search.observe ? search.observe : undefined,
@@ -268,7 +277,7 @@ const chatRoute = createRoute({
 const chatManagementRoute = createRoute({
   getParentRoute: () => protectedRoute,
   path: '/chat-management',
-  component: lazyRouteComponent(() => import('./routes/chat-management'), 'ChatManagementPage'),
+  component: lazyRouteComponent(() => import('./routes/contacts'), 'ContactsPage'),
 })
 
 // 外部程序嵌入用聊天室路由，不挂载 dashboard 顶栏
@@ -295,11 +304,22 @@ const pluginsEmbedRoute = createRoute({
 const pluginsRoute = createRoute({
   getParentRoute: () => protectedRoute,
   path: '/plugins',
-  beforeLoad: ({ search }) => { rememberMarketInstall(search) },
-  validateSearch: (search: Record<string, unknown>): { pluginId?: string; installPluginId?: string; installVersion?: string } => ({
+  beforeLoad: ({ search }) => {
+    rememberMarketInstall(search)
+  },
+  validateSearch: (
+    search: Record<string, unknown>
+  ): { pluginId?: string; installPluginId?: string; installVersion?: string } => ({
     pluginId: typeof search.pluginId === 'string' ? search.pluginId.trim() || undefined : undefined,
-    installPluginId: typeof search.installPluginId === 'string' && /^[\p{L}\p{N}_.-]{1,256}$/u.test(search.installPluginId) ? search.installPluginId : undefined,
-    installVersion: typeof search.installVersion === 'string' && /^[\w.+-]{1,80}$/.test(search.installVersion) ? search.installVersion : undefined,
+    installPluginId:
+      typeof search.installPluginId === 'string' &&
+      /^[\p{L}\p{N}_.-]{1,256}$/u.test(search.installPluginId)
+        ? search.installPluginId
+        : undefined,
+    installVersion:
+      typeof search.installVersion === 'string' && /^[\w.+-]{1,80}$/.test(search.installVersion)
+        ? search.installVersion
+        : undefined,
   }),
   component: lazyRouteComponent(
     () => import('./routes/plugins/PluginMarketplacePage'),
@@ -368,8 +388,21 @@ const mcpSettingsRoute = createRoute({
 const dataTransferRoute = createRoute({
   getParentRoute: () => protectedRoute,
   path: '/data-transfer',
-  validateSearch: (search: Record<string, unknown>): { tab?: 'transfer' | 'files' | 'chat-migration' } => ({
-    tab: search.tab === 'files' || search.tab === 'chat-migration' ? search.tab : undefined,
+  validateSearch: (
+    search: Record<string, unknown>
+  ): {
+    tab?: 'transfer' | 'files' | 'chat-migration' | 'user-migration'
+    source?: string
+    target?: string
+    fromMapping?: boolean
+  } => ({
+    tab:
+      search.tab === 'files' || search.tab === 'chat-migration' || (USER_DATA_MIGRATION_ENABLED && search.tab === 'user-migration')
+        ? search.tab
+        : undefined,
+    source: migrationUserId(search.source),
+    target: migrationUserId(search.target),
+    fromMapping: search.fromMapping === true || search.fromMapping === 'true' ? true : undefined,
   }),
   component: lazyRouteComponent(() => import('./routes/data-transfer'), 'DataTransferPage'),
 })

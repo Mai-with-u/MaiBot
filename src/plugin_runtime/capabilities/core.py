@@ -45,7 +45,8 @@ def _resolve_llm_capability_route(
     if requested_model_name:
         return _DEFAULT_PLUGIN_LLM_TASK, requested_model_name
 
-    if model_alias in available_tasks:
+    # 已撤销的 emoji 仍作为旧 SDK 的任务名交给服务层解析到 planner。
+    if model_alias in available_tasks or model_alias == "emoji":
         return model_alias, None
 
     return _DEFAULT_PLUGIN_LLM_TASK, model_alias or None

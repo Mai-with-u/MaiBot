@@ -7,8 +7,8 @@ import pytest
 from src.webui.routers import reasoning_process as routes
 
 
-def write_record(root: Path, session: str, stem: int, text: str) -> Path:
-    path = root / "replyer" / session / f"{stem}.json"
+def write_record(root: Path, session: str, stem: int, text: str, stage: str = "replyer") -> Path:
+    path = root / stage / session / f"{stem}.json"
     path.parent.mkdir(parents=True, exist_ok=True)
     path.write_text(json.dumps({
         "metadata": {"model_name": "test-model", "duration_ms": 10},
@@ -41,6 +41,27 @@ def query(**overrides):
     params = dict(stage="replyer", session="chat-a", action="", search="", target_stem="", page=1, page_size=10)
     params.update(overrides)
     return routes.list_reasoning_prompt_files(**params).model_dump()
+
+
+def test_reply_history_includes_request_type_directory(history):
+    latest = write_record(history, "chat-a", 900_000, "latest-reply", stage="maisaka.replyer")
+    write_record(history, "chat-a", 100_002, "answer-0", stage="maisaka.replyer")
+    write_record(history, "chat-c", 920_000, "alias-only-session", stage="maisaka.replyer")
+
+    result = query()
+    assert result["total"] == 24
+    assert result["items"][0]["stem"] == "900000"
+    assert result["items"][0]["output_preview"] == "latest-reply"
+    assert result["items"][0]["json_path"] == latest.relative_to(history).as_posix()
+    assert routes._resolve_prompt_log_path(result["items"][0]["json_path"], {".json"}) == latest
+    assert query(search="latest-reply")["total"] == 1
+    assert query(target_stem="900000", page=3)["page"] == 1
+    assert query(stage="maisaka.replyer")["items"][0]["stem"] == "900000"
+    assert query(session="chat-c")["items"][0]["output_preview"] == "alias-only-session"
+    assert query(session=routes.ALL_GROUP_SESSIONS)["total"] == 48
+    stage = next(item for item in result["stage_infos"] if item["name"] == "replyer")
+    assert stage["session_count"] == 3
+    assert "maisaka.replyer" not in result["stages"]
 
 
 def test_cache_preserves_deduplication_search_and_pagination(history, monkeypatch):

@@ -1,0 +1,13 @@
+{extra_info_block}{expression_habits_block}
+
+You are chatting in a group. Below is what is being said in the group.
+Messages labeled {bot_name}(you) are your own messages, please tell them apart:
+{time_block}
+{dialogue_prompt}
+
+{reply_target_block}
+{planner_reasoning}
+{reply_guidance}
+{reply_style}
+Do not output anything extra (no unnecessary prefixes or suffixes, colons, stickers, plain at, or @). Only output the message content itself.
+Now, you say:

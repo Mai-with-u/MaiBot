@@ -143,6 +143,43 @@ async def test_explicit_config_write_updates_catalog_before_returning(tmp_path):
 
 
 @pytest.mark.asyncio
+async def test_generated_builtin_config_syncs_after_loading_and_restart(tmp_path, monkeypatch):
+    code_root = tmp_path / "code"
+    code_root.mkdir()
+    path = _write_plugin(code_root, "telegram", "test.telegram", plugin_type="adapter")
+    config_path = tmp_path / "bot" / "config" / "builtin_plugins" / "telegram" / "config.toml"
+    monkeypatch.setattr(catalog_module, "resolve_plugin_config_path", lambda _: config_path)
+    manager = PluginRuntimeManager()
+    manager._plugin_catalog._roots = {code_root: True}
+    await manager._plugin_catalog.refresh()
+    assert manager._plugin_catalog.entries[0].enabled is True
+
+    manager._plugin_file_watcher = Mock()
+    monkeypatch.setattr(manager, "_iter_plugin_dirs", lambda: [code_root])
+    monkeypatch.setattr(manager, "_iter_watchable_plugin_paths", lambda *_: [("test.telegram", path)])
+    monkeypatch.setattr(manager, "_resolve_plugin_config_path", lambda *_: config_path)
+    config_path.parent.mkdir(parents=True)
+    config_path.write_text("[plugin]\nenabled = false\n", encoding="utf-8")
+    await manager._refresh_plugin_config_watch_subscriptions()
+    plugin = _collect_installed_plugins(await manager.get_plugin_state_snapshot())["plugins"][0]
+    assert plugin["enabled"] is False
+    assert plugin["load_status"] == "disabled"
+
+    # 重启时订阅已经存在，也要读取 Runner 在启动期间写入的实际配置。
+    config_path.write_text("[plugin]\nenabled = true\n", encoding="utf-8")
+    await manager._refresh_plugin_config_watch_subscriptions()
+    assert manager._plugin_catalog.entries[0].enabled is True
+    assert manager._plugin_file_watcher.subscribe.call_count == 1
+
+    # 页面保存配置沿用同一索引刷新入口。
+    async def disable():
+        config_path.write_text("[plugin]\nenabled = false\n", encoding="utf-8")
+
+    await manager.apply_plugin_config("test.telegram", disable)
+    assert manager._plugin_catalog.entries[0].enabled is False
+
+
+@pytest.mark.asyncio
 async def test_file_transaction_updates_index_even_if_plugin_activation_fails(tmp_path):
     path = _write_plugin(tmp_path, "demo", "test.demo")
     manager = PluginRuntimeManager()

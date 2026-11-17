@@ -1,0 +1,9 @@
+[planner_default_group]
+display_name = "通常プランナー · グループ"
+advanced = false
+description = "Focus 以外で使うグループ用の計画テンプレート。ツールで行動や返信を実行する。"
+
+[planner_passive_group]
+display_name = "受動返信プランナー · グループ"
+advanced = true
+description = "Focus 以外で受動型 Replyer が有効な場合に使うグループ用の計画テンプレート。最終分析文を返信の指針にする。"

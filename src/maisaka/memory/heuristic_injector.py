@@ -51,7 +51,7 @@ class HeuristicMemoryInjector:
     def __init__(self) -> None:
         self._states: dict[str, HeuristicMemoryRecallState] = {}
         self._impression_client = LLMServiceClient(
-            task_name="utils",
+            task_name="fast_model",
             request_type="heuristic_memory_impression",
         )
 

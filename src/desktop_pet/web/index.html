@@ -352,8 +352,11 @@
   #screen-status { color: #786650; font-size: 10px; }
   #screen-error { color: #a03022; font-size: 11px; max-height: 30px; overflow-y: auto; }
   #screen-error:empty { display: none; }
-  #screen-indicator { position: absolute; right: 6px; top: 4px; width: 12px; height: 12px;
+  #screen-indicator { position: absolute; right: -2px; bottom: -2px; width: 12px; height: 12px;
     border: 2px solid var(--ink); border-radius: 50%; background: var(--leaf); }
+  #unread-indicator { position: absolute; left: 6px; bottom: 6px; width: 11px; height: 11px;
+    border: 2px solid var(--paper); border-radius: 50%; background: var(--orange); z-index: 5;
+    box-shadow: 0 0 0 1px var(--ink); }
   #chat-form { flex-shrink: 0; }
   #chat-input { display: block; resize: none; min-width: 0; }
   #attachments { display: flex; gap: 4px; overflow-x: auto; flex-shrink: 0; }
@@ -362,7 +365,13 @@
   #chat-error { color: #a32b22; font-size: 11px; }
   #chat-error:empty, #attachments:empty { display: none; }
   /* 对话 */
-  #log { display: flex; flex-direction: column; gap: 6px; }
+  #chat { max-height: min(var(--chat-max-height, 196px), calc(100% - var(--pet-top, 116px) - 12px));
+    transition: max-height .38s cubic-bezier(.22, 1, .36, 1); }
+  #log { display: flex; flex-direction: column; gap: 6px; overscroll-behavior: contain; }
+  #log > * { flex-shrink: 0; }
+  @media (prefers-reduced-motion: reduce) {
+    #chat { transition: none; }
+  }
   .line { max-width: 86%; word-break: break-word; white-space: pre-wrap; user-select: text; }
   .line.me {
     align-self: flex-end;
@@ -490,7 +499,7 @@
   </button>
   <div id="thinking-caption" data-hit="0" role="status" hidden></div>
 
-  <div id="pet" data-hit="34"><span id="screen-indicator" role="status" aria-label="正在持续阅读桌面" title="正在持续阅读桌面，可在聊天面板停止" hidden></span><canvas id="skin-canvas" style="display:none"></canvas><svg id="builtin-pet" width="150" height="107" viewBox="0 0 210 150" aria-hidden="true">
+  <div id="pet" data-hit="34"><canvas id="skin-canvas" style="display:none"></canvas><svg id="builtin-pet" style="display:none" width="150" height="107" viewBox="0 0 210 150" aria-hidden="true">
     <defs>
       <path id="body-shape" d="M39 96C39 68 72 48 128 44C174 41 201 64 201 93C201 124 172 141 127 141C74 141 39 124 39 96Z"/>
       <clipPath id="body-clip"><use href="#body-shape"/></clipPath>
@@ -544,6 +553,7 @@
     <svg viewBox="0 0 24 24" fill="none" stroke="var(--ink)" stroke-width="2" stroke-linejoin="round"><path d="M4 4h6v3a2 2 0 1 0 4 0V4h6v6h-3a2 2 0 1 0 0 4h3v6h-6v-3a2 2 0 1 0-4 0v3H4v-6h3a2 2 0 1 0 0-4H4Z"/></svg>
   </button>
   <button id="orb-chat" class="orb" data-hit="23" aria-label="chat">
+    <span id="screen-indicator" data-hit="6" role="status" aria-label="正在持续阅读桌面" title="正在持续阅读桌面，可在聊天面板停止" hidden></span>
     <svg viewBox="0 0 24 24" fill="none" stroke="var(--ink)" stroke-width="2" stroke-linejoin="round">
       <path d="M4.5 7C4.5 5.3 5.8 4 7.5 4H16.5C18.2 4 19.5 5.3 19.5 7V12.5C19.5 14.2 18.2 15.5 16.5 15.5H11.5L7.5 19V15.5C5.8 15.5 4.5 14.2 4.5 12.5Z" fill="var(--paper)"/>
       <circle cx="9" cy="9.8" r=".9" fill="var(--ink)" stroke="none"/>
@@ -640,6 +650,14 @@
 (() => {
   const stage = document.getElementById("stage");
   const pet = document.getElementById("pet");
+  const unreadIndicator = document.createElement("span");
+  unreadIndicator.id = "unread-indicator";
+  unreadIndicator.dataset.hit = "6";
+  unreadIndicator.setAttribute("role", "status");
+  unreadIndicator.setAttribute("aria-label", "有未读消息");
+  unreadIndicator.title = "有未读消息，打开聊天查看";
+  unreadIndicator.hidden = true;
+  pet.append(unreadIndicator);
   const log = document.getElementById("log");
   const chatInput = document.getElementById("chat-input");
   const todoList = document.getElementById("todos");
@@ -650,7 +668,12 @@
   let locked = false;
   const pupils = document.querySelectorAll(".pupil");
 
-  const MAX_LOG = 30;
+  let historyCursors = {};
+  let historyLoaded = false;
+  const chatMessageIds = new Set();
+  let historyHasMore = true;
+  let historyRequest = null;
+  let historyConnected = !window.desktopPetBridge;
   const WAIT_LIMIT_MS = 120000;
 
   let api = null;
@@ -697,11 +720,6 @@
           const bounds = document.getElementById('skin-canvas').getBoundingClientRect();
           for (const [left, top, width, height] of pixels) {
             rects.push([bounds.left + left, bounds.top + top, width, height, 0]);
-          }
-          const indicator = document.getElementById('screen-indicator');
-          if (!indicator.hidden) {
-            const dot = indicator.getBoundingClientRect();
-            rects.push([dot.left, dot.top, dot.width, dot.height, dot.width / 2]);
           }
           continue;
         }
@@ -753,10 +771,13 @@
     if (!["plugins", "plugin-panel"].includes(mode)) requestedPluginPanel = null;
     if (mode === "menu") stage.style.setProperty("--menu-height", `${menu.offsetHeight}px`);
     if (mode !== "todo") todoExpandedHeight = 0;
+    if (mode !== "chat") document.getElementById("chat").style.removeProperty("--chat-max-height");
     if (mode === "chat") {
       hideSay();
       chatInput.focus({preventScroll: true});
+      chatStickBottom = true;
       scrollLog();
+      if (!historyLoaded) void loadHistory();
     } else if (mode === "todo") {
       todoInput.focus({preventScroll: true});
       todoExpandedHeight = 0;
@@ -1013,9 +1034,68 @@
   document.addEventListener("wheel", (event) => { if (event.ctrlKey) event.preventDefault(); }, { passive: false });
 
   // ---------- 对话 ----------
-  function scrollLog() {
-    log.scrollTop = log.scrollHeight;
+  async function loadHistory() {
+    if (!api || !api.history || !historyConnected || historyRequest || !historyHasMore) return;
+    historyRequest = crypto.randomUUID();
+    chatError.textContent = "";
+    try {
+      await api.history(historyCursors, historyRequest);
+    } catch (error) {
+      historyRequest = null;
+      chatError.textContent = `读取历史记录失败：${String(error)}`;
+    }
   }
+  let chatStickBottom = true;
+  function clearReadMessages() {
+    if (!unreadIndicator.hidden && !document.hidden && stage.dataset.mode === "chat"
+        && log.scrollHeight - log.clientHeight - log.scrollTop <= 2) {
+      unreadIndicator.hidden = true;
+      updateRegion();
+    }
+  }
+  function scrollLog() {
+    if (chatStickBottom) log.scrollTop = log.scrollHeight;
+    clearReadMessages();
+  }
+  document.addEventListener("visibilitychange", clearReadMessages);
+  function expandChat() {
+    chatStickBottom = false;
+    if (log.scrollTop <= 40) void loadHistory();
+    if (log.scrollHeight <= log.clientHeight + 1) return;
+    const panel = document.getElementById("chat");
+    const limit = Math.max(196, panel.getBoundingClientRect().bottom - 12);
+    const current = parseFloat(panel.style.getPropertyValue("--chat-max-height")) || 196;
+    panel.style.setProperty("--chat-max-height", `${Math.min(limit, current + 100)}px`);
+  }
+  document.getElementById("chat").addEventListener("wheel", event => {
+    if (event.ctrlKey) return;
+    if (event.deltaY < 0) expandChat();
+  }, {passive: true});
+  let previousChatScrollTop = 0;
+  log.addEventListener("scroll", () => {
+    const atBottom = log.scrollHeight - log.clientHeight - log.scrollTop <= 2;
+    if (!atBottom) chatStickBottom = false;
+    else if (log.scrollTop > previousChatScrollTop) chatStickBottom = true;
+    previousChatScrollTop = log.scrollTop;
+    clearReadMessages();
+    if (!chatStickBottom && log.scrollTop <= 40) void loadHistory();
+  }, {passive: true});
+  let chatTouchY = null;
+  log.addEventListener("touchstart", event => {
+    chatStickBottom = false;
+    chatTouchY = event.touches[0].clientY;
+  }, {passive: true});
+  log.addEventListener("touchmove", event => {
+    const y = event.touches[0].clientY;
+    if (chatTouchY !== null && y > chatTouchY) expandChat();
+    chatTouchY = y;
+  }, {passive: true});
+  log.addEventListener("pointerdown", () => { chatStickBottom = false; }, {passive: true});
+  log.addEventListener("keydown", event => {
+    if (["ArrowUp", "PageUp", "Home"].includes(event.key)) expandChat();
+  });
+  log.tabIndex = 0;
+  new ResizeObserver(scrollLog).observe(log);
   function lineNode(who, parts) {
     const line = document.createElement("div");
     line.className = `line ${who}`;
@@ -1031,10 +1111,11 @@
     }
     return line;
   }
-  function pushLine(who, parts) {
+  function pushLine(who, parts, messageId) {
+    if (messageId && chatMessageIds.has(messageId)) return;
+    if (messageId) chatMessageIds.add(messageId);
     log.querySelector(".dots")?.remove();
     log.append(lineNode(who, parts));
-    while (log.childElementCount > MAX_LOG) log.firstElementChild.remove();
     if (waitTimer) log.append(dotsNode());
     scrollLog();
     updateRegion();
@@ -1104,7 +1185,7 @@
     if (!pendingSend || message.request_id !== pendingSend.id) return;
     if (message.type === "accepted") {
       pushLine("me", [{kind: "text", text: pendingSend.text},
-        ...draftImages.map(item => ({kind: "image", src: item.src}))]);
+        ...draftImages.map(item => ({kind: "image", src: item.src}))], message.message_id);
       chatInput.value = "";
       draftImages = [];
       flash("squish", 400);
@@ -1147,9 +1228,12 @@
     sayTimer = setTimeout(hideSay, Math.min(15000, Math.max(4000, 2500 + length * 140)));
     updateRegion();
   }
-  function speak(parts) {
+  function speak(parts, messageId) {
     stopWaiting();
-    pushLine("mai", parts);
+    if (messageId && chatMessageIds.has(messageId)) return;
+    unreadIndicator.hidden = false;
+    pushLine("mai", parts, messageId);
+    updateRegion();
     if (stage.dataset.mode !== "chat") showSay(parts);
     const length = parts.reduce((sum, part) => sum + (part.kind === "text" ? part.text.length : 4), 0);
     flash("talking", Math.min(3000, 500 + length * 70));
@@ -1669,7 +1753,38 @@
       updateRegion();
     },
     receive(message) {
+      if (message.type === "history") {
+        if (message.request_id !== historyRequest) return;
+        historyRequest = null;
+        if (message.error) {
+          chatError.textContent = `读取历史记录失败：${message.error}`;
+          return;
+        }
+        const oldHeight = log.scrollHeight;
+        const oldTop = log.scrollTop;
+        const fragment = document.createDocumentFragment();
+        for (const item of message.items) {
+          if (chatMessageIds.has(item.id)) continue;
+          chatMessageIds.add(item.id);
+          fragment.append(lineNode(item.who, item.parts));
+        }
+        log.prepend(fragment);
+        historyLoaded = true;
+        historyCursors = message.cursors;
+        historyHasMore = message.has_more;
+        if (chatStickBottom) scrollLog();
+        else {
+          log.scrollTop = oldTop + log.scrollHeight - oldHeight;
+          previousChatScrollTop = log.scrollTop;
+          if (message.items.length) expandChat();
+        }
+        if (!message.items.length && historyHasMore) void loadHistory();
+        updateRegion();
+        return;
+      }
       if (message.type === "connection") {
+        historyConnected = message.connected;
+        if (!message.connected) historyRequest = null;
         document.getElementById("remote-controls").hidden = false;
         document.getElementById("remote-status").textContent = message.text;
         let indicator = document.getElementById("remote-indicator");
@@ -1685,6 +1800,7 @@
         indicator.title = message.text;
         indicator.setAttribute("aria-label", message.text);
         if (message.connected) {
+          if (!historyLoaded) void loadHistory();
           window.pet.refreshTodos().then(() => { todoError.textContent = ""; }).catch(error => window.pet.todoError(String(error)));
         } else {
           stopWaiting();
@@ -1781,7 +1897,7 @@
       } else if (message.type === "accepted") {
         finishSend(message);
       } else if (message.type === "reply") {
-        speak(message.parts);
+        speak(message.parts, message.message_id);
       } else if (message.type === "notice") {
         // 插件提示只显示气泡，不混入聊天记录，也不打断正在等待的聊天回复。
         showSay(message.parts);
@@ -1816,7 +1932,6 @@
     api = window.pywebview.api;
     await api.fit(devicePixelRatio, petViewportHeight);
     watchScale();
-    await window.pet.refreshTodos().catch(error => window.pet.todoError(String(error)));
     const observer = new ResizeObserver(() => {
       if (menu.offsetHeight) stage.style.setProperty("--menu-height", `${menu.offsetHeight}px`);
       updateRegion();
@@ -1824,7 +1939,9 @@
     observer.observe(menu);
     for (const el of document.querySelectorAll("[data-hit]")) observer.observe(el);
     updateRegion();
-    api.ready();
+    await api.ready();
+    void loadHistory();
+    window.pet.refreshTodos().catch(error => window.pet.todoError(String(error)));
   });
 
   document.getElementById("remote-exit").addEventListener("click", () => api.exit_client());

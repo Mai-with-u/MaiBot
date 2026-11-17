@@ -1,10 +1,10 @@
-# 聊天 Replyer 的创意模式与插件兼容
+# 聊天回复模板与插件兼容
 
-“聊天 → 聊天设置 → 创意模式”对应 `chat.creative_mode`，默认开启。普通模型关闭时继续使用常规多消息模板，开启时使用通用复古模板：人设、群聊注意事项和注意力提示放在 system，聊天记录和回复要求组织成一条 user 消息。表达习惯、关键词反应、附件参考、重复回复提醒和插件要求均保留。
+普通模型统一使用群聊、私聊回复模板，不再提供提示词组织方式开关。System 使用 `reply_group_system` 或 `reply_private_system`，包含人设、当前聊天背景和注意力提示；聊天记录、图片、对话分析和本轮要求填入 `reply_group`、`reply_private` 或 `reply_private_followup` 的一条 User 消息。回复力度统一由 `reply_guidance` 切换，不追加到人设风格。表达习惯、关键词反应、附件参考、重复回复提醒和插件要求均保留。
 
-每次实际选择模型后，名称或模型标识包含 `mai_replier` / `mai-replier`，或等于 `v2p1-contract` / `v2p1-raw` 的模型，使用 Mai Replier 专用适配，不受创意模式及超级创意模式开关影响，不切换生成语言，也不追加翻译请求。专用适配保持 persona-only system，不注入表达习惯、关键词反应等训练外内容，群聊固定使用标准复古模板。插件临时指定模型、候选模型切换和重新生成都会重新判断，不会改写全局配置。
+每次实际选择模型后，名称或模型标识包含 `mai_replier` / `mai-replier`，或等于 `v2p1-contract` / `v2p1-raw` 的模型，使用 Mai Replier 专用适配。其群聊、私聊各有独立的 System / User 模板；System 默认仅包含人设，User 通过 `reply_guidance` 切换三档回复力度。专用适配不启用超级创意翻译，也不注入表达习惯等额外内容。插件指定模型、候选模型切换和重新生成都会按实际模型重新判断。
 
-原 `debug.replyer_retro_prompt` 已移除，不再参与决策。此前手动使用复古提示词的普通模型，由创意模式控制；新配置默认开启，已有配置保留原开关值。插件长文能力 `maisaka.reply.generate` 使用独立写作模板，不受上述聊天模式影响。
+所有聊天回复均使用 Replyer 的模型配置，可由请求 Hook 指定任务和模型。Planner 快照仅用于上下文压缩等独立功能，不参与回复生成。插件长文能力 `maisaka.reply.generate` 继续使用独立写作模板。
 
 ## 实验性超级创意模式
 
@@ -12,22 +12,16 @@
 
 除 Mai Replier 外，翻译统一使用本次实际 Replyer 模型，将所选语言的正文翻译为中文。请求只有一条 user 消息，将翻译说明和“待翻译内容：{text}”合并发送，不设置 system、不拆分消息；已经是中文的内容按提示保留。翻译错误或空译文会明确失败，不发送原文。每次正常回复包含生成与翻译两次模型请求。
 
-译文进入 after_response Hook、校验和发送；重生成会重新执行两个阶段。生成语言在一次生成流程内固定。超级创意模式优先于回复缓存模式，不复用 Planner 模型。普通创意模式和实际模型适配仍决定模板结构。
-
-## 实验性回复缓存模式
-
-`experimental.reply_cache`（“实验性功能 → 回复缓存模式”）默认关闭，独立于被动式 replyer。开启后，普通聊天与 Focus 的回复复用本轮实际成功的 Planner 请求快照及其模型，在原上下文后以 assistant 消息追加最新的 Planner 回复指导，再追加一条合并消息（不重复包含该指导），包含创意模式 Replyer 的完整 system/user 内容及图片。原 Planner 消息、工具定义及模型参数保持不变；不使用 Replyer 模型配置，关闭创意模式或选中 Mai Replier 模型也仍使用通用创意模板。长文生成不受此开关影响。
-
-Replyer Hook 仍可改写回复要求和创意模板内容，重生成时仍基于同一份 Planner 前缀重新构造尾部；缓存模式不接受 Hook 切换任务模型。缺少 Planner 快照或模型返回工具调用时明确失败，不回退到独立 Replyer。实际缓存命中取决于服务端，沿用回复日志中的缓存统计观察。已有插件准备、发送前处理及 stop 行为不变。
+译文进入 after_response Hook、校验和发送；重生成会重新执行两个阶段。生成语言在一次生成流程内固定。超级创意模式使用实际选定的 Replyer 模型。普通回复和 Mai Replier 适配按实际模型决定模板结构。
 
 ## Hook 契约
 
 - `maisaka.replyer.before_request` 保留原参数，可以修改 `task_name`、`model_name`、`extra_prompt` 和 `reply_tool_args`。此时尚未选定实际模型，因此首次调用中的 `selected_expression_ids` 仅包含调用方显式传入的编号；自动选择的结果在模型请求前 Hook 中读取。重试时该字段可能反映上一次尝试。
 - `maisaka.replyer.before_model_request` 保留顶层参数和 Context Item 协议。实际模板已构建完成，插件可以继续修改 `items`。`selected_expression_ids` 对应实际尝试，Mai Replier 为 `[]`。
-- 模型请求前 Hook 的 `reply_tool_args["_replyer_prompt_profile"]` 提供模式标识：`standard`、`retro`、`mai_replier` 或 `document`。该字段只供读取，由主程序覆盖填充，不能用于强制更换模板；不会作为额外顶层参数传给旧 Hook 处理函数。
-- `maisaka.replyer.after_response` 的正文改写、输出 Item 改写、重试和重试原因保持原有协议。插件追加要求和重生成约束在两种复古模板中都保留。
+- 模型请求前 Hook 的 `reply_tool_args["_replyer_prompt_profile"]` 提供模式标识：`reply`、`mai_replier` 或 `document`。该字段只供读取，由主程序覆盖填充，不能用于强制更换模板；不会作为额外顶层参数传给旧 Hook 处理函数。
+- `maisaka.replyer.after_response` 的正文改写、输出 Item 改写、重试和重试原因保持原有协议。插件追加要求和重生成约束在普通回复与 Mai Replier 模板中都保留。
 
-插件应优先通过 `extra_prompt` 追加回复要求。直接处理 Context Items 的插件需要识别模式：复古模板中的聊天历史已经合并到 user 消息中，不能假定每一条历史发言都是独立 Item，也不能依赖某段固定提示词的位置。插件直接改写最终 Items 时仍拥有原有控制权，主程序不会在 Hook 后重新删减插件内容。
+插件应优先通过 `extra_prompt` 追加回复要求。直接处理 Context Items 的插件需要识别模式：回复模板中的聊天历史已经合并到 user 消息中，不能假定每一条历史发言都是独立 Item，也不能依赖某段固定提示词的位置。插件直接改写最终 Items 时仍拥有原有控制权，主程序不会在 Hook 后重新删减插件内容。
 
 
 ## 回复生成依赖调度

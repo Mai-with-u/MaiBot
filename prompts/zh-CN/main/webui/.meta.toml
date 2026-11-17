@@ -1,0 +1,5 @@
+[webui_ai_search]
+display_name = "WebUI AI 搜索"
+advanced = true
+description = "用于根据自然语言意图从 WebUI 提供的真实页面与配置候选中选择搜索结果。"
+

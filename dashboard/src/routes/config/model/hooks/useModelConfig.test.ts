@@ -125,7 +125,6 @@ function taskConfigSchema() {
             { name: 'embedding', type: 'object', advanced: false },
             { name: 'memory', type: 'object', advanced: false },
             { name: 'learner', type: 'object', advanced: false },
-            { name: 'emoji', type: 'object', advanced: false },
             { name: 'voice', type: 'object', advanced: false },
             { name: 'hidden', type: 'object', advanced: true },
             { name: 'note', type: 'string', advanced: false },
@@ -324,7 +323,7 @@ describe('useModelConfig 加载与 unwrap', () => {
         embedding: { model_list: ['chat'] },
         memory: { model_list: [] },
         learner: null,
-        emoji: { model_list: ['missing'] },
+        voice: { model_list: ['missing'] },
         hidden: { model_list: [] },
         note: { model_list: [] },
       },
@@ -332,11 +331,11 @@ describe('useModelConfig 加载与 unwrap', () => {
 
     const { result, unmount } = await renderLoadedHook()
 
-    // memory/learner/emoji/voice 视为高级任务，空列表不进入 emptyTasks
+    // memory/learner/voice 视为高级任务，空列表不进入 emptyTasks
     expect(result.current.emptyTasks).toEqual(['replyer'])
     expect(result.current.invalidModelRefs).toEqual([
       { taskName: 'utils', invalidModels: ['ghost'] },
-      { taskName: 'emoji', invalidModels: ['missing'] },
+      { taskName: 'voice', invalidModels: ['missing'] },
     ])
     unmount()
   })

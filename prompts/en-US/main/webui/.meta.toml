@@ -1,0 +1,5 @@
+[webui_ai_search]
+display_name = "WebUI AI Search"
+advanced = true
+description = "Selects relevant results from real WebUI page and configuration candidates based on natural-language intent."
+

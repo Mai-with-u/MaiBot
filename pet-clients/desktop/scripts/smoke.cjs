@@ -123,8 +123,8 @@ class HostFixture {
     }
     if (new RegExp(`^${BASE}/chat/[0-9a-f]{32}$`).test(pathname)) {
       assert.equal(request.method, 'POST'); this.chats.push(body);
-      this.json(response, { accepted: true, request_id: pathname.split('/').at(-1) });
-      this.command('reply', { parts: [{ kind: 'text', text: '来自本机测试服务器的回复' }] }).catch(error => this.failures.push(error)); return;
+      this.json(response, { accepted: true, request_id: pathname.split('/').at(-1), message_id: 'sent-user' });
+      this.command('reply', { message_id: 'live-reply', sound: 'wood', parts: [{ kind: 'text', text: '来自本机测试服务器的回复' }] }).catch(error => this.failures.push(error)); return;
     }
     throw new Error(`Unexpected fixture endpoint: ${request.method} ${pathname}`);
   }
@@ -140,9 +140,19 @@ class HostFixture {
           ws.send(JSON.stringify({ type: 'hello', version: 1, connection_id: connection.id, heartbeat_interval: 1, heartbeat_timeout: 5 }));
         } else if (event.type === 'ready') {
           connection.ready = true; this.readyCount++; ws.send(JSON.stringify({ type: 'ready', version: 1 }));
+          this.command('skin', {skin: {id: 'builtin', name: '内置麦麦', animations: {},
+            canvas: {width:150, height:107, anchor:[75,107], bubble_anchor:[75,0], hitbox:[0,0,150,107]}}})
+            .then(ack => assert.equal(ack.error, undefined))
+            .catch(error => this.failures.push(error));
         } else if (event.type === 'ping') ws.send(JSON.stringify({ type: 'pong' }));
         else if (event.type === 'ack') this.acks.get(event.id)?.(event);
-        else if (event.type === 'exploration_tasks') {
+        else if (event.type === 'history') {
+          const older = Object.keys(event.cursors).length > 0;
+          const items = older ? [{id: 'oldest', who: 'mai', parts: [{kind: 'text', text: '更早的历史回复'}]}]
+            : Array.from({length: 30}, (_, index) => ({id: `history-${index}`, who: 'mai', parts: [{kind: 'text', text: `历史回复 ${index}`}]}));
+          this.command('history', {request_id: event.request_id, items, cursors: older ? {} : {owner: 10}, has_more: !older})
+            .catch(error => this.failures.push(error));
+        } else if (event.type === 'exploration_tasks') {
           const task = { id: 'smoke-exploration', goal: 'Tauri 冒烟探索记录', status: 'completed',
             created_at: Date.now() / 1000, updated_at: Date.now() / 1000, result_version: 2,
             result: '本机模拟服务器提供的记录', resources: [], experiences: [], events: [] };
@@ -387,6 +397,7 @@ async function run() {
     let { pet, auth } = await connectClient(app, fixture, true);
     assert.equal(fixture.verifyCount, 1); assert.ok(app.authentication.challenges > 0);
     console.log('Tauri WebUI login passed through HTTP Basic authentication.');
+    await pet.locator('#builtin-pet').waitFor({state: 'visible'});
     // Tauri adds style hashes to CSP; without style-src-attr, existing inline styles are ignored.
     // A visible empty canvas then pushes the built-in SVG below the window before the server sends a skin.
     assert.equal(await pet.locator('#skin-canvas').evaluate(el => getComputedStyle(el).display), 'none');
@@ -409,10 +420,27 @@ async function run() {
     console.log('Window geometry:', JSON.stringify(geometry));
     assert.ok(geometry.width >= 259 && geometry.width <= 261, 'desktop pet must retain its 260 CSS-pixel width at Windows text scaling');
     assert.ok(geometry.height >= 460 && geometry.height <= 901);
-    await openPanel(pet, '#orb-chat', 'chat'); await pet.locator('#chat-input').fill('Tauri 真实界面聊天验证');
+    await openPanel(pet, '#orb-chat', 'chat');
+    await pet.getByText('历史回复 29', { exact: true }).waitFor();
+    await pet.locator('#log').evaluate(log => { log.scrollTop = 0; log.dispatchEvent(new WheelEvent('wheel', {deltaY: -120, bubbles: true})); });
+    await pet.getByText('更早的历史回复', { exact: true }).waitFor();
+    await pet.locator('#log').evaluate(log => { log.scrollTop = log.scrollHeight; });
+    await pet.evaluate(() => {
+      window.__petAudioStarted = false;
+      document.addEventListener('playing', () => { window.__petAudioStarted = true; }, true);
+      const NativeAudio = window.Audio;
+      window.Audio = function (...args) {
+        const audio = new NativeAudio(...args);
+        audio.addEventListener('playing', () => { window.__petAudioStarted = true; });
+        return audio;
+      };
+    });
+    await pet.locator('#chat-input').fill('Tauri 真实界面聊天验证');
     await pet.locator('#chat-input').press('Enter'); await until(() => fixture.chats.length === 1, 'chat HTTP submission');
     assert.equal(fixture.chats[0].text, 'Tauri 真实界面聊天验证'); assert.deepEqual(fixture.chats[0].images, []);
     await pet.getByText('来自本机测试服务器的回复', { exact: true }).waitFor();
+    await pet.waitForFunction(() => window.__petAudioStarted);
+    await pet.waitForFunction(() => document.querySelector('#unread-indicator').hidden);
     await pet.waitForFunction(() => !document.querySelector('#chat-input').disabled && !document.querySelector('#chat-input').value);
     await openPanel(pet, '#orb-todo', 'todo'); await pet.locator('#todo-input').fill('Tauri 待办新增'); await pet.locator('#todo-save').click();
     await pet.locator('#todos .todo-title').filter({ hasText: 'Tauri 待办新增' }).waitFor();

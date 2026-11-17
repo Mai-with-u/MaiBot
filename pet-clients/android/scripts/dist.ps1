@@ -12,7 +12,7 @@ try {
     $destination = Join-Path (Join-Path $projectRoot '../..') 'dist/android-pet-client'
     New-Item -ItemType Directory -Path $destination -Force | Out-Null
     $suffix = if ($DebugBuild) { '-debug' } else { '' }
-    $fileName = "maibot-android-pet-1.0.1$suffix.apk"
+    $fileName = "maibot-android-pet-1.0.2$suffix.apk"
     Copy-Item -LiteralPath $source -Destination (Join-Path $destination $fileName)
     $hash = (Get-FileHash -LiteralPath $source -Algorithm SHA256).Hash.ToLowerInvariant()
     [IO.File]::WriteAllText((Join-Path $destination "$fileName.sha256"), "$hash  $fileName`n")

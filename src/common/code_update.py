@@ -62,22 +62,19 @@ def code_paths(root: Path, target: str) -> List[str]:
     return sorted(name for name in names if name and is_code_path(name))
 
 
-def update_conflict(root: Path, target: str) -> Dict[str, Any]:
-    paths = code_paths(root, target)
+def update_conflict(root: Path, target_root: Path, target: str) -> Dict[str, Any]:
+    """检查本地文件修改和新版本会覆盖的未跟踪文件，不依赖提交历史。"""
     changed = git(root, "diff", "HEAD", "--name-only", "-z").split("\0")
     files = [name for name in changed if name and is_code_path(name)]
-    ancestor = subprocess.run(
-        ["git", "-C", str(root), "merge-base", "--is-ancestor", "HEAD", target], capture_output=True, timeout=120,
-    )
-    if ancestor.returncode not in (0, 1):
-        raise RuntimeError(ancestor.stderr.decode("utf-8"))
     tracked = set(git(root, "ls-files", "-z").split("\0"))
     tracked.update(git(root, "ls-tree", "-r", "--name-only", "-z", "HEAD").split("\0"))
-    files = sorted(set(files) | {name for name in paths if name not in tracked and (root / name).exists()})
-    if not files and ancestor.returncode == 0:
+    incoming = git(target_root, "ls-tree", "-r", "--name-only", "-z", target).split("\0")
+    files = sorted(set(files) | {name for name in incoming
+                                 if name and is_code_path(name) and name not in tracked and (root / name).exists()})
+    if not files:
         return {}
-    return {"code": "local_changes", "message": "存在本地代码修改或提交分叉，可备份后强制更新",
-            "files": files, "diverged": ancestor.returncode == 1, "target_commit": git(root, "rev-parse", target).strip()}
+    return {"code": "local_changes", "message": "存在本地代码修改，可备份后强制更新",
+            "files": files, "target_commit": git(target_root, "rev-parse", target).strip()}
 
 
 def backup_code(root: Path, backup: Path, target: str) -> Path:

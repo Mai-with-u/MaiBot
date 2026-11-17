@@ -131,7 +131,6 @@ class PersonProfileService:
         aliases: List[str],
         relation_edges: List[Dict[str, Any]],
         vector_evidence: List[Dict[str, Any]],
-        memory_traits: List[str],
         fact_claims: List[Dict[str, Any]],
     ) -> str:
         """计算画像输入版本；检索分数不属于证据内容，故不进入指纹。"""
@@ -152,7 +151,6 @@ class PersonProfileService:
                 "person_id": person_id,
                 "primary_name": primary_name,
                 "aliases": aliases,
-                "memory_traits": memory_traits,
                 "relation_edges": relation_edges,
                 "vector_evidence": stable_vector_evidence,
                 "fact_claims": fact_claims,
@@ -319,30 +317,6 @@ class PersonProfileService:
                     names.append(value)
         return names
 
-    def _parse_memory_traits(self, raw_value: Any) -> List[str]:
-        if not raw_value:
-            return []
-        try:
-            values = json.loads(raw_value) if isinstance(raw_value, str) else raw_value
-        except Exception:
-            return []
-        if not isinstance(values, list):
-            return []
-        traits: List[str] = []
-        for item in values:
-            text = str(item).strip()
-            if not text:
-                continue
-            if ":" in text:
-                parts = text.split(":")
-                if len(parts) >= 3:
-                    content = ":".join(parts[1:-1]).strip()
-                    if content:
-                        traits.append(content)
-                        continue
-            traits.append(text)
-        return traits[:10]
-
     def _collect_alias_suggestions_from_memory(self, person_id: str, trusted_aliases: List[str]) -> List[str]:
         """收集与人物同段出现的实体，仅作为待人工确认的别名候选。"""
         if not person_id:
@@ -394,13 +368,12 @@ class PersonProfileService:
                 suggestions.append(name)
         return suggestions
 
-    def _get_derived_person_aliases(self, person_id: str) -> Tuple[List[str], str, List[str]]:
+    def _get_derived_person_aliases(self, person_id: str) -> Tuple[List[str], str]:
         """从 ID 绑定的历史称呼和人物主档案推导自动别名。"""
         aliases: List[str] = []
         primary_name = ""
-        memory_traits: List[str] = []
         if not person_id:
-            return aliases, primary_name, memory_traits
+            return aliases, primary_name
         identity = self.metadata_store.get_person_identity(person_id)
         if identity:
             aliases = list(identity["aliases"])
@@ -409,11 +382,10 @@ class PersonProfileService:
             with get_db_session(auto_commit=False) as session:
                 record = session.exec(select(PersonInfo).where(PersonInfo.person_id == person_id).limit(1)).first()
                 if not record:
-                    return aliases or [person_id], primary_name or person_id, memory_traits
+                    return aliases or [person_id], primary_name or person_id
             person_name = str(record.person_name or "").strip()
             nickname = str(record.user_nickname or "").strip()
             group_nicks = self._parse_group_nicks(record.group_cardname)
-            memory_traits = self._parse_memory_traits(record.memory_points)
 
             primary_name = primary_name or (
                 person_name
@@ -438,7 +410,7 @@ class PersonProfileService:
         if not aliases:
             aliases = [primary_name or person_id]
             primary_name = primary_name or person_id
-        return aliases, primary_name, memory_traits
+        return aliases, primary_name
 
     def get_person_alias_details(self, person_id: str) -> Dict[str, Any]:
         """返回自动别名、人工覆盖和当前实际使用的别名。"""
@@ -452,10 +424,9 @@ class PersonProfileService:
                 "manual_aliases": [],
                 "effective_aliases": [],
                 "has_override": False,
-                "memory_traits": [],
             }
 
-        derived_aliases, primary_name, memory_traits = self._get_derived_person_aliases(token)
+        derived_aliases, primary_name = self._get_derived_person_aliases(token)
         override = self.metadata_store.get_person_profile_alias_override(token)
         manual_aliases = list(override.get("aliases", [])) if override else []
         suggested_aliases = self._collect_alias_suggestions_from_memory(token, derived_aliases + manual_aliases)
@@ -467,17 +438,15 @@ class PersonProfileService:
             "manual_aliases": manual_aliases,
             "effective_aliases": manual_aliases if override else derived_aliases,
             "has_override": override is not None,
-            "memory_traits": memory_traits,
             "override": override,
         }
 
-    def get_person_aliases(self, person_id: str) -> Tuple[List[str], str, List[str]]:
-        """获取画像实际使用的别名集合、主展示名和记忆特征。"""
+    def get_person_aliases(self, person_id: str) -> Tuple[List[str], str]:
+        """获取画像实际使用的别名集合和主展示名。"""
         details = self.get_person_alias_details(person_id)
         return (
             list(details["effective_aliases"]),
             str(details["primary_name"]),
-            list(details["memory_traits"]),
         )
 
     def _collect_relation_evidence(
@@ -845,14 +814,12 @@ class PersonProfileService:
         aliases: List[str],
         relation_edges: List[Dict[str, Any]],
         vector_evidence: List[Dict[str, Any]],
-        memory_traits: List[str],
         classified_buckets: Optional[Dict[str, List[str]]] = None,
     ) -> str:
         """基于证据构建画像文本（供 LLM 上下文注入）。"""
         buckets = classified_buckets or self._classify_profile_evidence_rule_based(
             relation_edges=relation_edges,
             vector_evidence=vector_evidence,
-            memory_traits=memory_traits,
         )
         return build_structured_profile_text(
             person_id=person_id,
@@ -871,7 +838,6 @@ class PersonProfileService:
         *,
         relation_edges: List[Dict[str, Any]],
         vector_evidence: List[Dict[str, Any]],
-        memory_traits: List[str],
     ) -> Dict[str, List[str]]:
         """规则分桶画像证据，作为 LLM 不可用时的稳定回退。"""
         buckets: Dict[str, List[str]] = {
@@ -882,11 +848,6 @@ class PersonProfileService:
             "recent_interactions": [],
             "uncertain_notes": [],
         }
-        for trait in memory_traits[:6]:
-            text = str(trait or "").strip()
-            if text:
-                self._append_profile_bucket(buckets, self._guess_profile_bucket(text), text)
-
         for rel in relation_edges[:8]:
             text = self._format_relation_evidence_text(rel)
             if not text:
@@ -914,18 +875,15 @@ class PersonProfileService:
         aliases: List[str],
         relation_edges: List[Dict[str, Any]],
         vector_evidence: List[Dict[str, Any]],
-        memory_traits: List[str],
     ) -> Dict[str, List[str]]:
         """用 LLM 辅助证据分桶，失败时返回规则结果。"""
         fallback = self._classify_profile_evidence_rule_based(
             relation_edges=relation_edges,
             vector_evidence=vector_evidence,
-            memory_traits=memory_traits,
         )
         candidates = self._build_profile_classification_candidates(
             relation_edges=relation_edges,
             vector_evidence=vector_evidence,
-            memory_traits=memory_traits,
         )
         if not candidates:
             return fallback
@@ -1040,13 +998,8 @@ class PersonProfileService:
         *,
         relation_edges: List[Dict[str, Any]],
         vector_evidence: List[Dict[str, Any]],
-        memory_traits: List[str],
     ) -> List[Dict[str, str]]:
         candidates: List[Dict[str, str]] = []
-        for index, trait in enumerate(memory_traits[:8], start=1):
-            text = str(trait or "").strip()
-            if text:
-                candidates.append({"id": f"trait-{index}", "source_type": "memory_trait", "text": text})
         for index, rel in enumerate(relation_edges[:12], start=1):
             text = self._format_relation_evidence_text(rel)
             if text:
@@ -1196,7 +1149,7 @@ class PersonProfileService:
 
         latest = self.metadata_store.get_latest_person_profile_snapshot(pid)
         if not force_refresh and not self._is_snapshot_stale(latest, ttl_seconds):
-            aliases, primary_name, _ = self.get_person_aliases(pid)
+            aliases, primary_name = self.get_person_aliases(pid)
             payload = {
                 "success": True,
                 "person_id": pid,
@@ -1210,7 +1163,7 @@ class PersonProfileService:
                 **self._apply_manual_override(pid, payload),
             }
 
-        aliases, primary_name, memory_traits = self.get_person_aliases(pid)
+        aliases, primary_name = self.get_person_aliases(pid)
         if not aliases and person_keyword:
             aliases = [person_keyword.strip()]
             primary_name = person_keyword.strip()
@@ -1223,7 +1176,6 @@ class PersonProfileService:
             aliases=aliases,
             relation_edges=relation_edges,
             vector_evidence=vector_evidence,
-            memory_traits=memory_traits,
             fact_claims=fact_claims,
         )
         expires_at = time.time() + float(ttl_seconds) if ttl_seconds > 0 else None
@@ -1255,7 +1207,6 @@ class PersonProfileService:
             aliases=aliases,
             relation_edges=relation_edges,
             vector_evidence=vector_evidence,
-            memory_traits=memory_traits,
         )
         classified_buckets = self._merge_fact_claim_buckets(classified_buckets, fact_claims)
 
@@ -1278,7 +1229,6 @@ class PersonProfileService:
             aliases=aliases,
             relation_edges=relation_edges,
             vector_evidence=vector_evidence,
-            memory_traits=memory_traits,
             classified_buckets=classified_buckets,
         )
 

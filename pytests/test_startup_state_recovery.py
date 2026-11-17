@@ -15,17 +15,22 @@ from src.services.schedules.store import TodoStore
 @pytest.mark.asyncio
 @pytest.mark.parametrize("contents", [bytes(35), b"{broken", b"\xff", b"{}", b"[null]"])
 async def test_corrupt_todos_do_not_block_service_start(tmp_path, monkeypatch, contents):
-    path = tmp_path / "todos.json"
+    directory = tmp_path / "schedules"
+    directory.mkdir()
+    path = directory / "session-a.json"
     path.write_bytes(contents)
-    service = ScheduleService(path)
+    service = ScheduleService(directory)
     monkeypatch.setattr(service, "_run", AsyncMock())
     try:
         await service.start()
         assert service._worker is not None
         assert service._store.list() == []
-        backup, = tmp_path.glob("todos.json.corrupt-*")
+        backup, = directory.glob("session-a.json.corrupt-*")
         assert backup.read_bytes() == contents
-        item = service._store.add("恢复后的提醒")
+        result = await service.command({"action": "add", "text": "恢复后的提醒", "options": {
+            "session_id": "session-a", "session_name": "测试会话",
+        }})
+        item = result["item"]
         assert TodoStore(path).list()[0]["id"] == item["id"]
     finally:
         await service.stop()

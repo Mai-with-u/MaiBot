@@ -353,7 +353,7 @@ export async function updateChatStreamTalkFrequency(
     `/api/chat/sessions/${encodeURIComponent(sessionId)}/talk-frequency`,
     {
       body: payload,
-      errorMessage: '保存发言频率失败',
+      errorMessage: '保存查看频率失败',
     }
   )
   if (!result.detail) {
@@ -388,7 +388,7 @@ export async function deleteChatStreamTalkFrequency(
     `/api/chat/sessions/${encodeURIComponent(sessionId)}/talk-frequency`,
     {
       query: { time, active_group: activeGroup ?? undefined },
-      errorMessage: '删除发言频率规则失败',
+      errorMessage: '删除查看频率规则失败',
     }
   )
   if (!result.detail) {

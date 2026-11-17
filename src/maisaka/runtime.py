@@ -30,7 +30,6 @@ from src.config.config import global_config, model_config
 from src.agent.provider import AgentToolProvider
 from src.files.provider import FileToolProvider
 from src.desktop_pet.chat_tools import ChatSessionToolProvider
-from src.desktop_pet.todo_tools import TodoToolProvider
 from src.desktop_pet.exploration_tools import ExplorationToolProvider
 from src.desktop_pet.screen_tools import DesktopScreenToolProvider
 from src.core.tooling import ToolRegistry, ToolSpec
@@ -191,7 +190,6 @@ class MaisakaHeartFlowChatting(MaisakaRuntimeDisplayMixin):
         self._consecutive_idle_count = 0
         self._current_action_tool_names: set[str] = set()
         self.discovered_tool_names: set[str] = set()
-        self._tool_search_tail_loading: bool = False
         self.deferred_tool_specs_by_name: dict[str, ToolSpec] = {}
 
         self._min_extraction_interval = 30
@@ -220,6 +218,13 @@ class MaisakaHeartFlowChatting(MaisakaRuntimeDisplayMixin):
         """返回当前会话实时生效的上下文窗口大小。"""
 
         return self.scene.max_context_size
+
+    @property
+    def _max_context_tokens(self) -> Optional[int]:
+        """当前会话的 Token 裁切阈值；关闭时继续使用条数窗口。"""
+        if self.chat_stream.is_group_session:
+            return global_config.chat.max_context_tokens if global_config.chat.use_token_limit else None
+        return global_config.chat.private_max_context_tokens if global_config.chat.private_use_token_limit else None
 
     @property
     def scene(self) -> ChatScene:
@@ -295,8 +300,11 @@ class MaisakaHeartFlowChatting(MaisakaRuntimeDisplayMixin):
         self._update_stage_status("空闲", "等待消息触发")
         logger.info(f"{self.log_prefix} Maisaka 运行时已启动")
 
-    async def build_retro_reply_history(self) -> List[LLMContextMessage]:
-        """独立读取复古回复窗口，避免 Planner 裁切缩短回复器的聊天记录。"""
+    async def build_reply_history(self) -> List[LLMContextMessage]:
+        """独立读取回复窗口，避免 Planner 裁切缩短回复器的聊天记录。"""
+
+        if self._max_context_tokens is not None:
+            return [message for message in self._chat_history if isinstance(message, SessionBackedMessage)]
 
         context_limit = max(1, int(self._max_context_size * 0.6))
         recent_messages = await asyncio.to_thread(
@@ -375,7 +383,8 @@ class MaisakaHeartFlowChatting(MaisakaRuntimeDisplayMixin):
     def _get_context_restore_limit(self) -> int:
         """返回启动时最多回灌的真实消息数量。"""
 
-        return max(1, ceil(self._max_context_size * CONTEXT_RESTORE_FILL_RATIO))
+        context_size = 300 if self._max_context_tokens is not None else self._max_context_size
+        return max(1, ceil(context_size * CONTEXT_RESTORE_FILL_RATIO))
 
     async def restore_proactive_user_context(self) -> int:
         """主动回合前确保上下文含有可回复的真实用户消息。
@@ -531,6 +540,7 @@ class MaisakaHeartFlowChatting(MaisakaRuntimeDisplayMixin):
             return
 
         self._running = False
+        self._message_turn_scheduler.close()
         # 先向普通推理循环发出取消，再等待 Focus、学习器或子代理的清理。
         # 否则后台服务退出期间仍可能继续规划和调用即将销毁的插件。
         if self._internal_loop_task is not None:
@@ -559,7 +569,7 @@ class MaisakaHeartFlowChatting(MaisakaRuntimeDisplayMixin):
         logger.debug(f"{self.log_prefix} Maisaka 运行时已停止")
 
     def adjust_talk_frequency(self, frequency: float) -> None:
-        """调整当前会话的回复频率倍率。"""
+        """调整当前会话的查看频率倍率。"""
         self._talk_frequency_adjust = max(0.0, float(frequency))
         self._schedule_message_turn()
 
@@ -1029,6 +1039,7 @@ class MaisakaHeartFlowChatting(MaisakaRuntimeDisplayMixin):
         if self._focus_group is None:
             self._observe_message_debounce(message, received_at)
         self.message_cache.append(message)
+        self._message_turn_scheduler.observe_message()
         self._emit_monitor_message_ingested(message)
         self._prune_processed_message_cache()
         if self._focus_group is not None:
@@ -1049,8 +1060,10 @@ class MaisakaHeartFlowChatting(MaisakaRuntimeDisplayMixin):
         )
 
     def _request_planner_interrupt_for_message(self, message: SessionMessage) -> None:
-        """快速反应模式下，用新消息打断运行中的 Planner。"""
-        if not self.scene.is_group or not global_config.chat.reply_timing.planner_message_steering or self._agent_state != self._STATE_RUNNING:
+        """私聊默认、群聊快速反应模式下，用新消息打断运行中的 Planner。"""
+        if self._agent_state != self._STATE_RUNNING:
+            return
+        if self.scene.is_group and not global_config.chat.reply_timing.planner_message_steering:
             return
 
         request_result = self._planner_interrupt.request()
@@ -1070,17 +1083,17 @@ class MaisakaHeartFlowChatting(MaisakaRuntimeDisplayMixin):
         )
 
     def _get_effective_reply_frequency(self) -> float:
-        """返回当前会话生效的回复频率。"""
+        """返回当前会话生效的查看频率。"""
         return self.scene.effective_reply_frequency(self)
 
     @staticmethod
     def _format_reply_frequency_for_display(frequency: float) -> str:
-        """将回复频率格式化为日志中易读的数值。"""
+        """将查看频率格式化为日志中易读的数值。"""
         normalized_frequency = max(0.0, float(frequency))
         return f"{normalized_frequency:.3f}（{normalized_frequency * 100:.1f}%）"
 
     def _get_base_reply_frequency(self) -> float:
-        """返回当前会话类型对应的基础回复频率。"""
+        """返回当前会话类型对应的基础查看频率。"""
         return self.scene.base_reply_frequency(self.session_id)
 
     def _is_reply_frequency_silent(self) -> bool:
@@ -1308,7 +1321,6 @@ class MaisakaHeartFlowChatting(MaisakaRuntimeDisplayMixin):
         self._tool_registry.register_provider(PluginToolProvider())
         self._tool_registry.register_provider(AgentToolProvider())
         self._tool_registry.register_provider(ChatSessionToolProvider())
-        self._tool_registry.register_provider(TodoToolProvider())
         self._tool_registry.register_provider(ExplorationToolProvider())
         self._tool_registry.register_provider(DesktopScreenToolProvider())
         self._tool_registry.register_provider(FileToolProvider())
@@ -1494,11 +1506,8 @@ class MaisakaHeartFlowChatting(MaisakaRuntimeDisplayMixin):
     def build_deferred_tools_reminder(self) -> str:
         """构造供 planner 使用的 deferred tools 提示消息。"""
 
-        # 末尾加载模式的目录不随激活改变；普通模式只列出尚未展开的工具。
-        deferred_tool_specs = [
-            spec for name, spec in self.deferred_tool_specs_by_name.items()
-            if self._tool_search_tail_loading or name not in self.discovered_tool_names
-        ]
+        # 工具定义在搜索结果中加载，目录不随激活改变。
+        deferred_tool_specs = list(self.deferred_tool_specs_by_name.values())
         if not deferred_tool_specs:
             return ""
 
@@ -1619,6 +1628,7 @@ class MaisakaHeartFlowChatting(MaisakaRuntimeDisplayMixin):
             is_bare_image=kind == 1 and length == 0,
             is_pure_emoji=kind == 2 and length == 0,
             mode=mode,
+            is_group=self.scene.is_group,
             at_bot=message.is_at or message.is_mentioned,
             received_at=received_at,
             wall_time=time.time(),

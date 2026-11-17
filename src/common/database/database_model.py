@@ -1,9 +1,14 @@
 from datetime import datetime
 from enum import Enum
 from typing import Optional
+from uuid import uuid4
 
-from sqlalchemy import Boolean, Column, DateTime, Enum as SQLEnum, Float, Index, Integer, String, Text, UniqueConstraint
-from sqlmodel import Field, LargeBinary, SQLModel
+from sqlalchemy import Boolean, Column, DateTime, Enum as SQLEnum, Float, Index, Integer, String, Text, UniqueConstraint, event
+from sqlalchemy.engine import Connection
+from sqlalchemy.orm import Mapper
+from sqlmodel import Field, LargeBinary, Relationship, SQLModel
+
+import json
 
 from src.common.database.chat_migration_models import copies, jobs  # noqa: F401 -- 注册迁移账本
 from src.common.database.sharing_models import SharingGroup, SharingGroupMember, SharingGroupCapability, SharingGroupRule, SharingGroupMigration  # noqa: F401
@@ -444,6 +449,30 @@ class BinaryData(SQLModel, table=True):
     full_path: str = Field(max_length=1024)  # 文件的完整路径 (包括文件名)
 
 
+class Individual(SQLModel, table=True):
+    """跨平台统一个体；平台账号通过 PersonInfo 归属于个体。"""
+
+    __tablename__ = "individuals"
+
+    individual_id: str = Field(default_factory=lambda: uuid4().hex, primary_key=True)
+    display_name: str
+    is_known: bool = False
+    profile_sources_json: str = "[]"
+    created_at: datetime = Field(default_factory=datetime.now)
+
+
+class IndividualMergeEvent(SQLModel, table=True):
+    """手动合并的成员归属快照，保留被合并个体的历史 ID。"""
+
+    __tablename__ = "individual_merge_events"
+
+    id: Optional[int] = Field(default=None, primary_key=True)
+    target_individual_id: str = Field(index=True)
+    members_json: str
+    profiles_json: str = "{}"
+    created_at: datetime = Field(default_factory=datetime.now)
+
+
 class PersonInfo(SQLModel, table=True):
     """存储个人信息的模型"""
 
@@ -451,10 +480,12 @@ class PersonInfo(SQLModel, table=True):
 
     id: Optional[int] = Field(default=None, primary_key=True)  # 自增主键
 
-    is_known: bool = Field(default=False)  # 是否为已知人
+    # 建档时的账号来源资料；当前人物资料统一读取 individual。
+    is_known: bool = Field(default=False)  # 来源账号原认识状态
     person_id: str = Field(unique=True, index=True, max_length=255)  # 人员ID
+    individual_id: str = Field(default_factory=lambda: uuid4().hex, foreign_key="individuals.individual_id", index=True)
+    individual: Individual = Relationship(sa_relationship_kwargs={"lazy": "joined"})
     person_name: Optional[str] = Field(default=None, max_length=255, nullable=True)  # 人员名称
-    name_reason: Optional[str] = Field(default=None, nullable=True)  # 名称原因
 
     # 身份元数据
     platform: str = Field(index=True, max_length=100)  # 平台名称
@@ -464,15 +495,41 @@ class PersonInfo(SQLModel, table=True):
         default=None, nullable=True
     )  # 群昵称 (JSON, [{"group_id": str, "group_cardname": str}])
 
-    # 印象
-    memory_points: Optional[str] = Field(default=None, nullable=True)  # 记忆要点，JSON格式存储
-
     # 认识次数和时间
     know_counts: int = Field(default=0)  # 认识次数
     first_known_time: Optional[datetime] = Field(
         default=None, sa_column=Column(DateTime, nullable=True)
     )  # 首次认识时间
     last_known_time: Optional[datetime] = Field(default=None, sa_column=Column(DateTime, nullable=True))  # 最后认识时间
+
+
+@event.listens_for(PersonInfo, "before_insert")
+def create_person_individual(mapper: Mapper, connection: Connection, person: PersonInfo) -> None:
+    """所有 ORM 建档入口都在同一事务内创建默认个体。"""
+    table = Individual.__table__
+    existing = connection.execute(
+        table.select().where(table.c.individual_id == person.individual_id)
+    ).first()
+    origin = {
+        "individual_id": person.individual_id, "person_id": person.person_id,
+        "platform": person.platform, "user_id": person.user_id,
+        "display_name": person.person_name or person.user_nickname or person.user_id,
+        "is_known": person.is_known,
+    }
+    if existing is None:
+        connection.execute(table.insert().values(
+            individual_id=person.individual_id,
+            display_name=origin["display_name"],
+            is_known=person.is_known,
+            profile_sources_json=json.dumps([origin], ensure_ascii=False),
+            created_at=datetime.now(),
+        ))
+    else:
+        origins = json.loads(existing.profile_sources_json)
+        origins.append(origin)
+        connection.execute(table.update().where(table.c.individual_id == person.individual_id).values(
+            profile_sources_json=json.dumps(origins, ensure_ascii=False),
+        ))
 
 
 class ChatSession(SQLModel, table=True):

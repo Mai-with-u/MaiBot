@@ -1,5 +1,6 @@
 """聊天消息入口与主链路调度。"""
 
+from asyncio import to_thread
 from copy import deepcopy
 from datetime import datetime
 from typing import Any, Dict, List, Optional
@@ -861,7 +862,9 @@ class ChatBot:
     async def _receive_with_migration_gate(self, message: SessionMessage) -> None:
         """迁移期间等待该聊天流恢复，消息仍由原入站协程持有。"""
         from src.services.chat_migration_gate import chat_migration_gate
+        from src.person_info.identity import normalize_message_identity
 
+        await to_thread(normalize_message_identity, message)
         route = RouteKeyFactory.from_session_message(message)
         group = message.message_info.group_info
         session_id = SessionUtils.calculate_session_id(

@@ -1,0 +1,102 @@
+/* 页面只定义目录与编辑器的两栏尺寸，材质、键帽和选中颜色沿用公共组件的主题。 */
+[data-prompt-workspace] {
+  display: grid;
+  grid-template-columns: minmax(0, 1fr);
+  flex: 1;
+  min-height: 0;
+  gap: 0.75rem;
+  padding: 0.875rem;
+}
+
+[data-prompt-management] [data-dashboard-folder-tabs] {
+  flex-shrink: 0;
+}
+
+[data-prompt-editor] {
+  min-width: 0;
+}
+
+[data-prompt-folders] nav [data-dashboard-list-item] {
+  padding-right: calc(var(--dashboard-scrollbar-size, 0.625rem) + 0.75rem);
+}
+
+[data-prompt-folders] nav [data-dashboard-list-item] > span:last-child {
+  flex-shrink: 0;
+}
+
+[data-prompt-file][data-selected='true'] {
+  box-shadow: inset 4px 0 0 var(--surface-focus);
+}
+
+[data-prompt-modified-dot] {
+  width: 6px;
+  height: 6px;
+  flex-shrink: 0;
+  background: hsl(var(--primary));
+}
+
+:root[data-dashboard-style='millennium'] [data-prompt-title] {
+  font-family: var(--mil-font-pixel);
+  font-weight: 400;
+}
+
+:root[data-dashboard-style='millennium'] [data-prompt-workspace] .font-mono {
+  font-family: var(--mil-font-pixel);
+}
+
+:root[data-dashboard-style='millennium'] [data-prompt-list-heading] {
+  background: var(--mil-key);
+  border-color: var(--mil-lo);
+}
+
+:root[data-dashboard-style='millennium'] [data-prompt-folders] [data-dashboard-list-item] {
+  border-bottom: 0;
+}
+
+:root[data-dashboard-style='millennium'] [data-prompt-modified-dot] {
+  background: var(--mil-hot);
+}
+
+/* CodeMirror 内部有独立背景，需和外层公共编辑器使用同一套千禧色值。 */
+:root[data-dashboard-style='millennium'] [data-prompt-editor] .cm-editor {
+  background: var(--mil-screen);
+  color: var(--mil-screen-ink);
+  font-size: 14px;
+}
+
+:root[data-dashboard-style='millennium'] [data-prompt-editor] :is(.cm-scroller, .cm-content) {
+  font-family: 'Microsoft YaHei', sans-serif;
+  line-height: 1.75;
+}
+
+:root[data-dashboard-style='millennium'] [data-prompt-editor] .cm-gutters {
+  background: var(--mil-key);
+  border-color: var(--mil-rule);
+  color: var(--mil-vent);
+  font-family: var(--mil-font-pixel);
+}
+
+:root[data-dashboard-style='millennium']
+  [data-prompt-editor]
+  :is(.cm-activeLine, .cm-activeLineGutter) {
+  background: color-mix(in srgb, var(--mil-hot) 16%, transparent);
+}
+
+@media (min-width: 1024px) {
+  [data-prompt-workspace] {
+    grid-template-columns: 246px minmax(0, 1fr);
+  }
+
+  [data-prompt-workspace][data-prompt-focus='true'] {
+    grid-template-columns: minmax(0, 1fr);
+  }
+}
+
+@media (max-width: 639px) {
+  [data-prompt-workspace] {
+    padding: 0.5rem;
+  }
+  [data-prompt-management] [data-dashboard-folder-tabs-trailing] {
+    width: 100%;
+  }
+}

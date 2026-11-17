@@ -13,10 +13,9 @@ import { afterEach, expect, it, vi } from 'vitest'
 import { AppShell } from '@/components/app-shell'
 import { setHostRuntime } from '../state'
 
-vi.mock('@/components/layout', () => ({
-  Layout: ({ children }: { children: ReactNode }) => <div>{children}</div>,
+vi.mock('@/components/observation-layout/ObservationLayout', () => ({
+  ObservationLayout: ({ children }: { children: ReactNode }) => <div>{children}</div>,
 }))
-vi.mock('@/lib/layout-version', () => ({ useEffectiveLayoutVersion: () => 'classic' }))
 vi.mock('react-i18next', () => ({
   useTranslation: () => ({ t: (key: string) => key }),
 }))

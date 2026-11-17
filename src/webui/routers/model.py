@@ -19,6 +19,8 @@ from pydantic import BaseModel, Field
 
 import httpx
 
+from src.chat.replyer.creative_language import GROUP_REPLY_GUIDANCE
+from src.common.i18n import get_locale
 from src.common.logger import get_logger
 from src.config.config import CONFIG_DIR
 from src.config.shared_models import read_effective_config
@@ -610,7 +612,9 @@ def _build_replyer_test_context_factory() -> Callable[[BaseClient], List[Context
         dialogue_prompt="小明：终于忙完了，准备出去散散步\n小红：今天阳光不错，正好出去透透气",
         reply_target_block="你准备参与这段聊天",
         planner_reasoning="跟着大家聊聊周末散步，轻松自然地回应一句。",
-        keywords_reaction_prompt="",
+        reply_guidance=GROUP_REPLY_GUIDANCE.get(
+            get_locale(), GROUP_REPLY_GUIDANCE["zh-CN"],
+        )["简短表达"],
         reply_style="用日常口语简短回复。",
     )
     items = [

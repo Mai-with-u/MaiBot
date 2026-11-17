@@ -276,13 +276,13 @@ function TalkFrequencyRuleEditor({
     onSuccess: (updatedDetail) => {
       updateDetailCache(updatedDetail)
       toast({
-        title: '发言频率规则已保存',
+        title: '查看频率规则已保存',
         description: '已写入当前聊天流的精确动态频率规则。',
       })
     },
     onError: (error) => {
       toast({
-        title: '保存发言频率失败',
+        title: '保存查看频率失败',
         description: error instanceof Error ? error.message : '请稍后重试',
         variant: 'destructive',
       })
@@ -294,13 +294,13 @@ function TalkFrequencyRuleEditor({
     onSuccess: (updatedDetail) => {
       updateDetailCache(updatedDetail)
       toast({
-        title: '发言频率规则已删除',
+        title: '查看频率规则已删除',
         description: '已删除当前聊天流的这条精确规则。',
       })
     },
     onError: (error) => {
       toast({
-        title: '删除发言频率规则失败',
+        title: '删除查看频率规则失败',
         description: error instanceof Error ? error.message : '请稍后重试',
         variant: 'destructive',
       })
@@ -318,7 +318,7 @@ function TalkFrequencyRuleEditor({
         />
       </div>
       <div className="space-y-2">
-        <Label className="text-xs">发言频率</Label>
+        <Label className="text-xs">查看频率</Label>
         <Input
           type="number"
           min={0}
@@ -329,7 +329,7 @@ function TalkFrequencyRuleEditor({
         />
       </div>
       <div className="flex items-center justify-end gap-2">
-        <Switch checked={enabled} onCheckedChange={setEnabled} aria-label="启用发言频率规则" />
+        <Switch checked={enabled} onCheckedChange={setEnabled} aria-label="启用查看频率规则" />
         <Button
           type="button"
           className="shrink-0"
@@ -344,7 +344,7 @@ function TalkFrequencyRuleEditor({
           size="icon"
           className="text-destructive hover:text-destructive shrink-0"
           disabled={deleteMutation.isPending}
-          aria-label={`删除时间段 ${rule.time || '默认'} 的发言频率规则`}
+          aria-label={`删除时间段 ${rule.time || '默认'} 的查看频率规则`}
           onClick={() => deleteMutation.mutate()}
         >
           <Trash2 className="h-4 w-4" />
@@ -401,13 +401,13 @@ function TalkFrequencyTimelineRule({
     onSuccess: (updatedDetail) => {
       updateDetailCache(updatedDetail)
       toast({
-        title: '发言频率规则已保存',
+        title: '查看频率规则已保存',
         description: '已写入当前聊天流的精确动态频率规则。',
       })
     },
     onError: (error) => {
       toast({
-        title: '保存发言频率失败',
+        title: '保存查看频率失败',
         description: error instanceof Error ? error.message : '请稍后重试',
         variant: 'destructive',
       })
@@ -419,13 +419,13 @@ function TalkFrequencyTimelineRule({
     onSuccess: (updatedDetail) => {
       updateDetailCache(updatedDetail)
       toast({
-        title: '发言频率规则已删除',
+        title: '查看频率规则已删除',
         description: '已删除当前聊天流的这条精确规则。',
       })
     },
     onError: (error) => {
       toast({
-        title: '删除发言频率规则失败',
+        title: '删除查看频率规则失败',
         description: error instanceof Error ? error.message : '请稍后重试',
         variant: 'destructive',
       })
@@ -473,7 +473,7 @@ function TalkFrequencyTimelineRule({
         <span className="w-12 text-right font-mono text-xs tabular-nums">{value.toFixed(2)}</span>
       </div>
       <div className="flex items-center justify-end gap-2">
-        <Switch checked={enabled} onCheckedChange={setEnabled} aria-label="启用发言频率规则" />
+        <Switch checked={enabled} onCheckedChange={setEnabled} aria-label="启用查看频率规则" />
         <Button
           type="button"
           size="sm"
@@ -488,7 +488,7 @@ function TalkFrequencyTimelineRule({
           size="icon"
           className="text-destructive hover:text-destructive h-8 w-8"
           disabled={deleteMutation.isPending}
-          aria-label={`删除时间段 ${rule.time || '默认'} 的发言频率规则`}
+          aria-label={`删除时间段 ${rule.time || '默认'} 的查看频率规则`}
           onClick={() => deleteMutation.mutate()}
         >
           <Trash2 className="h-4 w-4" />
@@ -514,7 +514,7 @@ function TalkFrequencyTimelineEditor({
       </div>
       {exactRules.length === 0 ? (
         <div className="text-muted-foreground rounded-md border border-dashed px-3 py-2 text-sm">
-          当前聊天流还没有专属发言频率规则。
+          当前聊天流还没有专属查看频率规则。
         </div>
       ) : (
         <div className="space-y-2">
@@ -543,13 +543,13 @@ function AddTalkFrequencyRuleButton({ detail }: { detail: ChatStreamDetail }) {
       queryClient.setQueryData(['chat-stream-detail', detail.session_id], updatedDetail)
       void queryClient.invalidateQueries({ queryKey: ['chat-streams'] })
       toast({
-        title: '发言频率规则已新增',
+        title: '查看频率规则已新增',
         description: '已写入当前聊天流的精确动态频率规则。',
       })
     },
     onError: (error) => {
       toast({
-        title: '新增发言频率规则失败',
+        title: '新增查看频率规则失败',
         description: error instanceof Error ? error.message : '请稍后重试',
         variant: 'destructive',
       })
@@ -609,7 +609,7 @@ function TalkFrequencyEditor({ detail }: { detail: ChatStreamDetail }) {
         <div className="space-y-3">
           {exactRules.length === 0 ? (
             <div className="text-muted-foreground rounded-md border border-dashed px-3 py-2 text-sm">
-              当前聊天流还没有专属发言频率规则。
+              当前聊天流还没有专属查看频率规则。
             </div>
           ) : (
             <div className="space-y-2">
@@ -681,13 +681,13 @@ function TalkFrequencySection({ detail }: { detail: ChatStreamDetail }) {
   return (
     <section className="space-y-3 rounded-md border p-3">
       <div className="flex flex-wrap items-center gap-2">
-        <span className="font-medium">发言频率规则</span>
+        <span className="font-medium">查看频率规则</span>
         <Badge variant="outline">{detail.talk_frequency.active_group}</Badge>
       </div>
       <div className="grid gap-2 text-sm sm:grid-cols-3">
-        <FrequencySummaryItem label="默认频率" value={detail.talk_frequency.base_value_label} />
+        <FrequencySummaryItem label="默认查看概率" value={detail.talk_frequency.base_value_label} />
         <FrequencySummaryItem
-          label="当前生效"
+          label="外部查看概率"
           value={detail.talk_frequency.effective_value_label}
         />
         <FrequencySummaryItem
@@ -699,7 +699,7 @@ function TalkFrequencySection({ detail }: { detail: ChatStreamDetail }) {
       <div className="space-y-2">
         {detail.talk_frequency.matched_rules.length === 0 ? (
           <div className="bg-muted text-muted-foreground rounded-md px-3 py-2 text-sm">
-            没有可应用的动态发言频率规则，使用默认频率。
+            没有可应用的动态查看频率规则，使用默认频率。
           </div>
         ) : (
           detail.talk_frequency.matched_rules.map((rule, index) => (

@@ -53,7 +53,7 @@ import { useNews } from '@/routes/home/hooks/useNews'
 import { useNewsReadState } from '@/routes/home/hooks/useNewsReadState'
 import { useQuickShortcuts } from '@/routes/home/hooks/useQuickShortcuts'
 import { useReviewStats } from '@/routes/home/hooks/useReviewStats'
-import { formatCacheRate, formatNumber } from '@/routes/home/StatisticsCards'
+import { formatCacheRate, formatNumber } from '@/routes/home/statistics-format'
 import {
   formatChartTimeAxis,
   formatTokenAxis,
@@ -615,7 +615,7 @@ function ObservationHomeContent() {
         <BoardScreen className="flex flex-col">
           {[
             { label: t('home.cache.all'), rate: summary?.cache_hit_rate ?? null },
-            { label: t('home.cache.chat'), rate: summary?.chat_cache_hit_rate ?? null },
+            { label: t('home.cache.core'), rate: summary?.core_cache_hit_rate ?? null },
           ].map((item) => (
             <div key={item.label} data-observation-cache-row="true">
               <div className="flex items-baseline justify-between gap-2">

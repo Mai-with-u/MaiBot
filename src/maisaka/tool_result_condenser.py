@@ -115,7 +115,7 @@ async def condense_tool_result(
             context_message_limit=1,
             system_prompt=TOOL_RESULT_CONDENSER_SYSTEM_PROMPT,
             extra_messages=[task_message],
-            model_task_name="utils",
+            model_task_name="fast_model",
             tool_definitions=[],
             include_parent_context=False,
         )

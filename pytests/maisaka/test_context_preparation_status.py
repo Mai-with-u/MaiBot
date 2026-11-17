@@ -41,7 +41,7 @@ async def test_context_status_tracks_parallel_injections(monkeypatch: pytest.Mon
         _consecutive_wait_count=0,
         _update_stage_status=lambda *args, **kwargs: statuses.append(args),
     )
-    engine._build_action_tool_definitions = AsyncMock(return_value=([], ""))
+    engine._build_action_tool_definitions = AsyncMock(return_value=([], "工具目录"))
     engine._refresh_jargon_reference_message = lambda: None
     engine._emit_flow_step = AsyncMock()
     engine._run_interruptible_planner = AsyncMock()
@@ -62,6 +62,7 @@ async def test_context_status_tracks_parallel_injections(monkeypatch: pytest.Mon
     release_profile.set()
     await task
     assert engine._run_interruptible_planner.call_args.kwargs["injected_user_messages"] == ["记忆", "画像", "图片"]
+    assert engine._run_interruptible_planner.call_args.kwargs["deferred_tools_reminder"] == "工具目录"
     (summary,) = [entry for entry in logs if "上下文准备" in entry]
     assert all(
         f"{name}=" in summary for name in ("总耗时", "可用工具", "黑话参考", "启发式记忆", "人物画像", "图片记忆")

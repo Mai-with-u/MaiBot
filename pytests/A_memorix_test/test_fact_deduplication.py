@@ -545,7 +545,6 @@ def test_profile_projection_preserves_budget_after_removing_retracted_facts(stor
     buckets = service._classify_profile_evidence_rule_based(
         relation_edges=[],
         vector_evidence=evidence,
-        memory_traits=[],
     )
     texts = [text for values in buckets.values() for text in values]
     assert texts == [current[:budget]]
