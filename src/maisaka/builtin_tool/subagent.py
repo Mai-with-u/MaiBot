@@ -14,6 +14,7 @@ import asyncio
 import json
 import time
 
+from src.chat.message_receive.message import SessionMessage
 from src.common.logger import get_logger
 from src.common.prompt_i18n import load_prompt
 from src.core.tooling import ToolExecutionContext, ToolExecutionResult, ToolInvocation, ToolSpec
@@ -176,6 +177,7 @@ async def _run_sub_agent_rounds(
     task: str,
     granted_specs: List[ToolSpec],
     tool_usage: Dict[str, int],
+    caller_message: Optional[SessionMessage],
 ) -> SubAgentOutcome:
     """在独立上下文里多轮运行子代理，直到它给出结论或用完轮数。
 
@@ -185,6 +187,7 @@ async def _run_sub_agent_rounds(
         task: Planner 写给子代理的任务说明。
         granted_specs: 授权给子代理的工具声明。
         tool_usage: 工具调用次数；运行过程中原地更新，后台任务可以据此展示进度。
+        caller_message: 派发子代理那一轮的调用者；子代理替他调用插件工具。
     """
 
     runtime = tool_ctx.runtime
@@ -201,7 +204,7 @@ async def _run_sub_agent_rounds(
             display_prefix="[派发给你的任务]",
         )
     ]
-    execution_context = engine._build_tool_execution_context(task)
+    execution_context = engine._build_tool_execution_context(task, caller_message)
     conclusion = ""
 
     for round_index in range(SUBAGENT_MAX_ROUNDS + 1):
@@ -284,6 +287,7 @@ async def _run_and_report(
     task: str,
     granted_specs: List[ToolSpec],
     tool_usage: Dict[str, int],
+    caller_message: Optional[SessionMessage],
 ) -> SubAgentOutcome:
     """运行子代理，并把完成或失败上报给观察页；被终止的任务由终止方上报。"""
 
@@ -296,6 +300,7 @@ async def _run_and_report(
             task=task,
             granted_specs=granted_specs,
             tool_usage=tool_usage,
+            caller_message=caller_message,
         )
     except asyncio.CancelledError:
         raise
@@ -329,7 +334,7 @@ async def handle_tool(
 ) -> ToolExecutionResult:
     """执行 subagent：运行一个带工具的多轮子代理，在后台运行并返回任务 id。"""
 
-    del context
+    caller_message = context.metadata.get("anchor_message") if context is not None else None
     task = str(invocation.arguments.get("task") or "").strip()
     if not task:
         return tool_ctx.build_failure_result(invocation.tool_name, "subagent 需要提供非空的 task。")
@@ -392,6 +397,7 @@ async def handle_tool(
             task=task,
             granted_specs=granted_specs,
             tool_usage=background_task.tool_usage,
+            caller_message=caller_message,
         )
 
     background_task = task_manager.start(
