@@ -387,7 +387,7 @@ function NodeRenderer({ node, ...props }: Omit<RendererProps, 'nodes'> & { node:
       const lastPage = Math.max(0, Math.ceil(rows.length / 50) - 1)
       const current = Math.min(tablePage, lastPage)
       return (
-        <div className="space-y-3">
+        <div data-plugin-webui-table="true" className="min-w-0 max-w-full space-y-3">
           {heading}
           <Table>
             <TableHeader>
