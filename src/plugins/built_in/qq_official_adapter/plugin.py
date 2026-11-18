@@ -332,6 +332,10 @@ class QQOfficialAdapterPlugin(MaiBotPlugin):
     def _identity_scope(self, group_openid: str, user_openid: str) -> IdentityScope:
         return (*self._identity_namespace(), group_openid, self._id_map["group"].get(group_openid, ""), user_openid)
 
+    def _active_group_map(self) -> Dict[str, str]:
+        """当前模式下用于群聊会话归属的群号映射。"""
+        return self._id_map["group"] if self.config.qq_official.enable_mapping else {}
+
     def _group_user_map(self, group_openid: str) -> Dict[str, str]:
         """开启映射时使用 QQ 号，否则保留原始 OpenID。"""
         return self._legacy_group_user_map(group_openid) if self.config.qq_official.enable_mapping else {}
@@ -803,8 +807,7 @@ class QQOfficialAdapterPlugin(MaiBotPlugin):
             await self._record_union_identity(group_openid, openid, union)
         self.ctx.logger.info("QQ 统一 ID 绑定更新: %s %s -> %s", kind, openid, value)
         result = (
-            f"已将{'当前群' if kind == 'group' else '目标用户'}的 ID 绑定为 {value}。"
-            "后续消息按该 ID 归属；会话身份改变时使用另一聊天流，旧记录不会自动迁移。"
+            f"已绑定当前群的群号 {value}。启用映射时，后续消息归入该群号的会话。"
         ) if kind == "group" else (
             f"已保留目标用户的 QQ 号关联 {value}；是否映射为 QQ 号由启用映射开关控制。"
             "需要合并旧用户数据时，可在插件页面使用用户数据灌注功能。"
@@ -1044,10 +1047,10 @@ class QQOfficialAdapterPlugin(MaiBotPlugin):
             union = supplied_union.strip() if isinstance(supplied_union, str) else ""
             if not union:
                 union = self._group_union_map(group_openid).get(openid, "")
-            effective_id_map = {**self._id_map, "user": self._group_user_map(group_openid)}
             group_name = str(data.get("group_name") or "").strip()
             if group_openid and not group_name:
                 group_name = await self._get_group_name(group_openid)
+            effective_id_map = {"group": self._active_group_map(), "user": self._group_user_map(group_openid)}
             message, scene, target = decode_message(
                 event,
                 data,
@@ -1060,7 +1063,7 @@ class QQOfficialAdapterPlugin(MaiBotPlugin):
                 id_map=effective_id_map,
                 unified_account_id=self._unified_account_id,
                 group_name=group_name,
-                union_user_map=self._group_user_map(group_openid),
+                union_user_map=effective_id_map["user"],
             )
             if union:
                 await self._record_union_identity(group_openid, openid, union)
@@ -1903,7 +1906,7 @@ class QQOfficialAdapterPlugin(MaiBotPlugin):
                 encode_message, message, reverse_map=reverse_map
             )
             # 被动回复窗口按入站记录的统一 ID 匹配（encode 返回的 target 已反查为 OpenID）。
-            route_target = (self._id_map["group"].get(target, target) if scene == "group"
+            route_target = (self._active_group_map().get(target, target) if scene == "group"
                             else self._group_user_map("").get(target, target))
             reference_scope = (self._account_id, scene, route_target)
             reply_to = str(message.get("reply_to") or "").strip()

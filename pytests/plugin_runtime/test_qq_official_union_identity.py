@@ -138,6 +138,9 @@ async def test_silent_sync_associates_qq_without_replacing_union(
     await adapter._receive_message("GROUP_MESSAGE_CREATE", data, account_id="bot", bot_name="麦麦")
     info = adapter.ctx.gateway.route_message.call_args.kwargs["message"]["message_info"]
     assert info["user_info"] == {"user_id": "456" if enable_mapping else "member-a", "user_nickname": "SL昵称", "user_cardname": "SL名片"}
+    expected_group = "123" if enable_mapping else "group-a"
+    assert info["group_info"]["group_id"] == expected_group
+    assert info["additional_config"]["platform_io_target_group_id"] == expected_group
 
 
 def test_conflicting_raw_identity_is_not_overwritten(tmp_path: Path) -> None:
