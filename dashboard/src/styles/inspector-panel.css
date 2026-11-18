@@ -1,4 +1,8 @@
 /* 麦麦观察检查器：标题条下沿一道线，数据屏里可点的行选中时用列表选中色。 */
+[data-maisaka-floating-header='true'] ~ [data-maisaka-inspector-panel='true'] {
+  top: var(--observe-header-h, 0px);
+}
+
 [data-inspector-head='true'] {
   border-bottom: 1px solid hsl(var(--border));
 }
