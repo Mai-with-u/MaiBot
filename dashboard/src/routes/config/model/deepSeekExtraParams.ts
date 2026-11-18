@@ -3,7 +3,15 @@ export type DeepSeekReasoningEffort = 'low' | 'high' | 'max'
 
 const DEEPSEEK_REASONING_EFFORTS = new Set<DeepSeekReasoningEffort>(['low', 'high', 'max'])
 const DEEPSEEK_RESPONSES_EFFORTS = new Set([...DEEPSEEK_REASONING_EFFORTS, 'none'])
-const DEEPSEEK_WEB_SEARCH_TYPES = new Set(['web_search', 'web_search_2025_08_26'])
+type DeepSeekSearchTool = 'deepseek_web_search' | 'web_search'
+const DEEPSEEK_WEB_SEARCH_TYPES = new Set(['deepseek_web_search', 'web_search', 'web_search_2025_08_26'])
+const FLASH_MODELS = new Set(['deepseek-flash', 'deepseek-v4-flash', 'deepseek-v4-flash-vision-exp'])
+
+export function getDeepSeekSearchTool(model: string, client: DeepSeekClientType): DeepSeekSearchTool | null {
+  if (FLASH_MODELS.has(model.trim())) return 'deepseek_web_search'
+  if (model.trim() === 'deepseek-v4-pro' && client === 'openai_responses') return 'web_search'
+  return null
+}
 
 function isRecord(value: unknown): value is Record<string, unknown> {
   return typeof value === 'object' && value !== null && !Array.isArray(value)
@@ -109,7 +117,7 @@ export function isDeepSeekWebSearchEnabled(params: Record<string, unknown>): boo
 
 export function setDeepSeekWebSearchEnabled(
   params: Record<string, unknown>,
-  enabled: boolean
+  toolType: DeepSeekSearchTool | null
 ): Record<string, unknown> {
   if (params.tools !== undefined && !Array.isArray(params.tools)) {
     throw new Error('tools 必须是工具定义数组')
@@ -118,7 +126,7 @@ export function setDeepSeekWebSearchEnabled(
   const otherTools = (params.tools ?? []).filter(
     (tool) => !isRecord(tool) || !DEEPSEEK_WEB_SEARCH_TYPES.has(String(tool.type))
   )
-  const tools = enabled ? [...otherTools, { type: 'web_search' }] : otherTools
+  const tools = toolType ? [...otherTools, { type: toolType }] : otherTools
   const nextParams = { ...params }
   if (tools.length > 0) {
     nextParams.tools = tools
@@ -130,7 +138,8 @@ export function setDeepSeekWebSearchEnabled(
 
 export function validateDeepSeekExtraParams(
   params: Record<string, unknown>,
-  clientType: DeepSeekClientType
+  clientType: DeepSeekClientType,
+  searchTool: DeepSeekSearchTool | null
 ): string | null {
   if (clientType === 'openai_responses') {
     if ('thinking' in params || 'reasoning_effort' in params) {
@@ -166,12 +175,14 @@ export function validateDeepSeekExtraParams(
   }
   if (Array.isArray(params.tools)) {
     if (!params.tools.every(isRecord)) return 'tools 中的每一项都必须是工具定义对象'
-    const webSearchCount = params.tools.filter((tool) =>
+    const searchTools = params.tools.filter((tool) =>
       DEEPSEEK_WEB_SEARCH_TYPES.has(String(tool.type))
-    ).length
-    if (webSearchCount > 1) return '联网搜索工具只能配置一次'
-    if (clientType === 'openai' && webSearchCount > 0) {
-      return 'DeepSeek Chat Completions 不支持原生联网搜索，请使用 Responses 客户端'
+    )
+    if (searchTools.length > 1) return '联网搜索工具只能配置一次'
+    if (searchTools.length && searchTools[0].type !== searchTool) {
+      return searchTool
+        ? `当前模型使用 ${searchTool}，请重新开启联网搜索以更新工具类型`
+        : '当前模型和接口组合不支持此联网工具，请关闭联网搜索或更换模型'
     }
   }
 

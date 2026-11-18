@@ -25,6 +25,7 @@ import { getBotConfig } from '@/lib/config-api'
 
 import type { ModelInfo } from '../model/types'
 import type { APIProvider } from '../modelProvider/types'
+import { usePluginProviderFormats } from '../usePluginProviderFormats'
 import type { WebAdapter, WebSearchConfig, WebServiceConfig } from './types'
 
 interface Props {
@@ -84,6 +85,16 @@ export function WebSearchDialog({
   onSave,
 }: Props) {
   const initial = editingName ? config.services[editingName] : undefined
+  const { plugins, error: pluginError } = usePluginProviderFormats()
+  const labels = { ...ADAPTER_LABELS }
+  for (const plugin of plugins) {
+    if (plugin.formats.web.length) {
+      labels[`plugin:${plugin.owner_plugin_id}/${plugin.client_type}`] = `${plugin.client_type} · ${plugin.owner_plugin_id}`
+    }
+  }
+  if (initial?.adapter.startsWith('plugin:') && !labels[initial.adapter]) {
+    labels[initial.adapter] = `${initial.adapter}（未加载）`
+  }
   const isAssigned = Boolean(editingName && assignedService === editingName)
   const deepSeekProviders = providers.filter((provider) => isDeepSeekProvider(provider, models))
   // 编辑时按实际连接信息匹配，避免将已保存的自定义地址切换到其他提供商。
@@ -173,7 +184,7 @@ export function WebSearchDialog({
       return
     }
     if (
-      service.adapter === 'stepsearch_mcp' ? !service.server_ref?.trim() : !service.api_key?.trim()
+      service.adapter === 'stepsearch_mcp' ? !service.server_ref?.trim() : !service.adapter.startsWith('plugin:') && !service.api_key?.trim()
     ) {
       setError(
         service.adapter === 'stepsearch_mcp'
@@ -218,7 +229,7 @@ export function WebSearchDialog({
           }
         : {
             adapter: service.adapter,
-            api_key: service.api_key!.trim(),
+            api_key: service.api_key?.trim() ?? '',
             base_url: service.base_url?.trim() ?? '',
             timeout: service.timeout,
             ...(service.adapter === 'tavily'
@@ -291,13 +302,14 @@ export function WebSearchDialog({
                   <SelectValue />
                 </SelectTrigger>
                 <SelectContent>
-                  {Object.entries(ADAPTER_LABELS).map(([value, label]) => (
+                  {Object.entries(labels).map(([value, label]) => (
                     <SelectItem key={value} value={value}>
                       {label}
                     </SelectItem>
                   ))}
                 </SelectContent>
               </Select>
+              {pluginError && <p role="alert" className="text-xs text-destructive">无法加载插件协议：{pluginError}</p>}
             </div>
             {service.adapter === 'deepseek' && (
               <div className="grid gap-2">
@@ -386,7 +398,7 @@ export function WebSearchDialog({
                       onChange={(event) => patch({ base_url: event.target.value })}
                       placeholder={HTTP_BASE_URLS[service.adapter]}
                     />
-                    <p className="text-muted-foreground text-xs">留空使用官方地址。</p>
+                    <p className="text-muted-foreground text-xs">{service.adapter.startsWith('plugin:') ? '地址和密钥按插件要求填写。' : '留空使用官方地址。'}</p>
                   </div>
                 </>
               )

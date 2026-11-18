@@ -1,5 +1,6 @@
 from dataclasses import dataclass, field
 from datetime import datetime
+from functools import partial
 from pathlib import Path
 from typing import TYPE_CHECKING, Any, Callable, Dict, List, Optional, Set, Tuple
 
@@ -1299,15 +1300,17 @@ class PluginRunnerSupervisor:
                 [
                     ClientProviderRegistration(
                         client_type=provider.client_type,
-                        factory=lambda api_provider, provider_client_type=provider.client_type: PluginLLMClient(
-                            api_provider=api_provider,
+                        factory=partial(
+                            PluginLLMClient,
                             supervisor=self,
                             plugin_id=payload.plugin_id,
-                            client_type=provider_client_type,
+                            client_type=provider.client_type,
+                            formats=provider.formats,
                         ),
                         owner_plugin_id=payload.plugin_id,
                         version=provider.version,
                         description=provider.description or provider.name,
+                        formats=provider.formats,
                     )
                     for provider in payload.llm_providers
                 ],

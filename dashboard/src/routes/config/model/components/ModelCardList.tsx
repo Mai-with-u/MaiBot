@@ -125,8 +125,8 @@ export const ModelCardList = React.memo(function ModelCardList({
                   variant="outline"
                   size="icon-sm"
                   onClick={() => onTest(model.name)}
-                  disabled={isTesting}
-                  title="测试模型"
+                  disabled={isTesting || model.model_type === 'asr' || model.model_type === 'tts'}
+                  title={model.model_type === 'tts' ? '编辑模型即可试听音色' : model.model_type === 'asr' ? '请发送语音消息验证转写' : '测试模型'}
                   aria-label={`测试模型 ${model.name}`}
                 >
                   {isTesting ? (
@@ -160,28 +160,37 @@ export const ModelCardList = React.memo(function ModelCardList({
                 <span className="text-muted-foreground text-xs">提供商</span>
                 <p className="truncate font-medium">{model.api_provider}</p>
               </div>
-              <div>
-                <span className="text-muted-foreground text-xs">视觉</span>
-                <p className="flex h-5 items-center">
-                  <span
-                    className={`block h-3 w-3 rounded-full border ${
-                      model.visual
-                        ? 'border-green-500 bg-green-500 shadow-[0_0_0_3px_rgba(34,197,94,0.18)]'
-                        : 'border-green-700/40 bg-green-950/20'
-                    }`}
-                    title={model.visual ? '已启用视觉' : '未启用视觉'}
-                    aria-label={model.visual ? '已启用视觉' : '未启用视觉'}
-                  />
-                </p>
-              </div>
-              <div>
-                <span className="text-muted-foreground text-xs">默认输入价格</span>
-                <p className="font-medium">¥{model.price_in}/M</p>
-              </div>
-              <div>
-                <span className="text-muted-foreground text-xs">默认输出价格</span>
-                <p className="font-medium">¥{model.price_out}/M</p>
-              </div>
+              {model.model_type === 'tts' ? (
+                <div>
+                  <span className="text-muted-foreground text-xs">语音合成</span>
+                  <p className="font-medium">按字符计费</p>
+                </div>
+              ) : (
+                <>
+                  <div>
+                    <span className="text-muted-foreground text-xs">视觉</span>
+                    <p className="flex h-5 items-center">
+                      <span
+                        className={`block h-3 w-3 rounded-full border ${
+                          model.visual
+                            ? 'border-green-500 bg-green-500 shadow-[0_0_0_3px_rgba(34,197,94,0.18)]'
+                            : 'border-green-700/40 bg-green-950/20'
+                        }`}
+                        title={model.visual ? '已启用视觉' : '未启用视觉'}
+                        aria-label={model.visual ? '已启用视觉' : '未启用视觉'}
+                      />
+                    </p>
+                  </div>
+                  <div>
+                    <span className="text-muted-foreground text-xs">默认输入价格</span>
+                    <p className="font-medium">¥{model.price_in}/M</p>
+                  </div>
+                  <div>
+                    <span className="text-muted-foreground text-xs">默认输出价格</span>
+                    <p className="font-medium">¥{model.price_out}/M</p>
+                  </div>
+                </>
+              )}
             </div>
             {!!model.price_periods?.length && (
               <p className="text-xs text-muted-foreground">{model.price_periods.length} 个价格时段</p>

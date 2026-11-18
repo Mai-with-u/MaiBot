@@ -1584,6 +1584,7 @@ class PluginRunner:
                         description=str(provider_info.get("description", "") or "").strip(),
                         version=str(provider_info.get("version", "1.0.0") or "1.0.0").strip() or "1.0.0",
                         metadata=provider_metadata,
+                        formats=provider_metadata.get("formats", {}),
                     )
                 )
 

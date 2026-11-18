@@ -11,7 +11,7 @@ from src.chat.message_receive.message import SessionMessage
 from src.chat.replyer.replyer_manager import replyer_manager
 from src.chat.utils.utils import get_bot_account, is_bot_self
 from src.cli.maisaka_cli_sender import CLI_PLATFORM_NAME, render_cli_message
-from src.common.data_models.message_component_data_model import TextComponent
+from src.common.data_models.message_component_data_model import TextComponent, VoiceComponent
 from src.common.data_models.reply_generation_data_models import ReplyGenerationResult, build_reply_monitor_detail
 from src.common.llm_json import parse_llm_json
 from src.common.logger import get_logger
@@ -38,6 +38,7 @@ from src.plugin_runtime.host.reply_extensions import (
 )
 from src.services import send_service
 from .context import BuiltinToolRuntimeContext, PostProcessedReplyMessage, ResolvedReplyAttachments
+from .reply_voice import attach_reply_voice, voice_attachment_schema
 from .wait import resolve_wait_seconds
 
 if TYPE_CHECKING:
@@ -269,6 +270,8 @@ def get_tool_spec(context: Optional[ToolAvailabilityContext] = None) -> ToolSpec
             "default": [],
         }
 
+    if voice_schema := voice_attachment_schema(context.platform if context else None):
+        properties["attach_voice"] = voice_schema
     extension_schema = build_reply_extensions_schema(context)
     if extension_schema is not None:
         properties["plugin_options"] = extension_schema
@@ -600,6 +603,8 @@ async def _execute_reply(
                 target_message_id = target_message.message_id
                 invocation_arguments["msg_id"] = target_message_id
             invocation_arguments["plugin_options"] = supplement.plan.plugin_options
+            if supplement.plan.attach_voice is not None:
+                invocation_arguments["attach_voice"] = supplement.plan.attach_voice
             preparation_metadata["reply_supplement"] = {**supplement.metadata, "status": "completed"}
             extension_execution.reply_message_id = target_message_id
         return supplement.target_message if supplement is not None else target_message
@@ -792,6 +797,19 @@ async def _execute_reply(
                 "reply", f"插件回复扩展处理失败：{exc}",
                 metadata=_build_monitor_metadata(reply_result, extension_execution.reply_id),
             )
+    voice_mode = invocation_arguments.get("attach_voice")
+    if voice_mode is not None:
+        try:
+            schema = voice_attachment_schema(context.platform)
+            if schema is None or voice_mode not in schema["enum"]:
+                raise ValueError("当前回复不可使用指定的语音附件模式")
+            reply_items = await attach_reply_voice(reply_items, reply_text, voice_mode)
+        except Exception as exc:
+            logger.exception(f"{tool_ctx.runtime.log_prefix} 生成语音附件失败: {exc}")
+            return tool_ctx.build_failure_result(
+                "reply", f"生成语音附件失败：{exc}",
+                metadata=_build_monitor_metadata(reply_result, extension_execution.reply_id),
+            )
     reply_sequences = [item.sequence for item in reply_items]
     reply_segments = [build_visible_text_from_sequence(sequence) for sequence in reply_sequences]
     combined_reply_text = "".join(reply_segments)
@@ -802,14 +820,15 @@ async def _execute_reply(
     if extension_execution.targets:
         reply_metadata["reply_extensions"] = list(extension_execution.parameters)
     # 两条链路均按首段正文与当前聊天情境抽样一次；补充器只选择候选引用目标。
-    first_reply_index = next(
-        (index for index, sequence in enumerate(reply_sequences)
-         if any(isinstance(c, TextComponent) and c.text.strip() for c in sequence.components)), 0,
-    )
-    first_text = (
-        "".join(c.text for c in reply_sequences[first_reply_index].components if isinstance(c, TextComponent))
-        if reply_sequences else ""
-    )
+    first_reply_index, first_text = 0, ""
+    for index, sequence in enumerate(reply_sequences):
+        body = "".join(
+            part.text if isinstance(part, TextComponent) else part.content
+            for part in sequence.components if isinstance(part, (TextComponent, VoiceComponent))
+        )
+        if body.strip():
+            first_reply_index, first_text = index, body
+            break
     set_quote, quote_probability = await _resolve_reply_quote(tool_ctx, first_text, target_message, bot_user_id)
     if supplement is not None:
         reply_metadata["reply_supplement"] = {**supplement.metadata, "status": "completed"}

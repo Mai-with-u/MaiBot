@@ -243,10 +243,10 @@ class ModelInfo(ConfigBase):
     _validate_any: bool = False
     suppress_any_warning: bool = True
 
-    model_type: Literal["llm", "embedding", "image_embedding"] = Field(
+    model_type: Literal["llm", "embedding", "image_embedding", "asr", "tts"] = Field(
         json_schema_extra={"x-widget": "select"},
     )
-    """模型类型：LLM、文本嵌入或图片嵌入；必填，旧配置由版本升级钩子一次性标注。"""
+    """模型类型：LLM、文本嵌入、图片嵌入、语音识别或语音合成；必填，旧配置由版本升级钩子一次性标注。"""
 
     model_identifier: str = Field(
         default="",
@@ -537,6 +537,12 @@ class ModelTaskConfig(ConfigBase):
         },
     )
     """语音识别模型"""
+
+    tts: TaskConfig = Field(
+        default_factory=TaskConfig,
+        json_schema_extra={"x-widget": "custom", "advanced": True},
+    )
+    """语音合成模型；选用一个模型后可在回复中附加语音，留空时关闭。"""
 
     embedding: TaskConfig = Field(
         default_factory=TaskConfig,

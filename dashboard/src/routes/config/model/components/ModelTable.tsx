@@ -61,6 +61,8 @@ const ACTION_CELL_ATTR = { 'data-model-config-action-cell': 'true' } as const
 
 /** 能力标签：嵌入模型只标嵌入类型，对话模型标出能否看图。 */
 function modelCapabilityTags(model: ModelInfo) {
+  if (model.model_type === 'tts') return ['语音合成']
+  if (model.model_type === 'asr') return ['语音识别']
   if (model.model_type === 'embedding') return ['文本嵌入']
   if (model.model_type === 'image_embedding') return ['图片嵌入']
   return model.visual ? ['对话', '视觉'] : ['对话']
@@ -199,8 +201,8 @@ export const ModelTable = React.memo(function ModelTable({
                         {modelCapabilityTags(model).join(' · ')}
                       </span>
                     </TableCell>
-                    <TableCell data-model-column="price" className="font-mono text-sm" title={`输入 ¥${model.price_in}/M，输出 ¥${model.price_out}/M`}>
-                      <span className="block truncate">{formatModelPrice(model.price_in)} · {formatModelPrice(model.price_out)}</span>
+                    <TableCell data-model-column="price" className="font-mono text-sm" title={model.model_type === 'tts' ? undefined : `输入 ¥${model.price_in}/M，输出 ¥${model.price_out}/M`}>
+                      <span className="block truncate">{model.model_type === 'tts' ? '按字符计费' : `${formatModelPrice(model.price_in)} · ${formatModelPrice(model.price_out)}`}</span>
                       {!!model.price_periods?.length && (
                         <span className="block truncate text-xs font-normal text-primary">
                           {model.price_periods.length} 个价格时段
@@ -217,8 +219,8 @@ export const ModelTable = React.memo(function ModelTable({
                           size="icon-xs"
                           className="shrink-0"
                           onClick={() => onTest(model.name)}
-                          disabled={isTesting}
-                          title="测试模型"
+                          disabled={isTesting || model.model_type === 'asr' || model.model_type === 'tts'}
+                          title={model.model_type === 'tts' ? '编辑模型即可试听音色' : model.model_type === 'asr' ? '请发送语音消息验证转写' : '测试模型'}
                           aria-label={`测试模型 ${model.name}`}
                         >
                           {isTesting ? (

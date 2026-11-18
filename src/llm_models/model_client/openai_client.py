@@ -3,6 +3,8 @@ from typing import Any, Callable, Coroutine, Dict, List, Set, Tuple, cast
 from urllib.parse import urlparse
 from uuid import uuid4
 
+from httpx import Response
+
 import asyncio
 import base64
 import binascii
@@ -11,7 +13,7 @@ import json
 import re
 
 from openai import APIConnectionError, APIStatusError, AsyncOpenAI, AsyncStream, DefaultAsyncHttpxClient
-from openai._types import FileTypes, Omit, omit
+from openai._types import Omit, omit
 from openai.types.chat import (
     ChatCompletion,
     ChatCompletionAssistantMessageParam,
@@ -83,6 +85,7 @@ from .adapter_base import (
     ProviderStreamResponseHandler,
     await_task_with_interrupt,
 )
+from .asr_audio import prepare_deepseek_audio, transcription_filename
 from .base_client import (
     APIResponse,
     AudioTranscriptionRequest,
@@ -90,6 +93,7 @@ from .base_client import (
     ImageEmbeddingRequest,
     RequestTraceContext,
     ResponseRequest,
+    SpeechAudio,
     UsageTuple,
     client_registry,
 )
@@ -113,6 +117,10 @@ from ..request_snapshot import (
 )
 
 logger = get_logger("llm_models")
+STEP_TTS_DEFAULT_VOICES = {
+    "stepaudio-3-tts": "zixinnansheng", "stepaudio-2.5-tts": "zixinnansheng",
+    "step-tts-2": "zixinnansheng", "step-tts-mini": "cixingnansheng",
+}
 
 SUPPORTED_OPENAI_IMAGE_FORMATS = {"jpeg", "png", "webp"}
 """OpenAI 兼容图片输入稳定支持的格式集合。"""
@@ -1519,6 +1527,14 @@ class OpenaiClient(AdapterClient[AsyncStream[ChatCompletionChunk], ChatCompletio
                 request.extra_params,
                 reserved_body_keys=CHAT_COMPLETIONS_RESERVED_EXTRA_BODY_KEYS,
             )
+            if self.client.base_url.host == "api.deepseek.com":
+                configured_tools = request.extra_params.get("tools", request_overrides.extra_body.get("tools"))
+                if isinstance(configured_tools, list) and any(
+                    isinstance(tool, dict) and tool.get("type") == "deepseek_web_search" for tool in configured_tools
+                ):
+                    # 服务端搜索与 MaiBot 函数一同发送，避免 extra_body.tools 覆盖 SDK 的 tools。
+                    request_overrides.extra_body.pop("tools", None)
+                    tools_payload = [*(tools_payload or []), *configured_tools]
 
             temperature_argument = (
                 omit if "temperature" in request_overrides.extra_body else _coerce_openai_argument(request.temperature)
@@ -2017,6 +2033,42 @@ class OpenaiClient(AdapterClient[AsyncStream[ChatCompletionChunk], ChatCompletio
         usage_record = _extract_usage_record(getattr(raw_response, "usage", None))
         return response, usage_record
 
+    async def synthesize_speech(self, model: str, text: str, voice_id: str | None) -> SpeechAudio:
+        """按厂商协议合成整段正文，试听与正式发送共用 WAV 输出。"""
+        if model == "deepseek-tts":
+            if voice_id is None:
+                voice_id = "stella"
+            if voice_id not in ("stella", "tide"):
+                raise ValueError(f"未知的 DeepSeek TTS 音色：{voice_id}")
+            path = "/tools/tts"
+            body = {"text": text, "voice_id": voice_id, "format": "wav"}
+        elif model in STEP_TTS_DEFAULT_VOICES:
+            if voice_id is None:
+                voice_id = STEP_TTS_DEFAULT_VOICES[model]
+            if not 1 <= len(text) <= 1000:
+                raise ValueError("Step 单次合成支持 1 至 1000 个字符")
+            if not voice_id.strip():
+                raise ValueError("请选择 Step 音色")
+            path = "/audio/speech"
+            body = {"model": model, "input": text, "voice": voice_id, "response_format": "wav"}
+        else:
+            raise ValueError(f"不支持的语音合成模型：{model}")
+        endpoint = path if self.client.base_url.path.rstrip("/").endswith("/v1") else "/v1" + path
+        response = await self.client.post(
+            endpoint,
+            cast_to=Response,
+            body=body,
+            options={"headers": self._build_request_headers({"Accept": "audio/wav"})},
+        )
+        audio = response.content
+        if len(audio) <= 44 or audio[:4] != b"RIFF" or audio[8:12] != b"WAVE":
+            raise ValueError(f"{model} 未返回有效的 WAV 音频")
+        # 流式 WAV 可用全 1 占位；有确定长度时拒绝发送被截断的音频。
+        declared_size = int.from_bytes(audio[4:8], "little")
+        if declared_size != 0xFFFFFFFF and declared_size + 8 > len(audio):
+            raise ValueError(f"{model} 返回的 WAV 音频不完整")
+        return SpeechAudio(audio, "audio/wav")
+
     async def _execute_audio_transcription_request(
         self,
         request: AudioTranscriptionRequest,
@@ -2032,11 +2084,16 @@ class OpenaiClient(AdapterClient[AsyncStream[ChatCompletionChunk], ChatCompletio
         model_info = request.model_info
         audio_base64 = request.audio_base64
         extra_params = request.extra_params
+        deepseek = model_info.model_type == "asr" and model_info.model_identifier == "deepseek-asr"
+        endpoint = "/audio/transcriptions"
+        if deepseek:
+            endpoint = "/tools/asr" if self.client.base_url.path.rstrip("/").endswith("/v1") else "/v1/tools/asr"
+        operation = "deepseek.tools.asr" if deepseek else "audio.transcriptions.create"
         snapshot_provider_request = {
             "base_url": self.api_provider.base_url,
-            "endpoint": "/audio/transcriptions",
+            "endpoint": endpoint,
             "method": "POST",
-            "operation": "audio.transcriptions.create",
+            "operation": operation,
             "organization": self.api_provider.organization,
             "project": self.api_provider.project,
             "request_kwargs": {},
@@ -2044,22 +2101,40 @@ class OpenaiClient(AdapterClient[AsyncStream[ChatCompletionChunk], ChatCompletio
 
         try:
             request_overrides = split_openai_request_overrides(extra_params)
-            audio_file: FileTypes = ("audio.wav", io.BytesIO(base64.b64decode(audio_base64)))
-            snapshot_provider_request["request_kwargs"] = {
+            audio_bytes = await asyncio.to_thread(base64.b64decode, audio_base64)
+            request_headers = self._build_request_headers(request_overrides.extra_headers)
+            snapshot_kwargs = {
                 "audio_base64": audio_base64,
                 "extra_body": request_overrides.extra_body or None,
                 "extra_headers": request_overrides.extra_headers or None,
                 "extra_query": request_overrides.extra_query or None,
-                "file_name": "audio.wav",
-                "model": model_info.model_identifier,
             }
-            raw_response = await self.client.audio.transcriptions.create(
-                model=model_info.model_identifier,
-                file=audio_file,
-                extra_headers=self._build_request_headers(request_overrides.extra_headers),
-                extra_query=request_overrides.extra_query or None,
-                extra_body=request_overrides.extra_body or None,
-            )
+            snapshot_provider_request["request_kwargs"] = snapshot_kwargs
+            if deepseek:
+                audio_file = await asyncio.to_thread(prepare_deepseek_audio, audio_bytes)
+                snapshot_kwargs["file_name"] = audio_file[0]
+                raw_response = await self.client.post(
+                    endpoint,
+                    cast_to=object,
+                    files={"file": audio_file},
+                    body=request_overrides.extra_body or None,
+                    options={
+                        "headers": {**(request_headers or {}), "Content-Type": "multipart/form-data"},
+                        "params": request_overrides.extra_query,
+                    },
+                )
+                transcription_text = raw_response.get("text") if isinstance(raw_response, dict) else None
+            else:
+                file_name = transcription_filename(audio_bytes) if model_info.model_type == "asr" else "audio.wav"
+                snapshot_kwargs.update(file_name=file_name, model=model_info.model_identifier)
+                raw_response = await self.client.audio.transcriptions.create(
+                    model=model_info.model_identifier,
+                    file=(file_name, audio_bytes),
+                    extra_headers=request_headers,
+                    extra_query=request_overrides.extra_query or None,
+                    extra_body=request_overrides.extra_body or None,
+                )
+                transcription_text = raw_response if isinstance(raw_response, str) else raw_response.text
         except APIConnectionError as exc:
             snapshot_path = await asyncio.to_thread(
                 save_failed_request_snapshot,
@@ -2068,7 +2143,7 @@ class OpenaiClient(AdapterClient[AsyncStream[ChatCompletionChunk], ChatCompletio
                 error=exc,
                 internal_request=serialize_audio_request_snapshot(request),
                 model_info=model_info,
-                operation="audio.transcriptions.create",
+                operation=operation,
                 provider_request=snapshot_provider_request,
                 trace_context=request.trace_context,
             )
@@ -2083,7 +2158,7 @@ class OpenaiClient(AdapterClient[AsyncStream[ChatCompletionChunk], ChatCompletio
                 error=exc,
                 internal_request=serialize_audio_request_snapshot(request),
                 model_info=model_info,
-                operation="audio.transcriptions.create",
+                operation=operation,
                 provider_request=snapshot_provider_request,
                 trace_context=request.trace_context,
             )
@@ -2100,14 +2175,13 @@ class OpenaiClient(AdapterClient[AsyncStream[ChatCompletionChunk], ChatCompletio
                 error=exc,
                 internal_request=serialize_audio_request_snapshot(request),
                 model_info=model_info,
-                operation="audio.transcriptions.create",
+                operation=operation,
                 provider_request=snapshot_provider_request,
                 trace_context=request.trace_context,
             )
             attach_request_snapshot(exc, snapshot_path)
             raise
 
-        transcription_text = raw_response if isinstance(raw_response, str) else getattr(raw_response, "text", None)
         if not isinstance(transcription_text, str):
             exc = RespParseException(raw_response, "音频转写响应解析失败，缺少文本内容。")
             snapshot_path = await asyncio.to_thread(
@@ -2117,21 +2191,19 @@ class OpenaiClient(AdapterClient[AsyncStream[ChatCompletionChunk], ChatCompletio
                 error=exc,
                 internal_request=serialize_audio_request_snapshot(request),
                 model_info=model_info,
-                operation="audio.transcriptions.create",
+                operation=operation,
                 provider_request=snapshot_provider_request,
                 trace_context=request.trace_context,
             )
             attach_request_snapshot(exc, snapshot_path)
             raise exc
-        if isinstance(transcription_text, str):
-            return _build_portable_api_response(
-                content=transcription_text,
-                reasoning_content=None,
-                tool_calls=None,
-                logical_turn_id=uuid4().hex,
-                raw_data=raw_response,
-            ), None
-        raise RespParseException(raw_response, "响应解析失败，缺失转录文本。")
+        return _build_portable_api_response(
+            content=transcription_text,
+            reasoning_content=None,
+            tool_calls=None,
+            logical_turn_id=uuid4().hex,
+            raw_data=raw_response,
+        ), None
 
     def get_support_image_formats(self) -> List[str]:
         """获取支持的图片格式列表。

@@ -14,20 +14,24 @@ import os
 import time
 
 from fastapi import APIRouter, HTTPException, Query, Request
+from fastapi.responses import Response
+from openai import APIConnectionError, APIStatusError, APITimeoutError
 from PIL import Image
-from pydantic import BaseModel, Field
+from pydantic import BaseModel, Field, SecretStr
 
 import httpx
 
 from src.chat.replyer.creative_language import GROUP_REPLY_GUIDANCE
 from src.common.i18n import get_locale
 from src.common.logger import get_logger
+from src.common.runtime_loop import run_on_main_loop
 from src.config.config import CONFIG_DIR
 from src.config.shared_models import read_effective_config
 from src.config.model_configs import APIProvider, TaskConfig
-from src.llm_models.exceptions import RespNotOkException
+from src.llm_models.exceptions import RespNotOkException, RespParseException
 from src.llm_models.model_client import ensure_client_type_loaded
-from src.llm_models.model_client.base_client import BaseClient, client_registry
+from src.llm_models.model_client.base_client import BaseClient, SpeechAudio, client_registry
+from src.llm_models.model_client.openai_client import STEP_TTS_DEFAULT_VOICES, OpenaiClient
 from src.llm_models.openai_compat import build_openai_compatible_client_config, normalize_openai_base_url
 from src.llm_models.payload_content.context_item import ContextItem, ContextItemBuilder, RoleType
 from src.llm_models.payload_content.tool_option import ToolCall
@@ -143,7 +147,7 @@ def get_registered_client_types():
         ensure_client_type_loaded(client_type)
 
     client_types = []
-    for registration in client_registry.client_registry.values():
+    for registration in client_registry.client_registry.copy().values():
         client_types.append(
             {
                 "client_type": registration.client_type,
@@ -151,6 +155,7 @@ def get_registered_client_types():
                 "version": registration.version,
                 "description": registration.description,
                 "builtin": registration.builtin,
+                "formats": registration.formats.model_dump(),
             }
         )
 
@@ -183,6 +188,69 @@ async def probe_model_thinking(request: ThinkingProbeRequest, http_request: Requ
         raise HTTPException(status_code=400, detail="无法测试此厂商地址或请求参数，请检查配置") from error
 
 
+class SpeechPreviewRequest(BaseModel):
+    model_identifier: str
+    voice_id: str = ""
+    api_provider: Optional[str] = Field(default=None, min_length=1)
+    draft_api_key: Optional[SecretStr] = None
+
+
+async def _preview_audio(provider: APIProvider, request: SpeechPreviewRequest) -> SpeechAudio:
+    text = "你好，我是麦麦，很高兴和你聊天。"
+    if provider.client_type in {"openai", "openai_responses"}:
+        client = await asyncio.to_thread(OpenaiClient, provider)
+        try:
+            return await client.synthesize_speech(request.model_identifier, text, request.voice_id)
+        finally:
+            await client.client.close()
+
+    async def invoke_plugin() -> SpeechAudio:
+        registration = client_registry.client_registry.get(provider.client_type)
+        if registration is None or request.model_identifier not in registration.formats.tts:
+            raise ValueError("插件未加载或没有声明此语音合成模板")
+        plugin = await client_registry.get_client_class_instance_async(provider)
+        return await plugin.synthesize_speech(request.model_identifier, text, request.voice_id)
+
+    return await run_on_main_loop(invoke_plugin())
+
+
+@router.post("/preview-speech", response_class=Response)
+async def preview_speech(request: SpeechPreviewRequest) -> Response:
+    """直接试听当前表单音色，新连接仅向模板的官方地址发送密钥。"""
+    if (request.api_provider is None) == (request.draft_api_key is None):
+        raise HTTPException(status_code=400, detail="请选择已有提供商，或填写新连接的 API Key")
+    if request.draft_api_key is not None:
+        if request.model_identifier == "deepseek-tts":
+            official_url = "https://api.deepseek.com"
+        elif request.model_identifier in STEP_TTS_DEFAULT_VOICES:
+            official_url = "https://api.stepfun.com/v1"
+        else:
+            raise HTTPException(status_code=400, detail="插件模板请使用已保存的提供商连接")
+        key = request.draft_api_key.get_secret_value().strip()
+        if not key:
+            raise HTTPException(status_code=400, detail="请填写 API Key")
+        provider = APIProvider(name="语音试听", base_url=official_url, api_key=key)
+    else:
+        saved = await asyncio.to_thread(_get_provider_config, request.api_provider)
+        if saved is None:
+            raise HTTPException(status_code=404, detail="找不到所选提供商")
+        provider = APIProvider(**saved)
+    try:
+        async with asyncio.timeout(60):
+            audio = await _preview_audio(provider, request)
+    except RespParseException as exc:
+        raise HTTPException(status_code=502, detail="插件语音合成失败，请查看插件日志") from exc
+    except ValueError as exc:
+        raise HTTPException(status_code=400, detail=str(exc)) from exc
+    except (APITimeoutError, TimeoutError) as exc:
+        raise HTTPException(status_code=504, detail="语音试听请求超时") from exc
+    except APIStatusError as exc:
+        raise HTTPException(status_code=502, detail=f"语音厂商返回 HTTP {exc.status_code}，请检查账号、模型及音色权限") from exc
+    except APIConnectionError as exc:
+        raise HTTPException(status_code=502, detail="无法连接语音厂商") from exc
+    return Response(audio.data, media_type=audio.media_type, headers={"Cache-Control": "no-store"})
+
+
 @router.post("/test-model", response_model=ModelTestResponse)
 async def test_model_capability(request: ModelTestRequest):
     """测试单个模型的文本、tool call 与可选视觉能力。"""
@@ -193,6 +261,10 @@ async def test_model_capability(request: ModelTestRequest):
 
     # 按升级后持久化的显式类型选择测试接口，缺失或非法类型直接报错。
     model_type = model_config["model_type"]
+    if model_type == "tts":
+        raise HTTPException(status_code=400, detail="请在模型编辑卡片中试听音色")
+    if model_type == "asr":
+        raise HTTPException(status_code=400, detail="请在语音识别任务中选用该服务并发送语音消息验证转写")
     if model_type == "image_embedding":
         return await _test_image_embedding_model(model_name)
     if model_type == "embedding":

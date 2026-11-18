@@ -2,6 +2,7 @@ import { describe, expect, it } from 'vitest'
 
 import {
   getDeepSeekReasoningEffort,
+  getDeepSeekSearchTool,
   isDeepSeekThinkingEnabled,
   isDeepSeekWebSearchEnabled,
   setDeepSeekReasoningEffort,
@@ -32,11 +33,11 @@ describe('DeepSeek Chat Completions 额外参数', () => {
     })
   })
 
-  it('拒绝 Chat Completions 中的原生联网工具', () => {
+  it('Flash 的 Chat Completions 拒绝旧版 web_search 类型', () => {
     expect(validateDeepSeekExtraParams(
       { tools: [{ type: 'web_search' }] },
-      'openai'
-    )).toContain('不支持原生联网搜索')
+      'openai', 'deepseek_web_search'
+    )).toContain('当前模型使用 deepseek_web_search')
   })
 })
 
@@ -58,8 +59,8 @@ describe('DeepSeek Responses API 额外参数', () => {
       tools: [{ type: 'function', name: 'local_tool' }],
       temperature: 0.5,
     }
-    const enabled = setDeepSeekWebSearchEnabled(original, true)
-    const enabledAgain = setDeepSeekWebSearchEnabled(enabled, true)
+    const enabled = setDeepSeekWebSearchEnabled(original, 'web_search')
+    const enabledAgain = setDeepSeekWebSearchEnabled(enabled, 'web_search')
 
     expect(enabledAgain).toEqual({
       tools: [
@@ -70,21 +71,39 @@ describe('DeepSeek Responses API 额外参数', () => {
     })
     expect(isDeepSeekWebSearchEnabled(enabledAgain)).toBe(true)
 
-    expect(setDeepSeekWebSearchEnabled(enabledAgain, false)).toEqual(original)
+    expect(setDeepSeekWebSearchEnabled(enabledAgain, null)).toEqual(original)
   })
 
   it('校验冲突格式、非法力度和重复联网工具', () => {
     expect(validateDeepSeekExtraParams(
       { thinking: { type: 'enabled' } },
-      'openai_responses'
+      'openai_responses', 'web_search'
     )).toContain('不能重复配置')
     expect(validateDeepSeekExtraParams(
       { reasoning: { effort: 'medium' } },
-      'openai_responses'
+      'openai_responses', 'web_search'
     )).toContain('只能是 none、low、high 或 max')
     expect(validateDeepSeekExtraParams(
       { tools: [{ type: 'web_search' }, { type: 'web_search_2025_08_26' }] },
-      'openai_responses'
+      'openai_responses', 'web_search'
     )).toBe('联网搜索工具只能配置一次')
+  })
+})
+
+describe('DeepSeek 联网搜索协议', () => {
+  it.each(['openai', 'openai_responses'] as const)('Flash 及其旧标识在 %s 使用原生搜索工具', (client) => {
+    for (const id of ['deepseek-flash', 'deepseek-v4-flash', 'deepseek-v4-flash-vision-exp']) {
+      const tool = getDeepSeekSearchTool(id, client)
+      expect(tool).toBe('deepseek_web_search')
+      const params = setDeepSeekWebSearchEnabled({ tools: [{ type: 'web_search' }, { type: 'deepseek_read_url' }] }, tool)
+      expect(params.tools).toEqual([{ type: 'deepseek_read_url' }, { type: 'deepseek_web_search' }])
+      expect(validateDeepSeekExtraParams(params, client, tool)).toBeNull()
+    }
+  })
+
+  it('Pro 只在 Responses 下启用兼容工具', () => {
+    expect(getDeepSeekSearchTool('deepseek-v4-pro', 'openai_responses')).toBe('web_search')
+    expect(getDeepSeekSearchTool('deepseek-v4-pro', 'openai')).toBeNull()
+    expect(getDeepSeekSearchTool('', 'openai_responses')).toBeNull()
   })
 })

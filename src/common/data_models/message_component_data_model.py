@@ -153,7 +153,8 @@ class VoiceComponent(BaseMessageComponentModel, ByteComponent):
     async def to_seg(self) -> Seg:
         if not self.binary_data:
             await self.load_voice_binary()
-        return Seg(type="voice", data=base64.b64encode(self.binary_data).decode())
+        encoded = await asyncio.to_thread(lambda: base64.b64encode(self.binary_data).decode("ascii"))
+        return Seg(type="voice", data=encoded)
 
 
 class FileComponent(BaseMessageComponentModel):
