@@ -8,7 +8,7 @@ import pytest
 
 from src.maisaka.scenes.group.scheduling import GroupTurnScheduler
 from src.maisaka.chat_loop_service import ChatResponse
-from src.maisaka.reasoning_engine import CycleRuntimeState, MaisakaReasoningEngine, TurnStartContext
+from src.maisaka.reasoning_engine import CycleEnd, CycleRuntimeState, MaisakaReasoningEngine, TurnStartContext
 from src.maisaka.turn_trigger.view_frequency import (
     ViewFrequencyController,
     mean_message_interval,
@@ -170,12 +170,15 @@ def planner_response() -> ChatResponse:
     )
 
 
+@pytest.mark.parametrize("frequency,limit,debt", [(0.07, 8, 6), (0.499, 8, 0), (0.5, 16, 8), (1, 16, 0)])
 @pytest.mark.asyncio
-async def test_internal_loop_continues_after_frequency_zero_until_round_limit(monkeypatch: pytest.MonkeyPatch) -> None:
+async def test_internal_loop_runs_to_frequency_limit(
+    monkeypatch: pytest.MonkeyPatch, frequency: float, limit: int, debt: int,
+) -> None:
     engine = make_engine(monkeypatch)
     runtime = engine._runtime
     scheduler = runtime._message_turn_scheduler
-    runtime._max_internal_rounds = 12
+    runtime._get_effective_reply_frequency = lambda: frequency
     runtime._internal_turn_queue = asyncio.Queue()
     runtime._internal_turn_queue.put_nowait("message")
     runtime._consume_forced_turn_reason = lambda: None
@@ -194,9 +197,93 @@ async def test_internal_loop_continues_after_frequency_zero_until_round_limit(mo
     engine._run_planner_request = AsyncMock(side_effect=request)
     monkeypatch.setattr(scheduler, "finish_planner_turn", lambda: setattr(runtime, "_running", False))
     await asyncio.wait_for(engine.run_loop(), timeout=2)
-    assert engine._run_planner_request.await_count == 12
+    assert engine._run_planner_request.await_count == limit
+    assert scheduler._round_debt == debt
     assert scheduler.view_frequency.phase == "recovery"
     assert scheduler.view_frequency.internal_frequency == 0
+    runtime._enter_stop_state.assert_called_once()
+
+
+def test_debt_carries_across_wait_and_frequency_changes(monkeypatch: pytest.MonkeyPatch) -> None:
+    engine = make_engine(monkeypatch)
+    runtime = engine._runtime
+    scheduler = runtime._message_turn_scheduler
+    runtime._get_effective_reply_frequency = lambda: 0.07
+    assert scheduler.start_planner_turn("first") == 0
+    for _ in range(4):
+        scheduler.record_planner_run()
+    runtime._get_effective_reply_frequency = lambda: 1.0
+    assert scheduler.start_planner_turn("first") == 4
+    assert runtime._max_internal_rounds == 8
+    scheduler.record_planner_run()
+    assert scheduler._round_debt == 3
+    assert scheduler.start_planner_turn("next") == 0
+    assert runtime._max_internal_rounds == 16
+    runtime._last_processed_index = 0
+    monkeypatch.setattr("src.maisaka.scenes.group.scheduling.filter_external_messages", lambda messages, **kw: messages)
+    monkeypatch.setattr(scheduler, "_arm_silence_check", Mock())
+    runtime._has_forced_turn_trigger = lambda: True
+    assert scheduler._evaluate_scene(1, 1).should_trigger
+    assert scheduler._round_debt == 3
+    runtime._has_forced_turn_trigger = lambda: False
+    for remaining in (2, 1, 0):
+        runtime.message_cache.append(SimpleNamespace(message_id=str(remaining)))
+        assert not scheduler._evaluate_scene(1, 1).should_trigger
+        assert not scheduler._evaluate_scene(1, 1).should_trigger
+        assert scheduler._round_debt == remaining
+    assert scheduler.allows_timed_wakeup
+
+
+@pytest.mark.asyncio
+async def test_round_debt_blocks_silence_and_queued_wait_timeout(monkeypatch: pytest.MonkeyPatch) -> None:
+    engine = make_engine(monkeypatch)
+    runtime = engine._runtime
+    scheduler = runtime._message_turn_scheduler
+    runtime._get_effective_reply_frequency = lambda: 0.0625
+    runtime._has_pending_wait_tool_call = lambda: True
+    runtime._schedule_message_turn = Mock()
+    runtime._internal_turn_queue = asyncio.Queue()
+    runtime._is_reply_frequency_silent = lambda: False
+    runtime._agent_state = runtime._STATE_WAIT
+    scheduler.start_planner_turn("waiting")
+    scheduler.record_planner_run()
+    scheduler.record_planner_run()
+    scheduler.finish_planner_turn()
+    assert scheduler._silence_task is None
+    runtime._last_message_received_at = 1.0
+    runtime._enqueue_message_turn = Mock()
+    await scheduler._check_silence(0.01)
+    runtime._enqueue_message_turn.assert_not_called()
+    context = await engine._prepare_turn_start_context("timeout")
+    assert context.trigger_message is None
+    assert runtime._agent_state == runtime._STATE_WAIT
+    assert scheduler._round_debt == 1
+    monkeypatch.setattr("src.maisaka.scenes.group.scheduling.filter_external_messages", lambda messages, **kw: messages)
+    monkeypatch.setattr("src.maisaka.scenes.group.scheduling.random.random", lambda: 0.99)
+    runtime._last_processed_index = 0
+    assert not scheduler._evaluate_scene(1, 0.0625).should_trigger
+    assert scheduler._round_debt == 1
+
+
+@pytest.mark.asyncio
+async def test_wait_on_final_group_round_closes_tool_call(monkeypatch: pytest.MonkeyPatch) -> None:
+    engine = make_engine(monkeypatch)
+    runtime = engine._runtime
+    runtime.scene = SimpleNamespace(is_group=True)
+    runtime._get_effective_reply_frequency = lambda: 0.07
+    scheduler = runtime._message_turn_scheduler
+    scheduler.start_planner_turn("waiting")
+    for _ in range(7):
+        scheduler.record_planner_run()
+    runtime._has_pending_wait_tool_call = lambda: True
+    runtime._has_pending_messages = lambda: False
+    runtime._end_planner_continuation = Mock()
+    engine._build_wait_completed_message = Mock()
+    state = CycleRuntimeState(response=planner_response(), cycle_end=CycleEnd("tool_pause:wait", "wait"))
+    result = await engine._finalize_cycle(cycle_detail=SimpleNamespace(cycle_id=1), round_index=7, state=state)
+    assert result.reason == "max_rounds"
+    assert scheduler._round_debt == 6
+    assert runtime._chat_history == [engine._build_wait_completed_message.return_value]
     runtime._enter_stop_state.assert_called_once()
 
 
