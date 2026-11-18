@@ -79,7 +79,8 @@ function apiClient(token, fetcher = fetch) {
       }
       assert.ok(response, 'CNB API 无响应');
       if (!response.ok) {
-        const error = new Error(`CNB API ${method} ${route}: HTTP ${response.status}`);
+        const reportRoute = route.replace(/(\/asset-upload-confirmation)\/.+/, '$1');
+        const error = new Error(`CNB API ${method} ${reportRoute}: HTTP ${response.status}`);
         error.status = response.status;
         throw error;
       }
