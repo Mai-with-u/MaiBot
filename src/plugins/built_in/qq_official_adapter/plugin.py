@@ -1190,30 +1190,25 @@ class QQOfficialAdapterPlugin(MaiBotPlugin):
                 continue
 
             if content_type == "voice" or content_type.startswith("audio/") or attachment_type == "voice":
-                # QQ may already supply a transcript. Preserve it as an actual
-                # text segment: Host rebuilds processed_plain_text from segments,
-                # so an attachment label alone is not a reliable fallback.
+                # 宿主从消息段重建正文；QQ 的转写随原音传递，避免重复识别。
                 asr_refer_text = attachment.get("asr_refer_text")
                 voice_text = asr_refer_text.strip() if isinstance(asr_refer_text, str) else ""
-                if voice_text:
-                    transcript = f"[语音: {voice_text}]"
-                    segments.append({"type": "text", "data": transcript})
-                    labels.append(transcript)
-                    continue
+                transcript = f"[语音: {voice_text}]" if voice_text else ""
                 binary = await self._download_attachment(url) if url else b""
                 if binary:
                     segments.append(
                         {
                             "type": "voice",
-                            # Empty content tells Host that ASR is still needed.
-                            "data": "",
+                            "data": transcript,  # 空内容交给宿主转写。
                             "binary_data_base64": base64.b64encode(binary).decode("ascii"),
                             "hash": sha256(binary).hexdigest(),
                         }
                     )
+                elif transcript:
+                    segments.append({"type": "text", "data": transcript})
                 else:
                     segments.append({"type": "file", "data": self._file_payload(attachment, content_type, url)})
-                labels.append("[语音]")
+                labels.append(transcript or "[语音]")
                 continue
 
             if url or filename:
