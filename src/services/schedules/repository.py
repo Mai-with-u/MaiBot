@@ -51,6 +51,8 @@ def read_schedule_items(
             raise ValueError(f"日程文件必须是 JSON 对象数组: {path}")
         if any(item["session_id"] != path.stem for item in data):
             raise ValueError(f"日程会话归属与文件名不一致: {path}")
+        for item in data:
+            item.setdefault("trigger_people", [])
         items.extend(item for item in data if include_completed or item["status"] not in {"completed", "cancelled"})
     return items
 

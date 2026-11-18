@@ -140,7 +140,7 @@ class ScheduleService:
             if not await heartflow_manager._is_session_allowed(session):
                 raise PermissionError("当前策略禁止唤醒日程所属聊天流")
             runtime = await heartflow_manager.get_or_create_heartflow_chat(session.session_id)
-            payload = json.dumps({"id": item["id"], "text": item["text"], "due_at": item["due_at"]}, ensure_ascii=False)
+            payload = json.dumps({key: item[key] for key in ("id", "text", "due_at", "trigger_people")}, ensure_ascii=False)
             text = await asyncio.to_thread(load_prompt, "schedule_due", schedule=payload)
             runtime.enqueue_internal_task(source_kind="schedule", text=text.strip(), reason="日程到期")
             logger.info("日程已投递: id=%s session=%s", item["id"], item["session_name"])

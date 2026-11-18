@@ -260,8 +260,12 @@ def get_tool_spec(context: Optional[ToolAvailabilityContext] = None) -> ToolSpec
     if context is not None and context.is_group_chat is not None and get_scene(context.is_group_chat).allow_reply_at:
         properties["attach_at"] = {
             "type": "array",
-            "description": "可选。随本次回复 at 一个或多个目标消息的发送者，填写目标 msg_id。",
-            "items": {"type": "string"},
+            "description": "可选。随回复 at 一人或多人。字符串填写消息 ID；使用日程记录的平台用户 ID 时填写 user_id 对象。",
+            "items": {"anyOf": [
+                {"type": "string"},
+                {"type": "object", "properties": {"user_id": {"type": "string", "minLength": 1}},
+                 "required": ["user_id"], "additionalProperties": False},
+            ]},
             "default": [],
         }
 

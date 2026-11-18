@@ -13,8 +13,12 @@ import pytest
 
 from src.chat.heart_flow.heartflow_manager import heartflow_manager
 from src.chat.message_receive.chat_manager import chat_manager
+from src.common.data_models.mai_message_data_model import MessageInfo, UserInfo
+from src.core.tooling import ToolInvocation
 from src.desktop_pet.service import desktop_pet_service
 from src.desktop_pet.todo_context import build_todo_context
+from src.maisaka.builtin_tool import schedule
+from src.maisaka.builtin_tool.context import BuiltinToolRuntimeContext
 from src.services.schedules.repository import ScheduleRepository, read_schedule_items, schedule_path
 from src.services.schedules.service import ScheduleService
 from src.services.schedules.store import TodoStore
@@ -152,6 +156,33 @@ def test_snapshot_and_webui_read_new_files_without_loading_old_storage(tmp_path:
     monkeypatch.setattr("src.webui.routers.desktop_pet.schedules_directory", lambda: tmp_path)
     assert _todo_summary()["pending"] == 2
     assert len(read_schedule_items(tmp_path)) == 2
+
+
+@pytest.mark.asyncio
+async def test_schedule_records_senders_and_wakes_with_their_ids(tmp_path: Path, monkeypatch, sessions) -> None:
+    service = ScheduleService(tmp_path)
+    service._store = ScheduleRepository(tmp_path)
+    monkeypatch.setattr(schedule, "schedule_service", service)
+    monkeypatch.setattr(schedule, "is_owner_chat", lambda _: False)
+    users = [UserInfo("001", "小林", "林同学"), UserInfo("002", "小周")]
+    messages = {str(i): SimpleNamespace(session_id="group-a", message_info=MessageInfo(user))
+                for i, user in enumerate(users)}
+    runtime = Mock(session_id="group-a")
+    runtime.find_source_message_by_id.side_effect = messages.get
+    ctx = BuiltinToolRuntimeContext(Mock(), runtime)
+    result = await schedule.handle_tool(ctx, ToolInvocation("schedule", {
+        "action": "add", "text": "讨论作业", "delay_seconds": 60, "trigger_message_ids": ["0", "1", "0"],
+    }))
+    assert result.success, result.error_message
+    expected = [{"name": "林同学", "user_id": "001"}, {"name": "小周", "user_id": "002"}]
+    assert result.structured_content["item"]["trigger_people"] == expected
+    service._store = ScheduleRepository(tmp_path)
+    monkeypatch.setattr("src.services.schedules.store.time.time", lambda: result.structured_content["item"]["due_at"] + 1)
+    monkeypatch.setattr(heartflow_manager, "_is_session_allowed", AsyncMock(return_value=True))
+    monkeypatch.setattr(heartflow_manager, "get_or_create_heartflow_chat", AsyncMock(return_value=runtime))
+    monkeypatch.setattr("src.services.schedules.service.load_prompt", lambda _, schedule: schedule)
+    await service.tick()
+    assert json.loads(runtime.enqueue_internal_task.call_args.kwargs["text"])["trigger_people"] == expected
 
 
 @pytest.mark.asyncio

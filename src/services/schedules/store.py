@@ -29,6 +29,7 @@ class TodoStore:
             item.setdefault("session_id", "")
             item.setdefault("session_name", "主人私聊")
             item.setdefault("images", [])
+            item.setdefault("trigger_people", [])
             item.setdefault("condition_type", "natural")
             item.setdefault("condition", "")
             item.setdefault("kind", "user")
@@ -58,6 +59,7 @@ class TodoStore:
     def add(self, text: str, **options: Any) -> Dict[str, Any]:
         text = self._validate_text(text)
         item = {"id": uuid.uuid4().hex, "text": text, "created_at": time.time(), "kind": "user", "due_at": None,
+                "trigger_people": [],
                 "session_id": "", "session_name": "主人私聊", "images": [], "status": "pending", "condition": "", "condition_type": "natural", "revision": uuid.uuid4().hex}
         item = self._apply_options(item, options)
         with self._lock:
@@ -80,7 +82,7 @@ class TodoStore:
             if item["status"] in {"completed", "cancelled"}:
                 raise ValueError("已完成或取消的事项不可修改，请新增待办")
             updated = self._apply_options({**item, "text": item["text"] if text is None else text}, options)
-            if any(updated[key] != item[key] for key in ("text", "kind", "due_at", "condition", "condition_type", "images")):
+            if any(updated[key] != item[key] for key in ("text", "kind", "due_at", "condition", "condition_type", "images", "trigger_people")):
                 updated["updated_at"] = time.time()
             updated["revision"] = uuid.uuid4().hex
             if updated["status"] == "dispatching":
@@ -89,8 +91,21 @@ class TodoStore:
             return dict(updated)
 
     def _apply_options(self, item: Dict[str, Any], options: Dict[str, Any]) -> Dict[str, Any]:
-        if set(options) - {"kind", "due_at", "delay_seconds", "condition", "condition_type", "images", "session_id", "session_name"}:
+        if set(options) - {"kind", "due_at", "delay_seconds", "condition", "condition_type", "images", "session_id", "session_name", "trigger_people"}:
             raise ValueError("未知待办字段")
+        if "trigger_people" in options:
+            people = options["trigger_people"]
+            if not isinstance(people, list):
+                raise ValueError("日程发起人必须为列表")
+            by_id: Dict[str, Dict[str, str]] = {}
+            for person in people:
+                if not isinstance(person, dict) or not all(
+                    isinstance(person.get(key), str) and person[key].strip() for key in ("user_id", "name")
+                ):
+                    raise ValueError("每位日程发起人都需要名称和平台用户 ID")
+                user_id = person["user_id"].strip()
+                by_id[user_id] = {"user_id": user_id, "name": person["name"].strip()}
+            item["trigger_people"] = list(by_id.values())
         for key in ("session_id", "session_name"):
             if key in options:
                 if not isinstance(options[key], str):
