@@ -46,8 +46,14 @@ async function upload(api, repo, releaseId, asset, file, fetcher = fetch) {
     asset_name: asset.name, size: asset.size, overwrite: false, ttl: 0,
   });
   const verify = new URL(ticket.verify_url, 'https://api.cnb.cool/');
-  assert.equal(verify.origin, 'https://api.cnb.cool', '确认地址必须属于 CNB API');
-  assert.ok(verify.pathname.startsWith(`/${route}/asset-upload-confirmation/`), '上传确认地址与目标 Release 不符');
+  assert.ok(verify.origin === 'https://api.cnb.cool' && !verify.username && !verify.password,
+    '确认地址必须属于 CNB API 且不含凭据');
+  const confirmationPath = /^\/([a-zA-Z0-9._-]+(?:\/[a-zA-Z0-9._-]+)*)\/-\/releases\/([^/]+)\/asset-upload-confirmation\/[^/]+\/.+$/.exec(verify.pathname);
+  assert.ok(confirmationPath, 'CNB 上传确认地址路径格式无效');
+  const [, confirmationRepo, confirmationReleaseId] = confirmationPath;
+  // CNB 仓库路径保留原始大小写，镜像配置使用统一的小写路径。
+  assert.ok(confirmationRepo.toLowerCase() === repo.toLowerCase(), '上传确认地址与目标仓库不符');
+  assert.ok(decodeURIComponent(confirmationReleaseId) === String(releaseId), '上传确认地址与目标 Release ID 不符');
   const response = await fetcher(httpsUrl(ticket.upload_url), {
     method: 'PUT', redirect: 'error', body: createReadStream(file), duplex: 'half',
     headers: { 'Content-Length': String(asset.size), 'Content-Type': 'application/octet-stream' },

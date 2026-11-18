@@ -64,6 +64,14 @@ test('凭据限定到 CNB 并脱敏，API 不重定向、不盲目重试建仓',
   assert.equal(calls, 1);
 });
 
+test('确认请求失败时只报告路由和状态码', async () => {
+  const api = apiClient('secret', async () => new Response(null, { status: 403 }));
+  const route = 'org/repo/-/releases/1/asset-upload-confirmation';
+  await assert.rejects(api(`${route}/upload-token/file?ttl=0`, 'POST'), {
+    message: `CNB API POST ${route}: HTTP 403`, status: 403,
+  });
+});
+
 test('真实 Git 保留所有分支、注解 Tag 和 SHA，删除同步；状态记录真实 HEAD', async t => {
   const root = await fs.mkdtemp(path.join(os.tmpdir(), 'maibot-cnb-test-'));
   t.after(() => fs.rm(root, { recursive: true, force: true }));

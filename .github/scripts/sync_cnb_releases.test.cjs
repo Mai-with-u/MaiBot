@@ -88,8 +88,8 @@ test('上传不转发凭据，成功 PUT 后调用确认，永久保存且不覆
   await upload(async (...args) => {
     calls.push(args);
     return { upload_url: 'https://storage.example/upload',
-      verify_url: 'https://api.cnb.cool/org/repo/-/releases/1/asset-upload-confirmation/token/file' };
-  }, 'org/repo', '1', asset, file, async (url, options) => {
+      verify_url: 'https://api.cnb.cool/Mai-with-u/maibot/-/releases/1/asset-upload-confirmation/token/file' };
+  }, 'mai-with-u/maibot', '1', asset, file, async (url, options) => {
     assert.equal(url.origin, 'https://storage.example');
     assert.equal(options.headers.Authorization, undefined);
     assert.equal(options.redirect, 'error');
@@ -100,13 +100,26 @@ test('上传不转发凭据，成功 PUT 后调用确认，永久保存且不覆
     return new Response('', { status: 200 });
   });
   assert.deepEqual(calls[0][2], { asset_name: 'pet.apk', size: bytes.length, overwrite: false, ttl: 0 });
-  assert.deepEqual(calls[1], ['org/repo/-/releases/1/asset-upload-confirmation/token/file?ttl=0', 'POST']);
+  assert.equal(calls[0][0], 'mai-with-u/maibot/-/releases/1/asset-upload-url');
+  assert.deepEqual(calls[1], ['Mai-with-u/maibot/-/releases/1/asset-upload-confirmation/token/file?ttl=0', 'POST']);
 });
 
 test('拒绝非 CNB 上传确认地址', async t => {
   await assert.rejects(upload(async () => ({ upload_url: 'https://storage.example/upload',
     verify_url: 'https://other.example/org/repo/-/releases/1/asset-upload-confirmation/token/file' }),
   'org/repo', '1', asset, path.join(await directory(t), 'unused'), () => assert.fail('不得上传')), /CNB API/);
+});
+
+test('拒绝目标仓库或 Release ID 不匹配的确认地址', async () => {
+  for (const [repo, releaseId, error] of [
+    ['org/other', 'Release1', /确认地址与目标仓库不符/],
+    ['org/repo', 'release1', /确认地址与目标 Release ID 不符/],
+  ]) {
+    await assert.rejects(upload(async () => ({
+      upload_url: 'https://storage.example/upload',
+      verify_url: `https://api.cnb.cool/${repo}/-/releases/${releaseId}/asset-upload-confirmation/token/file`,
+    }), 'org/repo', 'Release1', asset, 'unused', () => assert.fail('不得上传')), error);
+  }
 });
 
 test('上传失败不调用确认', async t => {
