@@ -2,6 +2,7 @@ import { ConversationAvatar, MessageBubble, TraceRound, TraceStep } from '@/comp
 import { DataPanel } from '@/components/ui/surface'
 import { ChatStreamSettingsDialog, type ChatStreamSettingsTarget } from '@/components/chat-stream-settings-dialog'
 import { StatusIndicator } from '@/components/ui/data-browser'
+import { VoicePlayer } from '@/components/VoicePlayer'
 /**
  * MaiSaka 聊天流实时监控组件
  *
@@ -397,6 +398,7 @@ function buildMessageMediaKey(media: MaisakaMessageMedia, index: number) {
 
 /** 可放大查看的媒体对应的图库条目；内联数据直接显示，远端原文件需带登录态读取。 */
 function toGalleryImage(item: MaisakaMessageMedia): GalleryImage | null {
+  if (item.kind === 'voice') return null
   const inlineSource = item.data_url?.trim() ?? ''
   const remoteSource = item.url.trim()
   if (!inlineSource && !remoteSource) return null
@@ -427,14 +429,14 @@ function MessageMediaItemBody({
   const remoteSource = item.url.trim()
   const canShowOriginal = Boolean(inlineSource || remoteSource)
   const [showOriginal, setShowOriginal] = useState(
-    canShowOriginal && Boolean(item.default_original)
+    canShowOriginal && (item.kind === 'voice' || Boolean(item.default_original))
   )
   const [resolvedSource, setResolvedSource] = useState(inlineSource)
   const [loadState, setLoadState] = useState<'idle' | 'loading' | 'error'>(
     showOriginal && !inlineSource ? 'loading' : 'idle'
   )
   const [loadRequestId, setLoadRequestId] = useState(showOriginal && !inlineSource ? 1 : 0)
-  const label = item.kind === 'emoji' ? '表情包' : '图片'
+  const label = { image: '图片', emoji: '表情包', voice: '语音' }[item.kind]
 
   useEffect(() => {
     if (loadRequestId <= 0 || inlineSource || !remoteSource) {
@@ -471,6 +473,19 @@ function MessageMediaItemBody({
       }
     }
   }, [inlineSource, label, loadRequestId, remoteSource])
+
+  if (item.kind === 'voice') {
+    if (resolvedSource) return <VoicePlayer key={resolvedSource} src={resolvedSource} />
+    if (loadState === 'error') {
+      return (
+        <Button variant="ghost" size="sm" onClick={() => {
+          setLoadState('loading')
+          setLoadRequestId((id) => id + 1)
+        }}>语音读取失败，点击重试</Button>
+      )
+    }
+    return <span role="status" className="text-muted-foreground text-xs">正在读取语音…</span>
+  }
 
   return (
     <>
