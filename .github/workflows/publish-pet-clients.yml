@@ -108,9 +108,8 @@ jobs:
             source/pet-clients/android/gradle/wrapper/gradle-wrapper.properties
       - uses: android-actions/setup-android@v3
         if: matrix.platform == 'android'
-      - name: Install Android SDK packages
-        if: matrix.platform == 'android'
-        run: sdkmanager 'platforms;android-35' 'build-tools;35.0.0'
+        with:
+          packages: 'platforms;android-35 build-tools;35.0.0'
       - name: Build and check signed Android APK
         if: matrix.platform == 'android'
         working-directory: source/pet-clients/android
