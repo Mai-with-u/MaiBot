@@ -737,7 +737,12 @@
       "user": "Select user"
     },
     "media": {
-      "audioUnsupported": "Your browser does not support audio playback",
+      "playVoice": "Play voice message",
+      "pauseVoice": "Pause voice message",
+      "voiceProgress": "Playback position",
+      "voiceOptions": "Voice message options",
+      "playbackSpeed": "Playback speed",
+      "voicePlaybackFailed": "Unable to play this audio",
       "emoji": "Emoji",
       "face": "[Face: {{data}}]",
       "file": "[File: {{data}}]",

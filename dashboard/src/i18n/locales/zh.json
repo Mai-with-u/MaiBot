@@ -737,7 +737,12 @@
       "user": "选择用户"
     },
     "media": {
-      "audioUnsupported": "您的浏览器不支持音频播放",
+      "playVoice": "播放语音",
+      "pauseVoice": "暂停语音",
+      "voiceProgress": "播放进度",
+      "voiceOptions": "语音选项",
+      "playbackSpeed": "播放速度",
+      "voicePlaybackFailed": "无法播放这段语音",
       "emoji": "表情包",
       "face": "[表情:{{data}}]",
       "file": "[文件: {{data}}]",

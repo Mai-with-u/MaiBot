@@ -5,24 +5,13 @@ import io
 import subprocess
 import wave
 
+from src.common.utils.audio_format import detect_audio_format
+
 
 def transcription_filename(data: bytes) -> str:
     """根据聊天附件的文件头为转写接口还原文件名。"""
-    if data.startswith(b"RIFF") and data[8:12] == b"WAVE":
-        return "audio.wav"
-    if data.startswith(b"OggS"):
-        return "audio.ogg"
-    if data.startswith(b"fLaC"):
-        return "audio.flac"
-    if data[4:8] == b"ftyp":
-        return "audio.mp4"
-    if data.startswith(b"\x1a\x45\xdf\xa3"):
-        return "audio.webm"
-    if data.startswith(b"ID3") or (len(data) >= 2 and data[0] == 0xFF and data[1] & 0xE6 == 0xE2):
-        return "audio.mp3"
-    if data.startswith((b"\xff\xf1", b"\xff\xf9")):
-        return "audio.aac"
-    return "audio"
+    extension, _ = detect_audio_format(data)
+    return f"audio.{extension}" if extension else "audio"
 
 
 def prepare_deepseek_audio(data: bytes) -> Tuple[str, bytes, str]:

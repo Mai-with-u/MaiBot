@@ -737,7 +737,12 @@
       "user": "ユーザーを選択"
     },
     "media": {
-      "audioUnsupported": "お使いのブラウザは音声再生に対応していません",
+      "playVoice": "音声を再生",
+      "pauseVoice": "音声を一時停止",
+      "voiceProgress": "再生位置",
+      "voiceOptions": "音声メッセージのオプション",
+      "playbackSpeed": "再生速度",
+      "voicePlaybackFailed": "この音声を再生できません",
       "emoji": "絵文字",
       "face": "[表情:{{data}}]",
       "file": "[ファイル: {{data}}]",

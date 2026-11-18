@@ -1,19 +1,16 @@
 from datetime import datetime
+from maim_message import MessageBase, Seg
+from sqlmodel import Session, col, select
 from typing import TYPE_CHECKING, Any, Callable, Dict, List, Optional, Tuple
 
-from maim_message import MessageBase, Seg
-from sqlmodel import col, select
-
+import asyncio
 import base64
 import hashlib
 import msgpack
 import random
 import re
-
-import asyncio
 import threading
 
-from src.common.paths import get_instance_root
 from src.common.data_models.message_component_data_model import (
     AtComponent,
     DictComponent,
@@ -29,9 +26,10 @@ from src.common.data_models.message_component_data_model import (
     VoiceComponent,
 )
 from src.common.logger import get_logger
-from src.common.utils.image_path import resolve_stored_image_path, serialize_stored_image_path
+from src.common.paths import get_instance_root
 from src.config.config import global_config
 
+from .image_path import resolve_stored_image_path, serialize_stored_image_path
 from .math_utils import number_to_short_id, TimestampMode, translate_timestamp_to_human_readable
 from .system_utils import is_bot_self
 
@@ -218,7 +216,7 @@ class MessageUtils:
         with _DB_WRITE_THREAD_LOCK:
             with get_db_session() as session:
                 MessageUtils.fill_reply_frequency_if_available(message)
-                MessageUtils._persist_image_components(message.raw_message.components, session)
+                MessageUtils._persist_media_components(message.raw_message.components, session)
                 db_message = message.to_db_instance()
                 session.add(db_message)
 
@@ -258,16 +256,19 @@ class MessageUtils:
             logger.debug(f"补充消息回复频率失败: session_id={session_id} error={exc}")
 
     @staticmethod
-    def _persist_image_components(components: List[StandardMessageComponents], session: Any) -> None:
-        """将消息中仍携带二进制数据的图片组件保存到图片库。"""
+    def _persist_media_components(components: List[StandardMessageComponents], session: Session) -> None:
+        """保存消息及转发节点中的图片和语音原件。"""
         from src.common.database.database_model import Images, ImageType
+        from .utils_file import FileUtils
 
         for component in components:
             if isinstance(component, ImageComponent):
                 MessageUtils._persist_image_component(component, session, Images, ImageType)
+            elif isinstance(component, VoiceComponent) and component.binary_data:
+                component.binary_hash = FileUtils.store_voice(session, component.binary_data)
             elif isinstance(component, ForwardNodeComponent):
                 for forward_component in component.forward_components:
-                    MessageUtils._persist_image_components(forward_component.content, session)
+                    MessageUtils._persist_media_components(forward_component.content, session)
 
     @staticmethod
     def _persist_image_component(

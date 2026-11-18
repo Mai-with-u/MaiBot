@@ -694,7 +694,12 @@
       "user": "사용자 선택"
     },
     "media": {
-      "audioUnsupported": "브라우저가 오디오 재생을 지원하지 않습니다",
+      "playVoice": "음성 메시지 재생",
+      "pauseVoice": "음성 메시지 일시 정지",
+      "voiceProgress": "재생 위치",
+      "voiceOptions": "음성 메시지 옵션",
+      "playbackSpeed": "재생 속도",
+      "voicePlaybackFailed": "이 음성을 재생할 수 없습니다",
       "emoji": "이모티콘",
       "face": "[표정:{{data}}]",
       "file": "[파일: {{data}}]",
