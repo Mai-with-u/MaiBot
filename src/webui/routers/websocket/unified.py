@@ -6,21 +6,21 @@ import asyncio
 import time
 import uuid
 
-from fastapi import APIRouter, Query, WebSocket, WebSocketDisconnect
+from fastapi import APIRouter, WebSocket, WebSocketDisconnect
 
 from src.common.logger import get_logger
-from src.webui.core import get_token_manager
+from src.services.internal_chat_profile import get_internal_chat_user_name
 from src.webui.logs_ws import load_recent_logs
 from src.webui.routers.chat.service import (
+    INTERNAL_CHAT_USER_ID,
     chat_manager,
     dispatch_chat_event,
+    is_virtual_mode_enabled,
     normalize_chat_client_info,
-    normalize_webui_user_id,
     resolve_initial_virtual_identity,
     send_initial_chat_state,
 )
 from src.webui.routers.plugin.progress import get_current_progress
-from src.webui.routers.websocket.auth import verify_ws_token
 from src.webui.routers.websocket.manager import websocket_manager
 from .plugin_runtime import stop_plugin_runtime_subscription, subscribe_plugin_runtime
 
@@ -70,30 +70,6 @@ def _track_background_task(task: "asyncio.Task[None]") -> None:
     task.add_done_callback(_background_tasks.discard)
 
 
-async def authenticate_websocket_connection(websocket: WebSocket, token: Optional[str]) -> bool:
-    """校验统一 WebSocket 连接的认证状态。
-
-    Args:
-        websocket: FastAPI WebSocket 对象。
-        token: 可选的一次性握手 Token。
-
-    Returns:
-        bool: 认证通过时返回 ``True``。
-    """
-    if token and verify_ws_token(token):
-        logger.debug("统一 WebSocket 使用临时 token 认证成功")
-        return True
-
-    cookie_token = websocket.cookies.get("maibot_session")
-    if cookie_token:
-        token_manager = get_token_manager()
-        if token_manager.verify_token(cookie_token):
-            logger.debug("统一 WebSocket 使用 Cookie 认证成功")
-            return True
-
-    return False
-
-
 async def _handle_logs_subscribe(connection_id: str, request_id: Optional[str], data: Dict[str, Any]) -> None:
     """处理日志域订阅请求。
 
@@ -102,8 +78,8 @@ async def _handle_logs_subscribe(connection_id: str, request_id: Optional[str], 
         request_id: 请求 ID。
         data: 订阅参数。
     """
-    replay_limit = int(data.get("replay", 100) or 100)
-    replay_limit = max(0, min(replay_limit, 500))
+    replay_limit = int(data.get("replay", 1000))
+    replay_limit = max(0, min(replay_limit, 5000))
     websocket_manager.subscribe(connection_id, domain="logs", topic="main")
     await websocket_manager.send_response(
         connection_id,
@@ -206,7 +182,7 @@ async def _handle_maisaka_monitor_subscribe(
                 domain="maisaka_monitor",
                 event=str(replay_event["event"]),
                 topic="main",
-                data=cast(Dict[str, Any], replay_event["data"]),
+                data={**cast(Dict[str, Any], replay_event["data"]), "replayed": True},
             )
 
     from src.maisaka.display.stage_status_board import get_stage_status_snapshot
@@ -286,7 +262,7 @@ async def _handle_maisaka_monitor_call(connection_id: str, message: Dict[str, An
             domain="maisaka_monitor",
             event=str(history_event["event"]),
             topic="main",
-            data=cast(Dict[str, Any], history_event["data"]),
+            data={**cast(Dict[str, Any], history_event["data"]), "replayed": True},
         )
     await websocket_manager.send_response(
         connection_id,
@@ -406,7 +382,8 @@ async def _open_chat_session(connection_id: str, message: Dict[str, Any]) -> Non
         return
 
     data = _get_request_data(message)
-    normalized_user_id = normalize_webui_user_id(cast(Optional[str], data.get("user_id")))
+    # 所有网页聊天室都以主人身份进入同一条内部统一聊天，不再按浏览器区分用户。
+    normalized_user_id = INTERNAL_CHAT_USER_ID
     current_user_name = str(data.get("user_name") or "人类")
     client_info = normalize_chat_client_info(cast(Optional[Dict[str, Any]], data.get("client")))
     current_virtual_config = resolve_initial_virtual_identity(
@@ -415,6 +392,8 @@ async def _open_chat_session(connection_id: str, message: Dict[str, Any]) -> Non
         group_name=cast(Optional[str], data.get("group_name")),
         group_id=cast(Optional[str], data.get("group_id")),
     )
+    if not is_virtual_mode_enabled(current_virtual_config):
+        current_user_name = await asyncio.to_thread(get_internal_chat_user_name, current_user_name)
     restore = bool(data.get("restore"))
     session_id = f"{connection_id}:{client_session_id}"
 
@@ -711,18 +690,13 @@ async def handle_client_message(connection_id: str, message: Dict[str, Any]) -> 
 
 
 @router.websocket("/ws")
-async def websocket_endpoint(websocket: WebSocket, token: Optional[str] = Query(None)) -> None:
+async def websocket_endpoint(websocket: WebSocket) -> None:
     """统一 WebSocket 入口。
 
     Args:
         websocket: FastAPI WebSocket 对象。
-        token: 可选的一次性握手 Token。
     """
-    if not await authenticate_websocket_connection(websocket, token):
-        logger.warning("统一 WebSocket 连接被拒绝：认证失败")
-        await websocket.close(code=4001, reason="认证失败，请重新登录")
-        return
-
+    # 宿主在握手和消息转发时验证登录会话。
     connection_id = uuid.uuid4().hex
     await websocket_manager.connect(connection_id=connection_id, websocket=websocket)
     logger.info(f"统一 WebSocket 客户端已连接: connection={connection_id}")
@@ -746,7 +720,7 @@ async def websocket_endpoint(websocket: WebSocket, token: Optional[str] = Query(
                 continue
             await handle_client_message(connection_id, cast(Dict[str, Any], raw_message))
     except WebSocketDisconnect:
-        logger.info(f"统一 WebSocket 客户端已断开: connection={connection_id}")
+        logger.debug(f"统一 WebSocket 客户端已断开: connection={connection_id}")
     except asyncio.CancelledError:
         logger.warning(f"统一 WebSocket 连接处理被取消: connection={connection_id}")
         raise
@@ -756,6 +730,6 @@ async def websocket_endpoint(websocket: WebSocket, token: Optional[str] = Query(
         stop_plugin_runtime_subscription(connection_id)
         chat_manager.disconnect_connection(connection_id)
         await websocket_manager.disconnect(connection_id)
-        logger.info(
+        logger.debug(
             f"统一 WebSocket 连接清理完成: connection={connection_id}, 剩余连接={len(websocket_manager.connections)}",
         )

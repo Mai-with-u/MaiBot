@@ -1,5 +1,5 @@
-import { ImagePlus, Send, X } from 'lucide-react'
-import { useRef } from 'react'
+import { ImagePlus, Paperclip, Send, X } from 'lucide-react'
+import { useLayoutEffect, useRef, useState } from 'react'
 import { useTranslation } from 'react-i18next'
 
 import { Button } from '@/components/ui/button'
@@ -13,6 +13,9 @@ import { ChatUserIdentity } from './ChatUserIdentity'
 import { UserEmojiManager } from './UserEmojiManager'
 
 interface ChatComposerProps {
+  files?: Array<{ file_ref: string; name: string }>
+  onAddFiles?: (files: FileList) => void
+  onRemoveFile?: (ref: string) => void
   value: string
   onChange: (value: string) => void
   onSend: () => void
@@ -34,6 +37,9 @@ interface ChatComposerProps {
  * 聊天输入区：自适应高度的输入框 + 独立工具栏，带快捷键提示。
  */
 export function ChatComposer({
+  files = [],
+  onAddFiles,
+  onRemoveFile,
   value,
   onChange,
   onSend,
@@ -52,15 +58,26 @@ export function ChatComposer({
 }: ChatComposerProps) {
   const { t } = useTranslation()
   const fileInputRef = useRef<HTMLInputElement>(null)
+  const attachmentInputRef = useRef<HTMLInputElement>(null)
+  const [draft, setDraft] = useState(value)
+  const composingRef = useRef(false)
 
-  const handleKeyDown = (e: React.KeyboardEvent<HTMLTextAreaElement>) => {
-    if (e.key === 'Enter' && !e.shiftKey && !e.nativeEvent.isComposing) {
-      e.preventDefault()
-      if (!disabled) onSend()
-    }
+  // 首页带入的文字、发送后清空等外部变化同步到输入区。
+  useLayoutEffect(() => setDraft(value), [value])
+
+  const canSend = !disabled && (draft.trim().length > 0 || images.length > 0 || files.length > 0)
+  const handleSend = () => {
+    if (!canSend || composingRef.current) return
+    onSend()
+    setDraft('')
   }
 
-  const canSend = !disabled && (value.trim().length > 0 || images.length > 0)
+  const handleKeyDown = (e: React.KeyboardEvent<HTMLTextAreaElement>) => {
+    if (e.key === 'Enter' && !e.shiftKey && !composingRef.current && !e.nativeEvent.isComposing && e.keyCode !== 229) {
+      e.preventDefault()
+      handleSend()
+    }
+  }
 
   return (
     <MessageComposerFrame
@@ -91,6 +108,16 @@ export function ChatComposer({
       }
       tools={
         <>
+          {onAddFiles && <>
+            <input ref={attachmentInputRef} className="hidden" type="file" multiple disabled={disabled}
+              onChange={e => { if (e.target.files) onAddFiles(e.target.files); e.currentTarget.value = '' }} />
+            <Button type="button" size="icon-sm" variant="ghost" disabled={disabled} aria-label={t('files.upload')}
+              title={t('files.upload')} onClick={() => attachmentInputRef.current?.click()}><Paperclip /></Button>
+            {files.map(file => <Button key={file.file_ref} type="button" variant="outline" size="sm"
+              onClick={() => onRemoveFile?.(file.file_ref)} title={t('files.removeAttachment')}>
+              <span className="max-w-32 truncate">{file.name}</span><X />
+            </Button>)}
+          </>}
           <input
             ref={fileInputRef}
             className="hidden"
@@ -140,7 +167,7 @@ export function ChatComposer({
           type="button"
           size="sm"
           disabled={!canSend}
-          onClick={onSend}
+          onClick={handleSend}
           aria-label={t('chat.actions.send')}
         >
           <Send />
@@ -156,8 +183,17 @@ export function ChatComposer({
         maxHeight={160}
         minHeight={56}
         placeholder={isConnected ? t('chat.input.placeholder') : t('chat.input.waiting')}
-        value={value}
-        onChange={(e) => onChange(e.target.value)}
+        value={draft}
+        onChange={(e) => {
+          setDraft(e.target.value)
+          onChange(e.target.value)
+        }}
+        onCompositionStart={() => { composingRef.current = true }}
+        onCompositionEnd={(e) => {
+          composingRef.current = false
+          setDraft(e.currentTarget.value)
+          onChange(e.currentTarget.value)
+        }}
         onKeyDown={handleKeyDown}
       />
     </MessageComposerFrame>

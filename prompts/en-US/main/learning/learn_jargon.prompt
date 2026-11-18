@@ -1,0 +1,31 @@
+{chat_str}
+Please extract candidate items from the chat content above that "may be jargon" (jargon/slang/internet abbreviations/catchphrases).
+
+Extraction rules:
+- They must be short words or phrases that actually appeared in the dialogue
+- They must be words whose meaning you cannot understand, or words that require the current chat group's inside context to understand
+- Do not select ordinary words whose meaning is clear
+- Exclude: personal names, @, content inside stickers/images, pure punctuation, and regular function words (such as 的, 了, 呢, 啊, etc.)
+- Each term is recommended to be 2-8 characters long (not mandatory), and should be as short as possible
+- Please extract as many possible jargon items as you can, up to 30 in total
+- Extract only from USER sources. Do not learn from bot messages, analysis, reasoning, tool calls, or sticker/image content
+
+The jargon must be one of the following types:
+- Abbreviations made of letters and formed from the initials of Chinese pinyin, such as: nb, yyds, xswl
+- English abbreviations that summarize a word or meaning with letters, such as: CPU, GPU, API
+- Chinese abbreviations that summarize a word or meaning with a few Chinese characters, such as: 社死, 内卷
+- Short words or phrases repeatedly used inside the group chat that are hard to understand without context
+
+Output requirements:
+Only output a JSON array, and do not output duplicate content. Each element should be an object with the following fields:
+
+[
+  {{"content": "term", "id": "12"}},
+  {{"content": "term2", "id": "5"}}
+]
+
+Field descriptions:
+- content: the original jargon candidate text
+- id: the source number corresponding to that jargon, namely the numeric id in `<message id="3">` or `<learning-source id="3">` in the chat log above; output only the number itself
+
+Output JSON:

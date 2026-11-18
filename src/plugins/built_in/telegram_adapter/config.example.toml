@@ -1,0 +1,12 @@
+[plugin]
+enabled = false
+config_version = "0.1.0"
+
+[telegram]
+bot_token = ""
+api_base_url = "https://api.telegram.org"
+proxy_url = ""
+poll_timeout_sec = 30
+reconnect_delay_sec = 5.0
+max_download_mb = 20
+media_timeout_sec = 60

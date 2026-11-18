@@ -1,16 +1,55 @@
 from pathlib import Path
 from typing import Any, Dict, Optional
+from urllib.parse import unquote, urlsplit
+from urllib.request import HTTPRedirectHandler, HTTPSHandler, Request, build_opener
 
-from fastapi import APIRouter, Cookie, HTTPException
-from fastapi.responses import FileResponse
+from fastapi import APIRouter, HTTPException, Query
+from fastapi.responses import FileResponse, Response
 import mimetypes
 
-from .support import find_plugin_path_by_id, load_manifest_json, require_plugin_token, resolve_plugin_file_path
+from src.common.http_client import get_shared_ssl_context
+
+from .support import find_plugin_path_by_id, load_manifest_json, resolve_plugin_file_path
 
 router = APIRouter()
 
 _LOCAL_ICON_SUFFIXES = {".jpg", ".jpeg", ".png", ".svg", ".webp"}
 _MAX_ICON_BYTES = 512 * 1024
+
+
+class _NoIconRedirect(HTTPRedirectHandler):
+    def redirect_request(self, req, fp, code, msg, headers, newurl):
+        return None
+
+
+@router.get("/market-icon")
+def get_market_icon(
+    url: str = Query(max_length=2048)) -> Response:
+    """CNB Raw 禁止浏览器跨站嵌图，经同源端点读取固定市场仓库的图标。"""
+    parsed = urlsplit(url)
+    if (
+        not url.startswith("https://cnb.cool/Mai-with-u/plugin-repo/-/git/raw/")
+        or ".." in unquote(parsed.path).replace("\\", "/").split("/")
+    ):
+        raise HTTPException(status_code=400, detail="只能读取 CNB 插件市场仓库图标")
+
+    try:
+        opener = build_opener(_NoIconRedirect(), HTTPSHandler(context=get_shared_ssl_context()))
+        request = Request(url, headers={"User-Agent": "MaiBot", "Accept": "image/*"})
+        with opener.open(request, timeout=8) as response:
+            media_type = response.headers.get_content_type()
+            if media_type not in {"image/png", "image/jpeg", "image/webp", "image/svg+xml"}:
+                raise ValueError(f"图标响应类型无效：{media_type}")
+            content = response.read(_MAX_ICON_BYTES + 1)
+            if len(content) > _MAX_ICON_BYTES:
+                raise ValueError("插件图标文件过大")
+    except (OSError, ValueError) as exc:
+        raise HTTPException(status_code=502, detail=f"获取 CNB 插件图标失败：{exc}") from exc
+    return Response(content, media_type=media_type, headers={
+        "Cache-Control": "private, max-age=3600",
+        "Content-Security-Policy": "default-src 'none'; sandbox",
+        "X-Content-Type-Options": "nosniff",
+    })
 
 
 def _get_local_icon_path(manifest: Dict[str, Any]) -> Optional[str]:
@@ -40,9 +79,8 @@ def _validate_local_icon_path(icon_path: str) -> None:
 
 
 @router.get("/icon/{plugin_id}")
-def get_plugin_icon(plugin_id: str, maibot_session: Optional[str] = Cookie(None)) -> FileResponse:
+def get_plugin_icon(plugin_id: str) -> FileResponse:
     """读取已安装插件在 manifest 中声明的本地图标。"""
-    require_plugin_token(maibot_session)
 
     plugin_path = find_plugin_path_by_id(plugin_id)
     if plugin_path is None:

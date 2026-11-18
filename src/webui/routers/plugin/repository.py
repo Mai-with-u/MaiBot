@@ -1,6 +1,5 @@
-from typing import Optional
 
-from fastapi import APIRouter, Cookie, HTTPException
+from fastapi import APIRouter, HTTPException
 
 from src.common.logger import get_logger
 from src.config.config import MMC_VERSION
@@ -12,7 +11,7 @@ from .schemas import (
     GitStatusResponse,
     VersionResponse,
 )
-from .support import get_plugins_dir, parse_version, require_plugin_token, validate_safe_path
+from .support import get_plugins_dir, parse_version, validate_safe_path
 
 logger = get_logger("webui.plugin_routes")
 
@@ -34,9 +33,7 @@ def check_git_status() -> GitStatusResponse:
 @router.post("/clone", response_model=CloneRepositoryResponse)
 async def clone_repository(
     request: CloneRepositoryRequest,
-    maibot_session: Optional[str] = Cookie(None),
 ) -> CloneRepositoryResponse:
-    require_plugin_token(maibot_session)
     logger.info(f"收到克隆仓库请求: {request.owner}/{request.repo} -> {request.target_path}")
 
     try:

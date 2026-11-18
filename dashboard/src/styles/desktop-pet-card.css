@@ -1,0 +1,88 @@
+/* 麦麦观察首页 - 桌宠卡片：预览区放形象和气泡，底部是状态行与输入条。 */
+[data-desktop-pet-stage='true'] {
+  min-height: 7rem;
+}
+
+/* 形象框跟着预览区的高度走，贴右下角等比缩放，不会顶出卡片 */
+[data-desktop-pet-figure='true'] {
+  position: absolute;
+  top: 0.5rem;
+  right: 0.75rem;
+  bottom: 0.5rem;
+  width: 58%;
+  display: flex;
+  align-items: flex-end;
+  justify-content: flex-end;
+  pointer-events: none;
+  transition: opacity 200ms ease, filter 200ms ease;
+}
+[data-desktop-pet-figure='true'] > * {
+  max-width: 100%;
+  max-height: 100%;
+}
+[data-desktop-pet-figure='true'][data-ghost='true'] {
+  opacity: 0.3;
+  filter: grayscale(1);
+}
+
+[data-desktop-pet-bubble='true'] {
+  position: absolute;
+  top: 0.75rem;
+  left: 0.75rem;
+  max-width: 58%;
+  margin: 0;
+  padding: 0.5rem 0.75rem;
+  font-size: 0.8125rem;
+  line-height: 1.5;
+  overflow-wrap: anywhere;
+  display: -webkit-box;
+  -webkit-line-clamp: 4;
+  -webkit-box-orient: vertical;
+  overflow: hidden;
+  background: hsl(var(--muted));
+  border: 1px solid hsl(var(--border));
+  border-radius: var(--radius-md, 0.375rem);
+}
+[data-desktop-pet-bubble='true'][data-thinking='true'] {
+  font-family: var(--font-mono, monospace);
+  letter-spacing: 0.1em;
+  color: hsl(var(--muted-foreground));
+}
+
+[data-desktop-pet-footer='true'] {
+  border-top: 1px dashed hsl(var(--border));
+}
+
+[data-desktop-pet-todo-badge='true'] {
+  position: absolute;
+  top: -0.5rem;
+  right: -0.5rem;
+  min-width: 1rem;
+  height: 1rem;
+  padding: 0 0.2rem;
+  font-family: var(--font-mono, monospace);
+  font-size: 0.625rem;
+  line-height: 1rem;
+  text-align: center;
+  background: hsl(var(--primary));
+  color: hsl(var(--primary-foreground));
+  border-radius: 999px;
+}
+
+/* 千禧：气泡是键帽材质，角标是珊瑚橙方块，状态行上方一道虚线 */
+:root[data-dashboard-style='millennium'] [data-desktop-pet-bubble='true'] {
+  background: var(--mil-key);
+  color: var(--mil-ink);
+  border: 2px solid var(--mil-line);
+  border-radius: 0;
+  box-shadow: inset 0 -3px 0 var(--mil-key-side);
+}
+:root[data-dashboard-style='millennium'] [data-desktop-pet-footer='true'] {
+  border-top: 2px dashed var(--mil-rule);
+}
+:root[data-dashboard-style='millennium'] [data-desktop-pet-todo-badge='true'] {
+  background: var(--mil-hot);
+  color: var(--mil-hot-ink);
+  border: 1px solid var(--mil-line);
+  border-radius: 0;
+}

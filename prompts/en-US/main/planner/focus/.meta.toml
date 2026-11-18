@@ -1,0 +1,4 @@
+[planner_focus]
+display_name = "Focus shared planner"
+advanced = true
+description = "Shared planner for multiple chats in a Focus group. Private chats also use this template when Focus is enabled for them; session_id specifies each target."

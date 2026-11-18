@@ -21,7 +21,7 @@ from src.llm_models.payload_content.context_item import (
     get_response_text,
     get_response_tool_calls,
 )
-from src.llm_models.model_client.base_client import GenerationAttempt, GenerationTrace
+from src.llm_models.model_client.base_client import GenerationAttempt, GenerationTrace, ResponseRequest
 from src.llm_models.payload_content.native_tool import NativeToolCallSummary
 from src.llm_models.payload_content.resp_format import RespFormat
 from src.llm_models.payload_content.tool_option import ToolCall, ToolDefinitionInput
@@ -82,9 +82,11 @@ class LLMResponseResult(BaseDataModel):
     total_tokens: int = 0
     prompt_cache_hit_tokens: int = 0
     prompt_cache_miss_tokens: int = 0
+    prompt_cache_reported: bool = False
     provider_response: Dict[str, Any] | None = field(default=None, repr=False)
     wire_protocol: str = ""
     request_wire_payload: Any = field(default=None, repr=False)
+    request_snapshot: ResponseRequest | None = field(default=None, repr=False)
 
     @property
     def response(self) -> str:

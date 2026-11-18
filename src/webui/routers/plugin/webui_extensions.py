@@ -1,11 +1,11 @@
 """两种插件页面共用的 API 网关；请求、上传和返回值均有明确预算。"""
 
 from contextlib import asynccontextmanager, suppress
-from fastapi import APIRouter, Cookie, File, Form, HTTPException, Request, UploadFile
+from fastapi import APIRouter, File, Form, HTTPException, Request, UploadFile
 from fastapi.responses import JSONResponse
 from fastapi.routing import APIRoute
 from pydantic import Field, model_validator
-from typing import Any, AsyncIterator, Dict, Literal, Optional, Tuple
+from typing import Any, AsyncIterator, Dict, Literal, Tuple
 
 import asyncio
 import json
@@ -32,20 +32,18 @@ from src.plugin_runtime.upload_store import (
     upload_store,
 )
 
-from .support import require_plugin_token
 
 logger = get_logger("plugin_webui")
 
 
 class WebUILimitedRoute(APIRoute):
-    """在解析 JSON/multipart 前鉴权并限制字节数，上传从接收起占用配额。"""
+    """在解析 JSON/multipart 前限制字节数，上传从接收起占用配额。"""
 
     def get_route_handler(self):
         original = super().get_route_handler()
 
         async def handle(request: Request):
             if request.method == "POST":
-                require_plugin_token(request.cookies.get("maibot_session"))
                 params = request.path_params
                 is_upload = self.path.endswith("/uploads/{name}")
                 if is_upload:
@@ -155,8 +153,7 @@ def _serialize_extensions(extensions: Dict[str, Tuple[PluginSupervisor, WebUIExt
 
 
 @router.get("/runtime/webui")
-async def list_webui_extensions(maibot_session: Optional[str] = Cookie(None)) -> Dict[str, Any]:
-    require_plugin_token(maibot_session)
+async def list_webui_extensions() -> Dict[str, Any]:
     return await run_on_main_loop(_list_extensions())
 
 
@@ -172,8 +169,7 @@ async def _reload_documents(plugin_id: str) -> Dict[str, Any]:
 
 
 @router.post("/runtime/webui/{plugin_id}/reload")
-async def reload_webui_documents(plugin_id: str, maibot_session: Optional[str] = Cookie(None)) -> Dict[str, Any]:
-    require_plugin_token(maibot_session)
+async def reload_webui_documents(plugin_id: str) -> Dict[str, Any]:
     return await run_on_main_loop(_reload_documents(plugin_id))
 
 
@@ -191,9 +187,7 @@ async def _custom_document(plugin_id: str, page_id: str) -> Dict[str, Any]:
 async def get_custom_document(
     plugin_id: str,
     page_id: str,
-    maibot_session: Optional[str] = Cookie(None),
 ) -> JSONResponse:
-    require_plugin_token(maibot_session)
     snapshot = await run_on_main_loop(_custom_document(plugin_id, page_id))
     # 仅返回 JSON：直接打开地址也不会把插件 HTML 当作宿主同源页面执行。
     return await asyncio.to_thread(
@@ -308,9 +302,7 @@ async def upload_webui_file(
     file: UploadFile = File(...),
     args: str = Form("{}"),
     confirmed: bool = Form(False),
-    maibot_session: Optional[str] = Cookie(None),
 ) -> Dict[str, Any]:
-    require_plugin_token(maibot_session)
     action, binding = await run_on_main_loop(_authorize_upload(plugin_id, page_id, name))
     try:
         arguments = json.loads(args)
@@ -340,7 +332,5 @@ async def invoke_webui_binding(
     kind: Literal["queries", "actions"],
     name: str,
     request: Invocation,
-    maibot_session: Optional[str] = Cookie(None),
 ) -> Dict[str, Any]:
-    require_plugin_token(maibot_session)
     return await run_on_main_loop(_invoke(plugin_id, page_id, kind, name, request))

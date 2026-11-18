@@ -16,3 +16,7 @@ export function formatChatDisplayName(name: string, accountId?: string | null): 
 export function getChatTypeText(chatType: ChatStreamType): string {
   return chatType === 'group' ? '群聊' : '私聊'
 }
+/** 显示聊天对象的号码，Bot 账号保留在名称提示中用于区分来源。 */
+export function formatChatTargetLabel(chat: { target_id?: string | null; is_group: boolean }): string {
+  return chat.target_id ? `${chat.is_group ? '群号' : '用户'} ${chat.target_id}` : ''
+}

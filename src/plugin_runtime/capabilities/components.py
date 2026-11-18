@@ -1,6 +1,7 @@
 from pathlib import Path
 from typing import TYPE_CHECKING, Any, Dict, Iterable, List, Optional, Protocol, Sequence
 
+import asyncio
 import tomlkit
 
 from src.common.logger import get_logger
@@ -89,6 +90,19 @@ class _RuntimeComponentManagerProtocol(Protocol):
 
 
 class RuntimeComponentCapabilityMixin:
+    async def _cap_runtime_set_status_badges(
+        self: _RuntimeComponentManagerProtocol, plugin_id: str, capability: str, args: Dict[str, Any]
+    ) -> Dict[str, Any]:
+        """替换调用者的标记列表；空列表清除，expires_at 为可选的 Unix 秒时间戳。
+
+        每项必须包含 id、label；监督器限制数量和长度，负责到期推送和实例清理。
+        """
+        supervisor = self._get_supervisor_for_plugin(plugin_id)
+        if supervisor is None or supervisor.get_plugin_load_statuses().get(plugin_id) != "success":
+            raise ValueError("只有已加载的插件可以上报运行标记")
+        supervisor.runtime_status_badges.update(plugin_id, args.get("badges"))
+        return {"success": True}
+
     def _collect_api_reference_matches(
         self: _RuntimeComponentManagerProtocol,
         caller_plugin_id: str,
@@ -167,10 +181,8 @@ class RuntimeComponentCapabilityMixin:
             str: 统一转为大写后的组件类型名。
         """
 
-        normalized_component_type = str(component_type or "").strip().upper()
-        if normalized_component_type == "ACTION":
-            return "TOOL"
-        return normalized_component_type
+        normalized_type = str(component_type or "").strip().upper()
+        return "TOOL" if normalized_type == "ACTION" else normalized_type
 
     @classmethod
     def _is_api_component_type(cls, component_type: str) -> bool:
@@ -465,6 +477,7 @@ class RuntimeComponentCapabilityMixin:
                 )
                 result[pid] = {
                     "name": pid,
+                    "display_name": reg.display_name,
                     "version": reg.plugin_version,
                     "description": "",
                     "author": "",
@@ -542,38 +555,29 @@ class RuntimeComponentCapabilityMixin:
             "default_config": registration.default_config,
         }
 
-    async def _cap_component_update_plugin_config(
-        self: _RuntimeComponentManagerProtocol, plugin_id: str, capability: str, args: Dict[str, Any]
-    ) -> Any:
-        """更新指定插件的结构化配置项。
-
-        该能力仅授予插件管理内置插件使用：调用方通过权限校验后，可按点分隔路径
-        修改目标插件的 ``config.toml``，并通知运行时进行自配置热更新。
-        """
-
-        del capability
-        if plugin_id != "builtin.plugin-management":
-            return {"success": False, "error": "仅插件管理内置插件可以修改插件配置"}
-
-        target_plugin_id = str(args.get("plugin_name", "") or "").strip()
-        key = str(args.get("key", "") or "").strip()
+    async def update_plugin_config_value(
+        self: _RuntimeComponentManagerProtocol, target_plugin_id: str, key: str, value: Any
+    ) -> Dict[str, Any]:
+        """更新插件配置项并通知插件运行时。供本体命令在权限校验后调用。"""
+        target_plugin_id = target_plugin_id.strip()
+        key = key.strip()
         if not target_plugin_id or not key:
             return {"success": False, "error": "缺少必要参数 plugin_name 或 key"}
 
-        supervisor = self._get_supervisor_for_plugin(target_plugin_id) or self._find_supervisor_by_plugin_directory(
-            target_plugin_id
+        supervisor = self._get_supervisor_for_plugin(target_plugin_id) or await asyncio.to_thread(
+            self._find_supervisor_by_plugin_directory, target_plugin_id
         )
         if supervisor is None:
             return {"success": False, "error": f"未找到插件: {target_plugin_id}"}
 
-        plugin_path = self._get_plugin_path_for_supervisor(supervisor, target_plugin_id)
+        plugin_path = await asyncio.to_thread(self._get_plugin_path_for_supervisor, supervisor, target_plugin_id)
         if plugin_path is None:
             return {"success": False, "error": f"未找到插件目录: {target_plugin_id}"}
 
         config_path = self._resolve_plugin_config_path(target_plugin_id, plugin_path)
-        config_data = self._load_component_plugin_config(config_path)
+        config_data = await asyncio.to_thread(self._load_component_plugin_config, config_path)
         try:
-            self._set_nested_plugin_config_value(config_data, key, args.get("value"))
+            self._set_nested_plugin_config_value(config_data, key, value)
             validated_config = await self.validate_plugin_config(target_plugin_id, config_data)
             if isinstance(validated_config, dict):
                 config_data = validated_config
@@ -584,8 +588,8 @@ class RuntimeComponentCapabilityMixin:
             return {"success": False, "error": str(exc)}
 
         try:
-            config_path.parent.mkdir(parents=True, exist_ok=True)
-            save_toml_with_format(config_data, str(config_path))
+            await asyncio.to_thread(config_path.parent.mkdir, parents=True, exist_ok=True)
+            await asyncio.to_thread(save_toml_with_format, config_data, str(config_path))
         except Exception as exc:
             logger.error(f"插件 {target_plugin_id} 配置写入失败: {exc}", exc_info=True)
             return {"success": False, "error": f"配置写入失败: {exc}"}

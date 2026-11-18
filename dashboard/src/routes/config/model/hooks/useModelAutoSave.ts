@@ -5,8 +5,6 @@
 import type { RefObject } from 'react'
 import { useCallback, useEffect, useRef } from 'react'
 
-import { updateModelConfigSection } from '@/lib/config-api'
-
 import type { ModelInfo, ModelTaskConfig } from '../types'
 import { serializeModel } from '../serializeModel'
 
@@ -19,6 +17,8 @@ interface UseModelAutoSaveOptions {
   taskConfig: ModelTaskConfig | null
   /** 所有模型配置写入共用的串行队列 */
   enqueueWrite: EnqueueConfigWrite
+  /** 与手动保存共用版本校验和诊断更新。 */
+  saveSection: (section: string, data: unknown) => Promise<unknown>
   /** 防抖延迟时间 (ms) */
   debounceMs?: number
   /** 保存状态回调 */
@@ -78,6 +78,7 @@ export function useModelAutoSave(options: UseModelAutoSaveOptions): UseModelAuto
     models,
     taskConfig,
     enqueueWrite,
+    saveSection,
     debounceMs = 2000,
     onSavingChange,
     onUnsavedChange,
@@ -220,7 +221,7 @@ export function useModelAutoSave(options: UseModelAutoSaveOptions): UseModelAuto
       return enqueueWrite(async () => {
         try {
           const cleanedModels = newModels.map(serializeModel)
-          await updateModelConfigSection('models', cleanedModels)
+          await saveSection('models', cleanedModels)
           if (
             generation === generationsRef.current.models &&
             snapshot === latestModelsSnapshotRef.current
@@ -240,7 +241,7 @@ export function useModelAutoSave(options: UseModelAutoSaveOptions): UseModelAuto
         }
       })
     },
-    [enqueueWrite, onSaveError, setDomainDirty, updateSavingCount]
+    [enqueueWrite, onSaveError, saveSection, setDomainDirty, updateSavingCount]
   )
 
   const queueTaskConfigSave = useCallback(
@@ -250,7 +251,7 @@ export function useModelAutoSave(options: UseModelAutoSaveOptions): UseModelAuto
 
       return enqueueWrite(async () => {
         try {
-          await updateModelConfigSection('model_task_config', newTaskConfig)
+          await saveSection('model_task_config', newTaskConfig)
           if (
             generation === generationsRef.current.taskConfig &&
             snapshot === latestTaskConfigSnapshotRef.current
@@ -270,7 +271,7 @@ export function useModelAutoSave(options: UseModelAutoSaveOptions): UseModelAuto
         }
       })
     },
-    [enqueueWrite, onSaveError, setDomainDirty, updateSavingCount]
+    [enqueueWrite, onSaveError, saveSection, setDomainDirty, updateSavingCount]
   )
 
   // 先登记卸载状态，后面的定时器清理才能区分重新编辑与离开页面。

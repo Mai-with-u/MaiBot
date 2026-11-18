@@ -1,21 +1,27 @@
+from datetime import datetime
+from pathlib import Path
+from typing import Any, Callable, Mapping, Sequence, TypeVar, cast
+
 import asyncio
 import copy
 import hashlib
 import inspect
 import os
-from datetime import datetime
-from pathlib import Path
-from typing import Any, Callable, Mapping, Sequence, TypeVar, cast
-
+import shutil
 import tomlkit
 
-from src.common.paths import get_instance_root
+from src.agent.config import AgentConfig
+from src.common.atomic_file import write_private
 from src.common.i18n import t
 from src.common.logger import get_logger
+from src.common.paths import get_instance_root
 from src.common.version import read_project_version
-from src.web_search.config import WebConfig, resolve_web_search_config
+from src.desktop_pet.config import DesktopPetConfig
+from src.files.config import FilesConfig
+from src.web_search.config import WebConfig
 
 from .config_base import AttributeData, ConfigBase, Field
+from .builtin_typo_migration import migrate_builtin_keyword_reaction_config, migrate_builtin_typo_config
 from .config_upgrade_hooks import apply_config_upgrade_hooks
 from .config_utils import compare_versions, output_config_changes, recursive_parse_item_to_table
 from .default_model_config import create_default_model_config
@@ -27,19 +33,18 @@ from .legacy_migration import (
     try_migrate_legacy_bot_config_dict,
 )
 from .model_configs import APIProvider, ModelInfo, ModelTaskConfig
+from .shared_settings import merge_shared_settings, shared_settings_path, strip_shared_settings
+from .shared_models import CATALOG_FILENAME, merge_catalog, model_config_warnings, shared_models_path
 from .official_configs import (
     AMemorixConfig,
     BotConfig,
     CapabilitiesConfig,
     ChatConfig,
-    ChineseTypoConfig,
-    DatabaseConfig,
     DebugConfig,
     EmojiConfig,
     ExperimentalConfig,
     ExpressionConfig,
     JargonConfig,
-    KeywordReactionConfig,
     LogConfig,
     MaimMessageConfig,
     MCPConfig,
@@ -69,10 +74,9 @@ CONFIG_DIR: Path = PROJECT_ROOT / "config"
 BOT_CONFIG_PATH: Path = (CONFIG_DIR / "bot_config.toml").resolve().absolute()
 MODEL_CONFIG_PATH: Path = (CONFIG_DIR / "model_config.toml").resolve().absolute()
 LEGACY_ENV_PATH: Path = (PROJECT_ROOT / ".env").resolve().absolute()
-A_MEMORIX_LEGACY_CONFIG_PATH: Path = (CONFIG_DIR / "a_memorix.toml").resolve().absolute()
 MMC_VERSION: str = read_project_version(PROJECT_ROOT)
-CONFIG_VERSION: str = "8.15.19"
-MODEL_CONFIG_VERSION: str = "1.17.19"
+CONFIG_VERSION: str = "8.16.36"
+MODEL_CONFIG_VERSION: str = "1.17.27"
 
 logger = get_logger("config")
 
@@ -96,6 +100,15 @@ class _ReloadCallbackRegistration:
 
 class Config(ConfigBase):
     """总配置类"""
+
+    agent: AgentConfig = Field(default_factory=AgentConfig)
+    """统一独立 Agent 配置"""
+
+    desktop_pet: DesktopPetConfig = Field(default_factory=DesktopPetConfig)
+    """内置桌宠配置"""
+
+    files: FilesConfig = Field(default_factory=FilesConfig)
+    """文件存储、传输和清理配置"""
 
     bot: BotConfig = Field(default_factory=BotConfig)
     """机器人配置类"""
@@ -133,14 +146,10 @@ class Config(ConfigBase):
     emoji: EmojiConfig = Field(default_factory=EmojiConfig)
     """表情包配置类"""
 
-    keyword_reaction: KeywordReactionConfig = Field(default_factory=KeywordReactionConfig)
     """关键词反应配置类"""
 
     response_post_process: ResponsePostProcessConfig = Field(default_factory=ResponsePostProcessConfig)
     """回复后处理配置类"""
-
-    chinese_typo: ChineseTypoConfig = Field(default_factory=ChineseTypoConfig)
-    """中文错别字生成器配置类"""
 
     response_splitter: ResponseSplitterConfig = Field(default_factory=ResponseSplitterConfig)
     """回复分割器配置类"""
@@ -159,9 +168,6 @@ class Config(ConfigBase):
 
     webui: WebUIConfig = Field(default_factory=WebUIConfig)
     """WebUI配置类"""
-
-    database: DatabaseConfig = Field(default_factory=DatabaseConfig)
-    """数据库配置类"""
 
     mcp: MCPConfig = Field(default_factory=MCPConfig)
     """MCP 配置类"""
@@ -188,13 +194,7 @@ class ModelConfig(ConfigBase):
     api_providers: list[APIProvider] = Field(default_factory=list)
     """API提供商列表"""
 
-    def model_post_init(self, context: Any = None):
-        resolve_web_search_config(self.web, self.model_task_config.web_search)
-        if not self.models:
-            raise ValueError(t("config.models_empty"))
-        if not self.api_providers:
-            raise ValueError(t("config.api_providers_empty"))
-
+    def model_post_init(self, context: Any = None) -> None:
         # 检查API提供商名称是否重复
         provider_names = [provider.name for provider in self.api_providers]
         if len(provider_names) != len(set(provider_names)):
@@ -205,75 +205,15 @@ class ModelConfig(ConfigBase):
         if len(model_names) != len(set(model_names)):
             raise ValueError(t("config.model_name_duplicate"))
 
-        for model_name in self.model_task_config.embedding.model_list:
-            if model_name not in model_names:
-                raise ValueError(f"embedding.model_list references an undefined model: {model_name}")
-
-        api_providers_dict = {provider.name: provider for provider in self.api_providers}
-
-        for model in self.models:
-            if not model.model_identifier:
-                raise ValueError(t("config.model_identifier_empty", model_name=model.name))
-            if not model.api_provider or model.api_provider not in api_providers_dict:
-                raise ValueError(
-                    t(
-                        "config.model_api_provider_missing",
-                        api_provider=model.api_provider,
-                        model_name=model.name,
-                    )
-                )
         return super().model_post_init(context)
 
 
-def _normalize_a_memorix_legacy_config(config_data: dict[str, Any]) -> dict[str, Any]:
+def _normalize_a_memorix_config(config_data: dict[str, Any]) -> dict[str, Any]:
+    """将当前 TOML 中的 web.import 映射为 Python 属性 web.import_config。"""
     normalized = copy.deepcopy(config_data)
     web_config = normalized.get("web")
     if isinstance(web_config, dict) and "import" in web_config and "import_config" not in web_config:
         web_config["import_config"] = web_config.pop("import")
-    return normalized
-
-
-def _migrate_legacy_a_memorix_config(config_data: dict[str, Any]) -> tuple[dict[str, Any], bool]:
-    if isinstance(config_data.get("a_memorix"), dict):
-        return config_data, False
-    if not A_MEMORIX_LEGACY_CONFIG_PATH.exists():
-        return config_data, False
-
-    try:
-        with A_MEMORIX_LEGACY_CONFIG_PATH.open("r", encoding="utf-8") as handle:
-            legacy_data = tomlkit.load(handle).unwrap()
-    except Exception as exc:
-        logger.warning(f"读取旧版 A_Memorix 配置失败，已使用主配置默认值: {A_MEMORIX_LEGACY_CONFIG_PATH}，原因: {exc}")
-        return config_data, False
-
-    if not isinstance(legacy_data, dict):
-        logger.warning(f"旧版 A_Memorix 配置内容无效，已使用主配置默认值: {A_MEMORIX_LEGACY_CONFIG_PATH}")
-        return config_data, False
-
-    migrated_data = copy.deepcopy(config_data)
-    migrated_data["a_memorix"] = _normalize_a_memorix_legacy_config(legacy_data)
-    logger.warning(
-        f"检测到旧版 A_Memorix 配置，已迁移到 bot_config.toml 的 [a_memorix]: {A_MEMORIX_LEGACY_CONFIG_PATH}"
-    )
-    return migrated_data, True
-
-
-def _normalize_loaded_bot_config_dict(config_data: dict[str, Any]) -> dict[str, Any]:
-    normalized = copy.deepcopy(config_data)
-    # 将已稳定的能力配置移入独立栏目，保留用户原有开关与阈值。
-    experimental_config = normalized.get("experimental")
-    if isinstance(experimental_config, dict):
-        for field_name in (
-            "tool_result_condense",
-            "tool_result_condense_threshold",
-            "planner_subagent",
-            "advanced_sub_agent",
-        ):
-            if field_name in experimental_config:
-                normalized.setdefault("capabilities", {}).setdefault(field_name, experimental_config.pop(field_name))
-    a_memorix_config = normalized.get("a_memorix")
-    if isinstance(a_memorix_config, dict):
-        normalized["a_memorix"] = _normalize_a_memorix_legacy_config(a_memorix_config)
     return normalized
 
 
@@ -312,6 +252,8 @@ class ConfigManager:
             logger.info("配置已自动升级，将继续使用更新后的配置启动")
         self._update_config_file_fingerprints(("bot", "model"))
         self._warn_if_vlm_not_configured(self.model_config)
+        for warning in model_config_warnings(self.model_config.model_dump()):
+            logger.warning(f"模型配置：{warning}")
         logger.info(t("config.loaded"))
 
     @classmethod
@@ -410,9 +352,9 @@ class ConfigManager:
         changed_scopes: list[str] = []
         for change in changes:
             file_name = change.path.name
-            if file_name == "bot_config.toml" and "bot" not in changed_scopes:
+            if (file_name == "bot_config.toml" or change.path == shared_settings_path()) and "bot" not in changed_scopes:
                 changed_scopes.append("bot")
-            if file_name == "model_config.toml" and "model" not in changed_scopes:
+            if file_name in {"model_config.toml", CATALOG_FILENAME} and "model" not in changed_scopes:
                 changed_scopes.append("model")
         return tuple(changed_scopes)
 
@@ -511,7 +453,14 @@ class ConfigManager:
     def _get_config_file_fingerprint(path: Path) -> str:
         """计算配置文件内容指纹，用于过滤已同步到运行时的重复文件事件。"""
 
-        return hashlib.sha256(path.read_bytes()).hexdigest()
+        content = path.read_bytes()
+        policy = shared_settings_path()
+        if path.name == "bot_config.toml" and policy is not None:
+            content += b"\x00retention\x00" + policy.read_bytes()
+        shared = shared_models_path()
+        if path.name == "model_config.toml" and shared is not None:
+            content += b"\x00shared\x00" + (shared.read_bytes() if shared.exists() else b"")
+        return hashlib.sha256(content).hexdigest()
 
     def _update_config_file_fingerprints(self, scopes: Sequence[str]) -> None:
         """记录已成功加载到运行时的配置文件内容指纹。"""
@@ -617,13 +566,15 @@ class ConfigManager:
                 global_updated = False
                 model_updated = False
                 if "bot" in normalized_scopes or global_config_new is None:
-                    global_config_new, global_updated = load_config_from_file(
+                    global_config_new, global_updated = await asyncio.to_thread(
+                        load_config_from_file,
                         Config,
                         self.bot_config_path,
                         CONFIG_VERSION,
                     )
                 if "model" in normalized_scopes or model_config_new is None:
-                    model_config_new, model_updated = load_config_from_file(
+                    model_config_new, model_updated = await asyncio.to_thread(
+                        load_config_from_file,
                         ModelConfig,
                         self.model_config_path,
                         MODEL_CONFIG_VERSION,
@@ -637,6 +588,10 @@ class ConfigManager:
                 logger.warning(t("config.version_update_detected"))
 
             self.global_config = global_config_new
+            if "bot" in normalized_scopes:
+                from src.common.logger import apply_log_retention
+
+                await asyncio.to_thread(apply_log_retention, {"log_file_max_bytes": global_config_new.log.log_file_max_bytes, "max_log_files": global_config_new.log.max_log_files, "log_cleanup_days": global_config_new.log.log_cleanup_days})
             self.model_config = model_config_new
             self._update_config_file_fingerprints(normalized_scopes)
             self.reload_revision += 1
@@ -664,9 +619,16 @@ class ConfigManager:
         from src.platform_io.adapter_policy import get_adapter_policy_manager
 
         policy_path = get_adapter_policy_manager().policy_path
+        catalog_path = shared_models_path()
+        watched = [self.bot_config_path, self.model_config_path, policy_path]
+        retention_file = shared_settings_path()
+        if retention_file is not None:
+            watched.append(retention_file)
+        if catalog_path is not None:
+            watched.append(catalog_path)
         self._file_watcher = FileWatcher(
             # 监听父目录，覆盖策略文件首次创建以及编辑器的原子替换保存。
-            paths=list({self.bot_config_path.parent, self.model_config_path.parent, policy_path.parent}),
+            paths=list({path.parent for path in watched}),
             debounce_ms=600,
             callback_timeout_s=15.0,
             callback_failure_threshold=3,
@@ -674,7 +636,7 @@ class ConfigManager:
         )
         self._file_watcher_subscription_id = self._file_watcher.subscribe(
             self._handle_file_changes,
-            paths=[self.bot_config_path, self.model_config_path, policy_path],
+            paths=watched,
         )
         await self._file_watcher.start()
         logger.debug(t("config.file_watcher_started"))
@@ -775,7 +737,10 @@ def load_config_from_file(
         logger.warning(f"配置文件缺失，正在生成默认配置: {config_path}")
         generate_new_config_file(config_class, config_path, new_ver, override_repr)
     with open(config_path, "r", encoding="utf-8") as f:
-        config_data = tomlkit.load(f)
+        try:
+            config_data = tomlkit.load(f)
+        except (UnicodeError, tomlkit.exceptions.ParseError) as exc:
+            raise ValueError(f"配置文件无法解析：{config_path}") from exc
     inner_table = config_data.get("inner")
     if not isinstance(inner_table, Mapping):
         raise TypeError(t("config.missing_inner_version"))
@@ -785,7 +750,6 @@ def load_config_from_file(
     old_ver: str = inner_version
     env_migration_applied: bool = False
     legacy_config_migration_applied: bool = False
-    a_memorix_migration_applied: bool = False
     upgrade_hook_applied: bool = False
     legacy_config_migration_reasons: list[str] = []
     config_data.remove("inner")  # 移除 inner 部分，避免干扰后续处理
@@ -804,11 +768,8 @@ def load_config_from_file(
             legacy_config_migration_applied = True
             legacy_config_migration_reasons.append(legacy_migration.reason)
         config_data = legacy_migration.data
-        config_data, a_memorix_migration_applied = _migrate_legacy_a_memorix_config(config_data)
-        if a_memorix_migration_applied:
-            legacy_config_migration_reasons.append("a_memorix_legacy_config")
-    if config_class is Config:
-        config_data = _normalize_loaded_bot_config_dict(config_data)
+    if config_class is Config and isinstance(config_data.get("a_memorix"), dict):
+        config_data["a_memorix"] = _normalize_a_memorix_config(config_data["a_memorix"])
     hook_result = apply_config_upgrade_hooks(config_data, config_path.name, old_ver, new_ver)
     upgrade_hook_applied = hook_result.migrated
     if hook_result.migrated:
@@ -819,7 +780,8 @@ def load_config_from_file(
     try:
         updated: bool = False
         try:
-            target_config = config_class.from_dict(attribute_data, config_data)
+            effective_data = merge_catalog(config_data) if config_class is ModelConfig else merge_shared_settings(config_data)
+            target_config = config_class.from_dict(attribute_data, effective_data)
         except TypeError as e:
             # 可拔插的旧配置修复（仅针对 bot_config.toml 的已知结构变更）
             if legacy_migration_enabled:
@@ -835,21 +797,40 @@ def load_config_from_file(
                     raise e
             else:
                 raise e
+        legacy_typo = original_data.get("chinese_typo") if config_class is Config else None
+        if legacy_typo is not None:
+            if not isinstance(legacy_typo, Mapping):
+                raise TypeError("旧错字配置 chinese_typo 必须是 TOML 表")
+            migrate_builtin_typo_config(legacy_typo)
+        legacy_keyword_reaction = original_data.get("keyword_reaction") if config_class is Config else None
+        if legacy_keyword_reaction is not None:
+            if not isinstance(legacy_keyword_reaction, Mapping):
+                raise TypeError("旧关键词反应配置 keyword_reaction 必须是 TOML 表")
+            migrate_builtin_keyword_reaction_config(legacy_keyword_reaction)
         if (
             compare_versions(old_ver, new_ver)
             or env_migration_applied
             or legacy_config_migration_applied
-            or a_memorix_migration_applied
             or upgrade_hook_applied
+            or legacy_typo is not None
+            or legacy_keyword_reaction is not None
         ):
             output_config_changes(attribute_data, logger, old_ver, new_ver, config_path.name)
-            write_config_to_file(target_config, config_path, new_ver, override_repr)
+            output_config = target_config
+            if config_class is ModelConfig:
+                # 升级只写本 Bot 的条目；共享密钥与模型不能被物化进实例文件。
+                output_config = target_config.model_copy(deep=True)
+                local_models = {item["name"] for item in original_data.get("models", [])}
+                local_providers = {item["name"] for item in original_data.get("api_providers", [])}
+                output_config.models = [item for item in output_config.models if item.name in local_models]
+                output_config.api_providers = [item for item in output_config.api_providers if item.name in local_providers]
+            write_config_to_file(output_config, config_path, new_ver, override_repr)
             if env_migration_applied:
                 remove_legacy_env_file(LEGACY_ENV_PATH)
             updated = True
         if legacy_migration_enabled:
             mark_legacy_config_migration_completed(
-                migrated=env_migration_applied or legacy_config_migration_applied or a_memorix_migration_applied,
+                migrated=env_migration_applied or legacy_config_migration_applied,
                 reason=",".join(reason for reason in legacy_config_migration_reasons if reason),
             )
         return target_config, updated
@@ -876,6 +857,8 @@ def write_config_to_file(
 
     # 递归解析配置项为表格
     for config_item_name, config_item in type(config).model_fields.items():
+        if isinstance(config, ModelConfig) and shared_models_path() is not None and config_item_name in {"models", "api_providers"}:
+            continue
         if not config_item.repr and not override_repr:
             continue
         if config_item_name in ["field_docs", "_validate_any", "suppress_any_warning"]:
@@ -895,6 +878,9 @@ def write_config_to_file(
         else:
             raise TypeError(t("config.write_unsupported_type"))
 
+    if isinstance(config, ModelConfig) and shared_models_path() is not None and "web" in full_config_data:
+        full_config_data["web"].pop("services", None)
+
     if isinstance(config, Config):
         try:
             a_memorix_web = full_config_data["a_memorix"]["web"]
@@ -903,17 +889,20 @@ def write_config_to_file(
         except Exception:
             logger.debug("A_Memorix 配置写出时转换 web.import_config 失败", exc_info=True)
 
-    # 备份旧文件
+    if isinstance(config, Config) and shared_settings_path() is not None:
+        strip_shared_settings(full_config_data)
+
+    # 先完成序列化，再备份旧文件；提交前正式路径始终保留原配置。
+    content = tomlkit.dumps(full_config_data)
     if config_path.exists():
         backup_root = config_path.parent / "old"
         backup_root.mkdir(parents=True, exist_ok=True)
-        timestamp = datetime.now().strftime("%Y%m%d_%H%M%S")
+        timestamp = datetime.now().strftime("%Y%m%d_%H%M%S%f")
         backup_path = backup_root / f"{config_path.stem}_{timestamp}.toml"
-        config_path.replace(backup_path)
+        shutil.copy2(config_path, backup_path)
 
     # 写入文件
-    with open(config_path, "w", encoding="utf-8") as f:
-        tomlkit.dump(full_config_data, f)
+    write_private(config_path, content)
 
 
 class _ConfigProxy:

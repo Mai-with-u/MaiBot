@@ -1,0 +1,75 @@
+/* 桌面市场使用独立滚动视口；窄屏沿用页面滚动布局。 */
+.marketplace-toolbar-anchor {
+  height: 0;
+  margin: 0 !important;
+}
+
+@media (min-width: 1024px) {
+  .marketplace-toolbar-sticky {
+    position: sticky;
+    top: 8px;
+    z-index: 20;
+    pointer-events: none;
+  }
+
+  .marketplace-toolbar-sticky > [data-plugin-market-toolbar] {
+    pointer-events: auto;
+    transition: padding 240ms cubic-bezier(0.22, 1, 0.36, 1);
+  }
+
+  [data-plugin-market-toolbar] :is(input, [role='combobox'], [data-dashboard-button], [data-plugin-market-count-badge], [data-plugin-market-compat] label) {
+    transition-property: height, min-height, width, padding, font-size, background-color, color, box-shadow;
+    transition-duration: 240ms;
+    transition-timing-function: cubic-bezier(0.22, 1, 0.36, 1);
+  }
+
+  [data-plugin-market-toolbar] > .flex,
+  [data-plugin-market-toolbar] :is([data-plugin-market-controls], [data-plugin-market-compat]) {
+    transition: gap 240ms cubic-bezier(0.22, 1, 0.36, 1), padding 240ms cubic-bezier(0.22, 1, 0.36, 1);
+  }
+
+  .marketplace-toolbar-sticky > [data-compact='true'] {
+    padding: 6px 10px !important;
+  }
+
+  [data-plugin-market-toolbar][data-compact='true'] > .flex {
+    gap: 8px;
+  }
+
+  [data-plugin-market-toolbar][data-compact='true'] :is(input, [role='combobox'], [data-dashboard-button], [data-plugin-market-count-badge]) {
+    height: 30px !important;
+    min-height: 30px !important;
+    padding-block: 2px !important;
+    font-size: 12px !important;
+  }
+
+  [data-plugin-market-toolbar][data-compact='true'] [data-plugin-market-settings-button] {
+    width: 30px !important;
+  }
+
+  [data-plugin-market-toolbar][data-compact='true'] [data-plugin-market-controls] {
+    gap: 10px;
+    padding-left: 12px;
+  }
+
+  [data-plugin-market-toolbar][data-compact='true'] [data-plugin-market-compat] {
+    gap: 8px;
+  }
+
+  [data-plugin-market-toolbar][data-compact='true'] [data-plugin-market-compat] label {
+    font-size: 12px !important;
+  }
+}
+
+@media (prefers-reduced-motion: reduce) {
+  .marketplace-toolbar-sticky > [data-plugin-market-toolbar],
+  [data-plugin-market-toolbar] * {
+    transition: none !important;
+  }
+}
+
+@media (max-width: 1023px) {
+  .marketplace-toolbar-sticky {
+    min-height: 0 !important;
+  }
+}

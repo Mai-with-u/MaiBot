@@ -1,7 +1,8 @@
 from __future__ import annotations
 
-from typing import Any, Dict, Iterable, List, Optional, Sequence
+from typing import Any, Dict, Iterable, List, Optional, Sequence, Tuple
 
+import hashlib
 import json
 import sqlite3
 import time
@@ -148,6 +149,7 @@ class MetadataImageMixin:
             FROM image_occurrences AS occurrence
             JOIN image_assets AS asset ON asset.asset_id = occurrence.asset_id
             WHERE occurrence.status = 'active' AND asset.status = 'active'
+              AND occurrence.scope_type IN ('chat', 'global')
         """
         params: List[Any] = []
         if chat_ids is not None:
@@ -551,12 +553,27 @@ class MetadataImageMixin:
                 """,
                 (max(1, int(max_attempts)), max(1, int(limit))),
             ).fetchall()
+            # 批次身份在首次领取时落盘。重试保留旧身份，后来到达的描述另建批次。
+            groups: Dict[Tuple[str, str, float], List[sqlite3.Row]] = {}
+            for row in rows:
+                if not row["summary_external_id"]:
+                    groups.setdefault((row["chat_id"], row["message_id"], row["occurred_at"]), []).append(row)
+            batch_ids: Dict[Tuple[str, str], str] = {}
+            for group in groups.values():
+                references = sorted((str(row["occurrence_id"]), str(row["description_hash"])) for row in group)
+                if len(references) == 1:
+                    external_id = f"image_description_compensation:{references[0][0]}:{references[0][1]}"
+                else:
+                    fingerprint = hashlib.sha256(json.dumps(references).encode("utf-8")).hexdigest()
+                    external_id = f"image_description_compensation_batch:{fingerprint}"
+                batch_ids.update({reference: external_id for reference in references})
             claimed: List[Dict[str, Any]] = []
             for row in rows:
+                external_id = row["summary_external_id"] or batch_ids[(row["occurrence_id"], row["description_hash"])]
                 cursor = database.execute(
                     """
                     UPDATE image_description_compensations
-                    SET status='running', lease_token=?, lease_until=?,
+                    SET status='running', lease_token=?, lease_until=?, summary_external_id=?,
                         attempt_count=attempt_count+1, updated_at=?
                     WHERE occurrence_id=? AND description_hash=?
                       AND status IN ('pending', 'failed')
@@ -564,13 +581,14 @@ class MetadataImageMixin:
                     (
                         lease_token,
                         now + max(1.0, float(lease_seconds)),
+                        external_id,
                         now,
                         str(row["occurrence_id"]),
                         str(row["description_hash"]),
                     ),
                 )
                 if int(cursor.rowcount or 0) == 1:
-                    claimed.append(dict(row))
+                    claimed.append({**dict(row), "summary_external_id": external_id})
         return claimed
 
     def complete_image_description_compensation(

@@ -1,0 +1,18 @@
+{
+  "manifest_version": 2,
+  "id": "builtin.chinese-typo",
+  "version": "1.0.0",
+  "name": "麦麦小工具",
+  "description": "麦麦的一些小巧思拟人化功能",
+  "author": {"name": "MaiBot团队", "url": "https://github.com/Mai-with-u"},
+  "license": "GPL-v3.0-or-later",
+  "urls": {"repository": "https://github.com/Mai-with-u/MaiBot"},
+  "host_application": {"min_version": "1.4.0", "max_version": "999.999.999"},
+  "sdk": {"min_version": "2.20.0", "max_version": "2.99.99"},
+  "dependencies": [
+    {"type": "python_package", "name": "jieba", "version_spec": ">=0.42.1"},
+    {"type": "python_package", "name": "pypinyin", "version_spec": ">=0.54.0"}
+  ],
+  "capabilities": [],
+  "i18n": {"default_locale": "zh-CN", "supported_locales": ["zh-CN"]}
+}

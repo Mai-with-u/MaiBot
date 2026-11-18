@@ -9,6 +9,7 @@ import re
 from src.common.data_models.message_component_data_model import (
     AtComponent,
     EmojiComponent,
+    FileComponent,
     ImageComponent,
     MessageSequence,
     ReplyComponent,
@@ -111,6 +112,10 @@ def build_visible_text_from_sequence(message_sequence: MessageSequence) -> str:
 
         if isinstance(component, VoiceComponent):
             append_visible_part(_render_voice_component_text(component))
+            continue
+
+        if isinstance(component, FileComponent):
+            append_visible_part(component.to_plain_text())
             continue
 
         if isinstance(component, AtComponent):

@@ -12,6 +12,12 @@
 - 演示 `dialog`、`collapsible`、`repeat`、`when` 及选中行字段到 API 参数的映射。
 - 演示 `webui.json` 与插件静态 API 的绑定、参数校验、操作后刷新和危险操作确认。
 
+## [2.0.2] - 2026-11-05
+
+### 修复
+
+- 更新主程序兼容范围至 1.3.0–1.4.99，修复在 MaiBot 1.4.0 上显示版本不兼容的问题。
+
 ## [2.0.0] - 2026-06-26
 
 ### 用户感知功能
@@ -20,4 +26,4 @@
 
 ### 开发侧
 
-- 演示 Manifest v2、配置模型、Tool、Command、Action 和 EventHandler 的基础写法。
+- 演示 Manifest v2、配置模型、Tool、Command 和 EventHandler 的基础写法。

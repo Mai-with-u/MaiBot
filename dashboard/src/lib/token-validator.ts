@@ -25,7 +25,7 @@ export const TOKEN_VALIDATION_RULES: TokenValidationRule[] = [
     id: 'minLength',
     label: '长度至少 10 位',
     description: 'Token 长度必须大于等于 10 个字符',
-    validate: (token: string) => token.length >= 10,
+    validate: (token: string) => Array.from(token).length >= 10,
   },
   {
     id: 'hasUppercase',

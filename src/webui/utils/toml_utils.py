@@ -4,11 +4,14 @@ TOML 工具函数
 提供 TOML 文件的格式化保存功能，确保数组等元素以美观的多行格式输出。
 """
 
-import re
+from pathlib import Path
 from typing import Any
-
-import tomlkit
 from tomlkit.items import AoT, Array, InlineTable, Table
+
+import re
+import tomlkit
+
+from src.common.atomic_file import write_private
 
 
 def _create_inline_table(data: dict[str, Any]) -> InlineTable:
@@ -106,12 +109,11 @@ def save_toml_with_format(
         multiline_threshold: 数组多行格式化阈值，-1 表示不格式化
         preserve_comments: 是否保留原文件的注释和格式
     """
-    import os
-
     from tomlkit import TOMLDocument
 
-    if preserve_comments and os.path.exists(file_path) and not isinstance(data, TOMLDocument):
-        with open(file_path, "r", encoding="utf-8") as f:
+    path = Path(file_path).resolve()
+    if preserve_comments and path.exists() and not isinstance(data, TOMLDocument):
+        with path.open("r", encoding="utf-8") as f:
             doc = tomlkit.load(f)
         _update_toml_doc(doc, data)
         data = doc
@@ -120,5 +122,4 @@ def save_toml_with_format(
     output = tomlkit.dumps(formatted)
     output = re.sub(r"\n{3,}", "\n\n", output)
     tomlkit.loads(output)
-    with open(file_path, "w", encoding="utf-8") as f:
-        f.write(output)
+    write_private(path, output)

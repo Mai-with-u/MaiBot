@@ -18,6 +18,7 @@ export const STORAGE_KEYS = {
   // 调试设置
   ALWAYS_SHOW_UPDATE_NOTICE: 'maibot-always-show-update-notice',
   ALWAYS_SHOW_UPDATE_BUTTON: 'maibot-always-show-update-button',
+  EDIT_DEFAULT_PROMPT: 'maibot-edit-default-prompt',
 
   // 性能与存储设置
   LOG_CACHE_SIZE: 'maibot-log-cache-size',
@@ -51,6 +52,11 @@ const GUIDE_AND_NOTICE_LOCAL_STORAGE_KEYS = [
 
 const GUIDE_AND_NOTICE_SESSION_STORAGE_KEYS = ['http-warning-dismissed'] as const
 
+/** 资讯的已读记录和首页资讯条的关闭记录。 */
+const NEWS_NOTIFICATION_STORAGE_KEYS = ['maibot:news:read', 'maibot:news:strip-dismissed'] as const
+
+export const NOTIFICATIONS_RESET_EVENT = 'maibot-notifications-reset'
+
 // 默认设置值
 export const DEFAULT_SETTINGS = {
   // 外观
@@ -62,6 +68,7 @@ export const DEFAULT_SETTINGS = {
   // 调试
   alwaysShowUpdateNotice: false,
   alwaysShowUpdateButton: false,
+  editDefaultPrompt: false,
 
   // 性能与存储
   logCacheSize: 1000,
@@ -137,6 +144,7 @@ export function getAllSettings(): Settings {
     enableAvatarFetch: getSetting('enableAvatarFetch'),
     alwaysShowUpdateNotice: getSetting('alwaysShowUpdateNotice'),
     alwaysShowUpdateButton: getSetting('alwaysShowUpdateButton'),
+    editDefaultPrompt: getSetting('editDefaultPrompt'),
     logCacheSize: getSetting('logCacheSize'),
     logAutoScroll: getSetting('logAutoScroll'),
     logLevelFilter: getSetting('logLevelFilter'),
@@ -272,6 +280,35 @@ export function resetAllGuidesAndNotices(): number {
 }
 
 /**
+ * 调试用：重置所有通知状态，包括资讯已读、资讯条关闭以及各页面提示的关闭记录。
+ * 已完成的引导教程不在此列，仍由 resetAllGuidesAndNotices 负责。
+ */
+export function resetAllNotificationStates(): number {
+  let clearedCount = 0
+  const localKeys = [
+    ...NEWS_NOTIFICATION_STORAGE_KEYS,
+    ...GUIDE_AND_NOTICE_LOCAL_STORAGE_KEYS.filter((key) => key !== STORAGE_KEYS.COMPLETED_TOURS),
+  ]
+
+  for (const key of localKeys) {
+    if (localStorage.getItem(key) !== null) {
+      localStorage.removeItem(key)
+      clearedCount += 1
+    }
+  }
+
+  for (const key of GUIDE_AND_NOTICE_SESSION_STORAGE_KEYS) {
+    if (sessionStorage.getItem(key) !== null) {
+      sessionStorage.removeItem(key)
+      clearedCount += 1
+    }
+  }
+
+  window.dispatchEvent(new CustomEvent(NOTIFICATIONS_RESET_EVENT))
+  return clearedCount
+}
+
+/**
  * 清除所有本地缓存
  * 注意：认证信息现在存储在 HttpOnly Cookie 中，不受此函数影响
  */
@@ -348,6 +385,7 @@ function getStorageKey(settingKey: keyof Settings): string {
     enableAvatarFetch: STORAGE_KEYS.ENABLE_AVATAR_FETCH,
     alwaysShowUpdateNotice: STORAGE_KEYS.ALWAYS_SHOW_UPDATE_NOTICE,
     alwaysShowUpdateButton: STORAGE_KEYS.ALWAYS_SHOW_UPDATE_BUTTON,
+    editDefaultPrompt: STORAGE_KEYS.EDIT_DEFAULT_PROMPT,
     logCacheSize: STORAGE_KEYS.LOG_CACHE_SIZE,
     logAutoScroll: STORAGE_KEYS.LOG_AUTO_SCROLL,
     logLevelFilter: STORAGE_KEYS.LOG_LEVEL_FILTER,

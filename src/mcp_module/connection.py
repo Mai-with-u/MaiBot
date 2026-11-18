@@ -15,6 +15,7 @@ import logging
 import sys
 
 from src.cli.console import console
+from src.common.http_client import get_shared_ssl_context, get_shared_ssl_context_async
 from src.common.startup_diagnostics import diagnostic_stage
 from src.core.tooling import ToolExecutionResult
 
@@ -217,6 +218,9 @@ class MCPConnection:
 
         if self.config.transport_type == "stdio":
             return await self._connect_stdio()
+        if self.config.transport_type in {"streamable_http", "sse"}:
+            # SDK 的客户端工厂是同步回调，提前异步准备其共享证书。
+            await get_shared_ssl_context_async()
         if self.config.transport_type == "streamable_http":
             return await self._connect_streamable_http()
         if self.config.transport_type == "sse":
@@ -324,6 +328,7 @@ class MCPConnection:
         if headers:
             merged_headers.update(headers)
         return httpx.AsyncClient(
+            verify=get_shared_ssl_context(),
             headers=merged_headers,
             timeout=timeout
             or httpx.Timeout(
@@ -417,18 +422,14 @@ class MCPConnection:
         if sampling_callback is None:
             return None
 
-        context_capability = (
-            mcp_types.SamplingContextCapability()
-            if self.client_config.sampling_include_context_support
-            else None
-        )
         tools_capability = (
             mcp_types.SamplingToolsCapability()
             if self.client_config.sampling_tool_support
             else None
         )
         return mcp_types.SamplingCapability(
-            context=context_capability,
+            # 宿主尚未实现 includeContext 的上下文收集，不声明该能力。
+            context=None,
             tools=tools_capability,
         )
 

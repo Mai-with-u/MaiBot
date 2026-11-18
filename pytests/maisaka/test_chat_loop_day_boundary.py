@@ -64,6 +64,30 @@ def _build_output_history(
     return list(build_model_output_context_messages(output_items))
 
 
+def test_tool_directory_stays_before_history_and_dynamic_injections() -> None:
+    service = MaisakaChatLoopService(chat_system_prompt="system")
+    history = [ReferenceMessage(content="聊天历史", timestamp=datetime(2025, 1, 1, 12, 0, 0))]
+    directory = "<system-reminder>折叠工具目录</system-reminder>"
+    first, count = service._build_request_messages(
+        history,
+        enable_visual_message=False,
+        deferred_tools_reminder=directory,
+        injected_user_messages=["本轮记忆"],
+    )
+    second, _ = service._build_request_messages(
+        [*history, ReferenceMessage(content="新增消息", timestamp=datetime(2025, 1, 1, 12, 1, 0))],
+        enable_visual_message=False,
+        deferred_tools_reminder=directory,
+        injected_user_messages=["下轮记忆"],
+    )
+    assert get_item_text(first[0]) == get_item_text(second[0])
+    assert directory in get_item_text(first[0])
+    assert "聊天历史" in get_item_text(first[1])
+    assert "本轮记忆" in get_item_text(first[2])
+    assert count == 1
+    assert all(directory not in get_item_text(item) for item in first[1:])
+
+
 def test_application_history_envelope_keeps_one_stable_item_identity() -> None:
     reference = ReferenceMessage(content="长期参考", timestamp=datetime(2025, 1, 1, 12, 0, 0))
     tool_result = ToolResultMessage(

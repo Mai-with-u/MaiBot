@@ -8,19 +8,19 @@ export {
   AMemorixSharedMemoryGroupsHook,
   BotPlatformAccountsHook,
   ChatPromptsHook,
-  ChatTalkValueRulesHook,
+  ChatTalkRuleGroupsHook,
   ExpressionGroupsHook,
   ExpressionLearningListHook,
   FocusGroupsHook,
   FocusWhitelistHook,
   JargonGroupsHook,
   JargonLearningListHook,
-  KeywordRulesHook,
   HiddenFieldHook,
   MCPRootItemsHook,
   MCPServersHook,
   MultipleReplyStyleHook,
-  RegexRulesHook,
+  PrivateReplyPauseRulesHook,
 } from './complexFieldHooks'
 export { AMemorixRetrievalChatsHook } from './AMemorixRetrievalChatsHook'
+export { LearningBlacklistHook } from './LearningBlacklistHook'
 export { AMemorixRetrievalFilterGroupHook } from './AMemorixRetrievalFilterGroupHook'

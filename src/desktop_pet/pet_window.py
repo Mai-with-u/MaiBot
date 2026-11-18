@@ -1,0 +1,644 @@
+"""桌宠窗口进程。
+
+由主程序以子进程方式启动：stdout 每行一条 JSON 事件发往主程序，stdin 每行一条 JSON 指令来自主程序。
+窗口透明、无边框、置顶且不进任务栏；窗口区域按页面上报的可见元素裁剪，透明处的点击交还给桌面。
+窗口位置与尺寸一律按物理像素处理，页面缩放（系统 DPI 与“文本大小”设置）由页面上报的 devicePixelRatio 决定。
+"""
+
+from ctypes import wintypes
+from pathlib import Path
+from typing import TYPE_CHECKING, Any, Dict, List, Optional, TextIO, Tuple
+from uuid import uuid4
+
+import argparse
+import base64
+import ctypes
+import io
+import json
+import os
+import sys
+import threading
+import time
+
+from src.common.atomic_file import quarantine_file
+from src.common.json_storage import read_json, write_json
+
+from .sounds import MESSAGE_SOUNDS, SOUND_DIRECTORY
+
+if TYPE_CHECKING:
+    import webview
+
+    from .todo_proxy import TodoProxy
+
+# 页面设计尺寸（CSS 像素），与 index.html 布局一致。
+PAGE_WIDTH = 260
+PAGE_HEIGHT = 900
+PAGE = Path(__file__).parent / "web" / "index.html"
+
+# 页面就绪前先放行桌宠所在的大致区域，与 index.html 中 #pet 的位置一致。
+INITIAL_HIT_RECT = [47.0, PAGE_HEIGHT - 24 - 107 - 24.0, 166.0, 139.0, 42.0]
+# 默认位置距工作区右边缘的留白（CSS 像素）。
+EDGE_MARGIN = 8
+
+GWL_EXSTYLE = -20
+WS_EX_APPWINDOW = 0x00040000
+WS_EX_TOOLWINDOW = 0x00000080
+SWP_NOSIZE = 0x0001
+SWP_NOZORDER = 0x0004
+SWP_NOACTIVATE = 0x0010
+RGN_OR = 2
+DCX_WINDOW = 0x0001
+DCX_CACHE = 0x0002
+BLACK_BRUSH = 4
+SPI_GETWORKAREA = 0x0030
+MONITOR_DEFAULTTONULL = 0
+DWMWA_SYSTEMBACKDROP_TYPE = 38
+DWMSBT_NONE = 1
+
+# 独立 DLL 包装器隔离 argtypes；不能修改 pywebview 共用的 ctypes.windll 缓存。
+# 特别是 DWM 的 MARGINS，pywebview 创建普通窗口时会传入它自己的结构体类型。
+user32 = ctypes.WinDLL("user32") if sys.platform == "win32" else None
+gdi32 = ctypes.WinDLL("gdi32") if sys.platform == "win32" else None
+dwmapi = ctypes.WinDLL("dwmapi") if sys.platform == "win32" else None
+
+
+class MARGINS(ctypes.Structure):
+    _fields_ = [
+        ("left", ctypes.c_int),
+        ("right", ctypes.c_int),
+        ("top", ctypes.c_int),
+        ("bottom", ctypes.c_int),
+    ]
+
+
+def _bind_win32() -> None:
+    dwmapi.DwmSetWindowAttribute.argtypes = [wintypes.HWND, wintypes.DWORD, ctypes.c_void_p, wintypes.DWORD]
+    dwmapi.DwmSetWindowAttribute.restype = ctypes.c_long
+    dwmapi.DwmExtendFrameIntoClientArea.argtypes = [wintypes.HWND, ctypes.POINTER(MARGINS)]
+    dwmapi.DwmExtendFrameIntoClientArea.restype = ctypes.c_long
+    user32.SetProcessDPIAware.restype = wintypes.BOOL
+    user32.ReleaseCapture.restype = wintypes.BOOL
+    user32.SendMessageW.argtypes = [wintypes.HWND, wintypes.UINT, ctypes.c_size_t, ctypes.c_ssize_t]
+    user32.SendMessageW.restype = ctypes.c_ssize_t
+    user32.GetWindowLongPtrW.argtypes = [wintypes.HWND, ctypes.c_int]
+    user32.GetWindowLongPtrW.restype = ctypes.c_ssize_t
+    user32.SetWindowLongPtrW.argtypes = [wintypes.HWND, ctypes.c_int, ctypes.c_ssize_t]
+    user32.SetWindowLongPtrW.restype = ctypes.c_ssize_t
+    user32.SetWindowPos.argtypes = [wintypes.HWND, wintypes.HWND] + [ctypes.c_int] * 4 + [wintypes.UINT]
+    user32.SetWindowPos.restype = wintypes.BOOL
+    user32.SetWindowRgn.argtypes = [wintypes.HWND, wintypes.HRGN, wintypes.BOOL]
+    user32.SetWindowRgn.restype = ctypes.c_int
+    user32.GetDpiForWindow.argtypes = [wintypes.HWND]
+    user32.GetDpiForWindow.restype = wintypes.UINT
+    user32.GetCursorPos.argtypes = [ctypes.POINTER(wintypes.POINT)]
+    user32.GetCursorPos.restype = wintypes.BOOL
+    user32.SystemParametersInfoW.argtypes = [wintypes.UINT, wintypes.UINT, ctypes.c_void_p, wintypes.UINT]
+    user32.SystemParametersInfoW.restype = wintypes.BOOL
+    user32.MonitorFromPoint.argtypes = [wintypes.POINT, wintypes.DWORD]
+    user32.MonitorFromPoint.restype = wintypes.HMONITOR
+    user32.GetWindowRect.argtypes = [wintypes.HWND, ctypes.POINTER(wintypes.RECT)]
+    user32.GetWindowRect.restype = wintypes.BOOL
+    user32.GetDCEx.argtypes = [wintypes.HWND, wintypes.HRGN, wintypes.DWORD]
+    user32.GetDCEx.restype = wintypes.HDC
+    user32.ReleaseDC.argtypes = [wintypes.HWND, wintypes.HDC]
+    user32.ReleaseDC.restype = ctypes.c_int
+    user32.FillRect.argtypes = [wintypes.HDC, ctypes.POINTER(wintypes.RECT), wintypes.HBRUSH]
+    user32.FillRect.restype = ctypes.c_int
+    gdi32.GetStockObject.argtypes = [ctypes.c_int]
+    gdi32.GetStockObject.restype = wintypes.HGDIOBJ
+    gdi32.CreateRectRgn.argtypes = [ctypes.c_int] * 4
+    gdi32.CreateRectRgn.restype = wintypes.HRGN
+    gdi32.CreateRoundRectRgn.argtypes = [ctypes.c_int] * 6
+    gdi32.CreateRoundRectRgn.restype = wintypes.HRGN
+    gdi32.CombineRgn.argtypes = [wintypes.HRGN, wintypes.HRGN, wintypes.HRGN, ctypes.c_int]
+    gdi32.CombineRgn.restype = ctypes.c_int
+    gdi32.DeleteObject.argtypes = [wintypes.HGDIOBJ]
+    gdi32.DeleteObject.restype = wintypes.BOOL
+
+
+def apply_region(hwnd: int, rects: List[List[float]], scale: float) -> None:
+    """把窗口可见/可点击区域设为矩形或圆角矩形的并集。
+
+    Args:
+        hwnd: 窗口句柄。
+        rects: ``[x, y, 宽, 高, 圆角半径]`` 列表，单位为 CSS 像素。
+        scale: CSS 像素到物理像素的缩放比例。
+    """
+    region = gdi32.CreateRectRgn(0, 0, 0, 0)
+    for x, y, width, height, radius in rects:
+        diameter = round(radius * 2 * scale)
+        bounds = (round(x * scale), round(y * scale), round((x + width) * scale), round((y + height) * scale))
+        if radius == 0:
+            part = gdi32.CreateRectRgn(*bounds)
+        else:
+            part = gdi32.CreateRoundRectRgn(bounds[0], bounds[1], bounds[2] + 1, bounds[3] + 1, diameter, diameter)
+        gdi32.CombineRgn(region, region, part, RGN_OR)
+        gdi32.DeleteObject(part)
+    # 设置成功后区域归系统所有，不能再释放。
+    if not user32.SetWindowRgn(hwnd, region, True):
+        gdi32.DeleteObject(region)
+        raise ctypes.WinError()
+
+
+def clear_gdi_layer(hwnd: int) -> None:
+    """把窗口的 GDI 重定向层整体涂黑；在 DWM 玻璃下黑色即全透明。
+
+    WebView2 启动较慢时，首帧会先以白底画进这一层，之后页面改由 DirectComposition 呈现。
+    这层旧内容被浏览器子窗口挡住、各级窗口都会裁掉子窗口，所以再也没人重绘它，
+    在透明处显示成白块。这里用不裁剪子窗口的窗口 DC 直接覆盖整层。
+    """
+    hdc = user32.GetDCEx(hwnd, None, DCX_WINDOW | DCX_CACHE)
+    if not hdc:
+        raise ctypes.WinError()
+    try:
+        rect = wintypes.RECT()
+        if not user32.GetWindowRect(hwnd, ctypes.byref(rect)):
+            raise ctypes.WinError()
+        layer = wintypes.RECT(0, 0, rect.right - rect.left, rect.bottom - rect.top)
+        if not user32.FillRect(hdc, ctypes.byref(layer), gdi32.GetStockObject(BLACK_BRUSH)):
+            raise ctypes.WinError()
+    finally:
+        user32.ReleaseDC(hwnd, hdc)
+
+
+def cursor_pos() -> Tuple[int, int]:
+    point = wintypes.POINT()
+    if not user32.GetCursorPos(ctypes.byref(point)):
+        raise ctypes.WinError()
+    return point.x, point.y
+
+
+def default_anchor(scale: float) -> Tuple[int, int]:
+    """主屏工作区右下角，返回桌宠站立点（窗口底边中点，物理像素）。"""
+    work_area = wintypes.RECT()
+    if not user32.SystemParametersInfoW(SPI_GETWORKAREA, 0, ctypes.byref(work_area), 0):
+        raise ctypes.WinError()
+    return work_area.right - round((PAGE_WIDTH / 2 + EDGE_MARGIN) * scale), work_area.bottom
+
+
+def saved_anchor(state_path: Path) -> Optional[Tuple[int, int]]:
+    """读取上次拖到的位置；显示器布局变化后已不在任何屏幕上的位置作废。"""
+    if not state_path.exists():
+        return None
+    try:
+        state = read_json(state_path)
+        if not isinstance(state, dict) or any(type(state.get(key)) is not int for key in ("anchor_x", "anchor_y")):
+            raise ValueError("桌宠窗口位置必须包含整数 anchor_x 和 anchor_y")
+        anchor = (state["anchor_x"], state["anchor_y"])
+    except ValueError as exc:
+        backup = quarantine_file(state_path)
+        print(f"桌宠窗口位置文件损坏，已保留原文件：{backup}；使用默认位置。原因：{exc}", file=sys.stderr)
+        return None
+    if not user32.MonitorFromPoint(wintypes.POINT(anchor[0], anchor[1] - 40), MONITOR_DEFAULTTONULL):
+        return None
+    return anchor
+
+
+class Outbox:
+    """独占进程原 stdout 作为协议通道。"""
+
+    def __init__(self) -> None:
+        # Python 与原生库的其他输出一律改走 stderr，避免混入 JSON 行。
+        protocol_fd = os.dup(1)
+        os.dup2(2, 1)
+        sys.stdout = sys.stderr
+        self._stream = open(protocol_fd, "w", encoding="utf-8", newline="\n")
+        self._lock = threading.Lock()
+
+    def emit(self, event: Dict[str, Any]) -> None:
+        line = json.dumps(event, ensure_ascii=False)
+        with self._lock:
+            self._stream.write(line + "\n")
+            self._stream.flush()
+
+
+class PetApi:
+    """暴露给页面的 js_api；下划线开头的成员不会暴露。"""
+
+    def __init__(self, outbox: Outbox, todos: "TodoProxy", state_path: Path, request_dir: Path) -> None:
+        self._outbox = outbox
+        self._todos = todos
+        self._state_path = state_path
+        self._request_dir = request_dir
+        request_dir.mkdir(parents=True, exist_ok=True)
+        self._window: Optional["webview.Window"] = None
+        self._exploration_window: Optional["webview.Window"] = None
+        self._exploration_window_lock = threading.Lock()
+        self._hwnd = 0
+        self._size = (0, 0)
+        self._placed_size = (0, 0)
+        self._anchor: Optional[Tuple[int, int]] = saved_anchor(state_path)
+        self._placed_by_user = self._anchor is not None
+        self._drag_start: Optional[Tuple[int, int, int, int]] = None
+        self._drag_id = ""
+        self._dragging = False
+        self._drag_lock = threading.Lock()
+        self._scale = 1.0
+        self._closing = False
+        self._last_message_sound = -1.0
+
+    def _play_message_sound(self, sound: str) -> None:
+        """异步播放轻柔的啵叮提示音，连续分段回复在一秒内只响一次。"""
+        import winsound
+
+        if sound == "off":
+            return
+        path = SOUND_DIRECTORY / MESSAGE_SOUNDS[sound]
+        now = time.monotonic()
+        if now - self._last_message_sound < 1:
+            return
+        self._last_message_sound = now
+        winsound.PlaySound(str(path), winsound.SND_FILENAME | winsound.SND_ASYNC | winsound.SND_NODEFAULT)
+
+    def _attach(self, window: "webview.Window") -> None:
+        """在窗口首次显示前（GUI 线程）调整样式与位置。"""
+        # pythonnet 由 pywebview 的 WinForms 后端加载，只能在窗口创建后导入。
+        from Microsoft.Win32 import SystemEvents
+        from System.Drawing import Color
+
+        self._window = window
+        self._hwnd = window.native.Handle.ToInt64()
+        # 无标题栏的透明窗口不需要标题栏主题同步。pywebview 在深色模式下会开启
+        # Mica，将整个透明客户区填成实色；取消订阅，避免系统主题变化时再次开启。
+        SystemEvents.UserPreferenceChanged -= window.native.on_system_theme_changed
+        # 系统背景属性从 Windows 11 22H2 起可用，旧系统没有这一层背景。
+        if sys.getwindowsversion().build >= 22621:
+            backdrop = ctypes.c_int(DWMSBT_NONE)
+            result = dwmapi.DwmSetWindowAttribute(
+                self._hwnd, DWMWA_SYSTEMBACKDROP_TYPE, ctypes.byref(backdrop), ctypes.sizeof(backdrop),
+            )
+            if result != 0:
+                raise OSError(f"关闭桌宠系统背景失败: 0x{result & 0xFFFFFFFF:08X}")
+        # 工具窗口不出现在任务栏和 Alt+Tab 中。
+        style = user32.GetWindowLongPtrW(self._hwnd, GWL_EXSTYLE)
+        user32.SetWindowLongPtrW(self._hwnd, GWL_EXSTYLE, (style | WS_EX_TOOLWINDOW) & ~WS_EX_APPWINDOW)
+        # pywebview 的透明只在窗体从未绘制背景时成立，一旦改尺寸就会露出灰底。
+        # 把整个客户区交给 DWM 按 alpha 合成，黑色背景即全透明，改尺寸后依旧透明。
+        window.native.BackColor = Color.Black
+        result = dwmapi.DwmExtendFrameIntoClientArea(self._hwnd, ctypes.byref(MARGINS(-1, -1, -1, -1)))
+        if result != 0:
+            raise OSError(f"DwmExtendFrameIntoClientArea 失败: 0x{result & 0xFFFFFFFF:08X}")
+        # 页面缩放要等页面加载后才知道，先按系统 DPI 摆放，就绪后由 fit() 校正。
+        scale = user32.GetDpiForWindow(self._hwnd) / 96
+        self.fit(scale)
+        initial_rect = list(INITIAL_HIT_RECT)
+        initial_rect[1] += self._size[1] / scale - PAGE_HEIGHT
+        apply_region(self._hwnd, [initial_rect], scale)
+
+    def _place(self) -> None:
+        width, height = self._size
+        anchor_x, anchor_y = self._anchor
+        flags = SWP_NOZORDER | SWP_NOACTIVATE
+        if self._size == self._placed_size:
+            flags |= SWP_NOSIZE
+        else:
+            # 带着窗口区域改尺寸会在区域内残留白底，先撤掉区域，由页面在 fit() 之后重新上报。
+            user32.SetWindowRgn(self._hwnd, None, True)
+        if not user32.SetWindowPos(self._hwnd, None, anchor_x - width // 2, anchor_y - height, width, height, flags):
+            raise ctypes.WinError()
+        self._placed_size = self._size
+
+    def _allow_close(self) -> bool:
+        # 桌宠随主程序启停，Alt+F4 等用户关闭操作一律忽略。
+        return self._closing
+
+    def _shutdown(self) -> None:
+        self._closing = True
+        if self._exploration_window is not None:
+            self._exploration_window.destroy()
+        self._window.destroy()
+
+    def fit(self, scale: float, height: float = PAGE_HEIGHT) -> None:
+        """按页面实际缩放调整窗口尺寸，保持桌宠站立点不动。"""
+        self._scale = scale
+        height = max(460, min(PAGE_HEIGHT, height))
+        self._size = (round(PAGE_WIDTH * scale), round(height * scale))
+        if not self._placed_by_user:
+            self._anchor = default_anchor(scale)
+        self._place()
+
+    def ready(self) -> None:
+        self._outbox.emit({"type": "ready"})
+
+    def history(self, cursors: Dict[str, int], request_id: str) -> None:
+        self._outbox.emit({"type": "history", "cursors": cursors, "request_id": request_id})
+
+    def send(self, request_id: str, text: str, images: List[Dict[str, str]]) -> None:
+        import re
+
+        from .attachments import MAX_REQUEST_BYTES
+
+        if not re.fullmatch(r"[0-9a-f]{32}", request_id):
+            raise ValueError("无效请求 ID")
+        payload = json.dumps({"text": text, "images": images}).encode("utf-8")
+        if len(payload) > MAX_REQUEST_BYTES:
+            raise ValueError("图文消息过大")
+        path = self._request_dir / f"{request_id}.json"
+        path.write_bytes(payload)
+        self._outbox.emit({"type": "chat", "request_id": request_id})
+
+    def open_exploration_records(self) -> None:
+        """复用普通可缩放窗口；记录仍由主进程按真实主人会话读取。"""
+        import webview
+
+        with self._exploration_window_lock:
+            if self._closing:
+                raise RuntimeError("桌宠正在关闭")
+            if self._exploration_window is not None:
+                self._exploration_window.show()
+                self._exploration_window.restore()
+                return
+            window = webview.create_window(
+                "探索记录 · MaiBot", url=PAGE.with_name("exploration.html").as_uri(),
+                js_api=ExplorationRecordsApi(self), width=1040, height=740,
+                min_size=(680, 480), resizable=True, background_color="#faf7ef",
+                frameless=True, easy_drag=False,
+            )
+            self._exploration_window = window
+
+            def closed() -> None:
+                with self._exploration_window_lock:
+                    if self._exploration_window is window:
+                        self._exploration_window = None
+
+            window.events.closed += closed
+
+    def exploration_tasks(self, task_id: str, request_id: str) -> None:
+        if not isinstance(task_id, str) or len(task_id) > 64 or not isinstance(request_id, str) or len(request_id) > 64:
+            raise ValueError("无效探索任务请求")
+        self._outbox.emit({"type": "exploration_tasks", "task_id": task_id, "request_id": request_id})
+
+    def explore(self, goal: str) -> None:
+        if not isinstance(goal, str) or not 1 <= len(goal.strip()) <= 2000:
+            raise ValueError("探索目标必须为 1 至 2000 字")
+        self._outbox.emit({"type": "explore", "goal": goal.strip()})
+
+    def todos(self, completed: bool = False) -> List[Dict[str, Any]]:
+        items = self._todos.list(include_completed=completed)
+        return sorted((item for item in items if item["status"] == "completed"), key=lambda item: item["completed_at"]) if completed else items
+
+    def todo_image(self, image_id: str) -> str:
+        return self._todos.image(image_id)
+
+    def add_todo(self, text: str, options: Dict[str, Any]) -> Dict[str, Any]:
+        return self._todos.add(text, **options)
+
+    def update_todo(self, todo_id: str, text: str, options: Dict[str, Any]) -> Dict[str, Any]:
+        return self._todos.update(todo_id, text, **options)
+
+    def done_todo(self, todo_id: str) -> None:
+        self._todos.done(todo_id)
+
+    def drag_begin(self) -> None:
+        with self._drag_lock:
+            self._drag_start = (*cursor_pos(), *self._anchor)
+            self._drag_id = uuid4().hex
+            self._dragging = False
+
+    def drag_move(self) -> None:
+        # 页面桥接与隐藏窗口指令来自不同线程，锁内成对更新状态和发出事件。
+        with self._drag_lock:
+            if self._drag_start is None:
+                return  # 隐藏或取消后，页面队列中尚未执行的移动不再有效。
+            start_x, start_y, anchor_x, anchor_y = self._drag_start
+            x, y = cursor_pos()
+            self._anchor = (anchor_x + x - start_x, anchor_y + y - start_y)
+            self._place()
+            if not self._dragging:
+                # 页面越过拖动阈值后才会调用 drag_move，按下或单击不应触发提起计时。
+                self._dragging = True
+                self._outbox.emit({
+                    "type": "drag_started", "gesture_id": self._drag_id,
+                    "offset_x": anchor_x - start_x, "offset_y": anchor_y - start_y,
+                    "scale": self._scale,
+                })
+
+    def drag_end(self) -> None:
+        with self._drag_lock:
+            if self._drag_start is None:
+                return  # pointercancel 与 lostpointercapture 可能结束同一次拖动。
+            gesture_id, dragging = self._drag_id, self._dragging
+            self._drag_start = None
+            self._drag_id = ""
+            self._dragging = False
+            if not dragging:
+                return
+            self._placed_by_user = True
+            anchor_x, anchor_y = self._anchor
+            write_json(self._state_path, {"anchor_x": anchor_x, "anchor_y": anchor_y})
+            self._outbox.emit({"type": "drag_ended", "gesture_id": gesture_id})
+
+    def clicked(self) -> None:
+        self._outbox.emit({"type": "clicked"})
+
+    def screen_action(self, action: str) -> None:
+        if action not in {"read", "start", "stop"}:
+            raise ValueError("未知桌面读取操作")
+        self._outbox.emit({"type": "screen_action", "action": action})
+
+    def refresh_buttons(self) -> None:
+        self._outbox.emit({"type": "buttons_refresh"})
+
+    def click_button(self, plugin_id: str, button_id: str, action_id: Optional[str] = None) -> None:
+        if not isinstance(plugin_id, str) or not 1 <= len(plugin_id) <= 200:
+            raise ValueError("无效的插件 ID")
+        if not isinstance(button_id, str) or not 1 <= len(button_id) <= 64:
+            raise ValueError("无效的按钮 ID")
+        if action_id is not None and (not isinstance(action_id, str) or not 1 <= len(action_id) <= 64):
+            raise ValueError("无效的面板操作 ID")
+        self._outbox.emit({"type": "button_click", "plugin_id": plugin_id, "button_id": button_id,
+                           "action_id": action_id})
+
+    def copy_panel_content(self, kind: str, content: str) -> None:
+        """只供本地桌宠页面的用户复制操作使用；拒绝外部 URL 与超大图片。"""
+        from PIL import Image
+        from .clipboard import copy_image, copy_text
+
+        if not isinstance(content, str):
+            raise ValueError("无效的复制内容")
+        if kind == "text" and len(content) <= 16000:
+            copy_text(content, self._hwnd)
+        elif kind == "image" and len(content) <= 1000000:
+            with Image.open(io.BytesIO(base64.b64decode(content, validate=True))) as image:
+                if image.format != "PNG" or image.width * image.height > 4000000:
+                    raise ValueError("面板仅支持不超过 400 万像素的 PNG")
+                copy_image(image, self._hwnd)
+        else:
+            raise ValueError("不支持的复制类型或内容过大")
+
+    def region(self, rects: List[List[float]], scale: float) -> None:
+        apply_region(self._hwnd, rects, scale)
+        # 页面每次上报区域（含就绪、fit 改尺寸之后）都清一次 GDI 层，启动时残留的白底首帧不会留到可见区域里。
+        clear_gdi_layer(self._hwnd)
+
+
+class ExplorationRecordsApi:
+    """记录窗口只暴露记录读取及自身窗口操作，不暴露聊天或数据写入。"""
+
+    def __init__(self, pet: PetApi) -> None:
+        self._pet = pet
+
+    def refresh(self, task_id: str, request_id: str) -> None:
+        self._pet.exploration_tasks(task_id, "records:" + request_id)
+
+    def window_control(self, action: str) -> bool:
+        from System import Action
+        from System.Windows.Forms import FormWindowState, Screen
+
+        window = self._pet._exploration_window
+        if window is None:
+            raise RuntimeError("探索记录窗口已关闭")
+        if action == "close":
+            window.destroy()
+            return False
+        if action not in {"state", "minimize", "maximize"}:
+            raise ValueError("未知窗口操作")
+        result = []
+
+        def apply() -> None:
+            native = window.native
+            if action == "minimize":
+                native.WindowState = FormWindowState.Minimized
+            elif action == "maximize":
+                if native.WindowState == FormWindowState.Maximized:
+                    native.WindowState = FormWindowState.Normal
+                else:
+                    # 无系统边框时显式使用当前屏幕工作区，避免盖住任务栏。
+                    native.MaximizedBounds = Screen.FromHandle(native.Handle).WorkingArea
+                    native.WindowState = FormWindowState.Maximized
+            result.append(native.WindowState == FormWindowState.Maximized)
+
+        window.native.Invoke(Action(apply))
+        return result[0]
+
+    def window_gesture(self, edge: str) -> None:
+        from System import Action
+        from System.Windows.Forms import FormWindowState
+
+        hit_tests = {"move": 2, "w": 10, "e": 11, "n": 12, "nw": 13,
+                     "ne": 14, "s": 15, "sw": 16, "se": 17}
+        if edge not in hit_tests:
+            raise ValueError("未知窗口拖动方向")
+        window = self._pet._exploration_window
+        if window is None:
+            raise RuntimeError("探索记录窗口已关闭")
+
+        def begin() -> None:
+            if edge != "move" and window.native.WindowState == FormWindowState.Maximized:
+                return
+            # 交给原生移动/缩放循环处理光标捕获、跨屏 DPI 和最小尺寸。
+            user32.ReleaseCapture()
+            x, y = cursor_pos()
+            position = (x & 0xFFFF) | ((y & 0xFFFF) << 16)
+            user32.SendMessageW(window.native.Handle.ToInt64(), 0x00A1, hit_tests[edge], position)
+
+        window.native.Invoke(Action(begin))
+
+
+def execute_command(api: PetApi, window: "webview.Window", command: Dict[str, Any]) -> Dict[str, Any]:
+    """本机和远端共用的窗口指令处理器；完成操作后返回回执。"""
+    ack = {"type": "ack", "id": command["id"]}
+    try:
+        if command["type"] == "show":
+            window.show()
+            window.evaluate_js("window.petSkin.visibility(true)")
+        elif command["type"] == "hide":
+            api.drag_end()
+            window.hide()
+            window.evaluate_js("window.petSkin.visibility(false)")
+        elif command["type"] == "skin":
+            completed = threading.Event()
+            results = []
+            def loaded(result, results=results, completed=completed):
+                results.append(result)
+                completed.set()
+            window.evaluate_js(
+                f"window.petSkin.install({json.dumps(command['skin'])}).catch(e => ({{error: String(e.message || e)}}))",
+                callback=loaded,
+            )
+            if not completed.wait(10):
+                window.evaluate_js("window.petSkin.cancelInstall()")
+                raise TimeoutError("皮肤资源解码超时")
+            if results[0].get("error"):
+                raise ValueError(results[0]["error"])
+            ack["result"] = results[0]
+        elif command["type"] == "animation":
+            ack["result"] = window.evaluate_js(
+                f"window.petSkin.command({json.dumps(command['action'])}, {json.dumps(command['args'])}, {json.dumps(command['owner'])})"
+            )
+        elif command["type"] == "todo_response":
+            api._todos.receive(command)
+        elif command["type"] == "todo_refresh":
+            window.evaluate_js("void window.pet.refreshTodos()")
+        elif command["type"] == "exploration_tasks" and command["request_id"].startswith("records:"):
+            # 窗口关闭后的迟到回执直接丢弃，不影响桌宠面板自己的查询。
+            records_window = api._exploration_window
+            if records_window is not None:
+                records_window.evaluate_js(f"window.records.receive({json.dumps(command)})")
+        elif command["type"] in {"history", "reply", "notice", "thinking_caption", "thinking", "idle", "failed", "accepted", "buttons", "button_result", "screen_state", "exploration_state", "exploration_result", "exploration_tasks"}:
+            window.evaluate_js(f"window.pet.receive({json.dumps(command)})")
+            if command["type"] == "reply":
+                api._play_message_sound(command["sound"])
+        else:
+            raise ValueError(f"未知的桌宠指令: {command['type']}")
+    except Exception as exc:
+        ack["error"] = str(exc)
+    return ack
+
+
+def pump_commands(api: PetApi, window: "webview.Window", commands: TextIO) -> None:
+    """执行主程序指令并回执；管道关闭即主程序已停止，桌宠随之退出。"""
+    try:
+        for line in commands:
+            if line.strip():
+                api._outbox.emit(execute_command(api, window, json.loads(line)))
+    finally:
+        api._shutdown()
+
+
+def main() -> None:
+    if sys.platform != "win32":
+        raise SystemExit("桌宠窗口目前仅支持 Windows")
+    parser = argparse.ArgumentParser()
+    parser.add_argument("--data-dir", type=Path, required=True)
+    parser.add_argument("--runtime-dir", type=Path, required=True)
+    args = parser.parse_args()
+
+    import webview
+
+    from .todo_proxy import TodoProxy
+
+    _bind_win32()
+    # 显式声明 DPI 感知，窗口位置、光标与窗口区域统一使用物理像素。
+    user32.SetProcessDPIAware()
+    outbox = Outbox()
+    args.data_dir.mkdir(parents=True, exist_ok=True)
+    args.runtime_dir.mkdir(parents=True, exist_ok=True)
+    api = PetApi(outbox, TodoProxy(outbox.emit), args.data_dir / "window.json", args.runtime_dir / "requests")
+    window = webview.create_window(
+        "MaiBot Desktop Pet",
+        url=PAGE.as_uri(),
+        js_api=api,
+        width=PAGE_WIDTH,
+        height=PAGE_HEIGHT,
+        resizable=False,
+        frameless=True,
+        easy_drag=False,
+        transparent=True,
+        on_top=True,
+        shadow=False,
+    )
+    window.events.before_show += api._attach
+    window.events.closing += api._allow_close
+    commands = io.TextIOWrapper(sys.stdin.buffer, encoding="utf-8")
+    webview.start(
+        pump_commands,
+        (api, window, commands),
+        # 本机页面复用专用 WebView2 缓存，避免每次退出等待清理、启动重新建库。
+        private_mode=False,
+        storage_path=str(args.runtime_dir / "webview"),
+    )
+
+
+if __name__ == "__main__":
+    main()

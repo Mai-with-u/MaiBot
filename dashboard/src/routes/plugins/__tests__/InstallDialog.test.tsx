@@ -167,6 +167,7 @@ describe('InstallDialog 确认安装', () => {
     const onOpenChange = vi.fn()
     render(
       <InstallDialog
+        onDependenciesChanged={vi.fn()}
         open
         plugin={makePlugin('alpha')}
         loadProgress={null}
@@ -194,6 +195,7 @@ describe('InstallDialog 确认安装', () => {
     const onInstall = vi.fn()
     render(
       <InstallDialog
+        onDependenciesChanged={vi.fn()}
         open
         plugin={makePlugin('alpha', {
           manifest: { author: '字符串作者' as unknown as PluginManifest['author'] },
@@ -231,6 +233,7 @@ describe('InstallDialog 安装失败与进行中', () => {
     const plugin = makePlugin('alpha')
     const { rerender } = render(
       <InstallDialog
+        onDependenciesChanged={vi.fn()}
         open
         plugin={plugin}
         loadProgress={makeProgress('alpha', { stage: 'error', error: '仓库不存在' })}
@@ -250,6 +253,7 @@ describe('InstallDialog 安装失败与进行中', () => {
 
     rerender(
       <InstallDialog
+        onDependenciesChanged={vi.fn()}
         open
         plugin={plugin}
         loadProgress={makeProgress('alpha', { stage: 'error', error: undefined, message: '' })}
@@ -266,6 +270,7 @@ describe('InstallDialog 安装失败与进行中', () => {
     const plugin = makePlugin('alpha')
     const { rerender } = render(
       <InstallDialog
+        onDependenciesChanged={vi.fn()}
         open
         plugin={plugin}
         loadProgress={makeProgress('alpha', {
@@ -290,6 +295,7 @@ describe('InstallDialog 安装失败与进行中', () => {
 
     rerender(
       <InstallDialog
+        onDependenciesChanged={vi.fn()}
         open
         plugin={plugin}
         loadProgress={makeProgress('alpha', { stage: 'success', progress: 100, message: '安装成功' })}
@@ -307,6 +313,7 @@ describe('InstallDialog 安装失败与进行中', () => {
     const plugin = makePlugin('alpha')
     const { rerender } = render(
       <InstallDialog
+        onDependenciesChanged={vi.fn()}
         open
         plugin={plugin}
         loadProgress={makeProgress('beta', { stage: 'error', error: '别人失败了' })}
@@ -320,6 +327,7 @@ describe('InstallDialog 安装失败与进行中', () => {
 
     rerender(
       <InstallDialog
+        onDependenciesChanged={vi.fn()}
         open
         plugin={plugin}
         loadProgress={makeProgress('alpha', {

@@ -1,6 +1,7 @@
 import { useCallback, useEffect, useRef, useState } from 'react'
 import { useNavigate } from '@tanstack/react-router'
 import { useTranslation } from 'react-i18next'
+import { getHostRuntime } from '@/host/state'
 
 import {
   AlertCircle,
@@ -35,6 +36,8 @@ import { checkAuthStatus, getSetupStatus } from '@/lib/auth'
 import { authApi } from '@/lib/http'
 import { cn } from '@/lib/utils'
 import { APP_FULL_NAME } from '@/lib/version'
+import { readMarketInstall } from '@/lib/plugin-market-navigation'
+import { readPersonalityImport } from '@/lib/personality-import'
 
 function createGearPath(teeth: number, outerRadius: number, rootRadius: number) {
   const toothAngle = (Math.PI * 2) / teeth
@@ -78,8 +81,10 @@ function AuthRetroGears() {
   )
 }
 
-function resolvePostAuthTarget(): '/' | '/chat/embed' {
+function resolvePostAuthTarget(): '/' | '/chat/embed' | '/plugins' | '/config/bot' {
   if (typeof window === 'undefined') return '/'
+  if (readPersonalityImport() !== null) return '/config/bot'
+  if (readMarketInstall()) return '/plugins'
   return new URLSearchParams(window.location.search).get('redirect') === '/chat/embed'
     ? '/chat/embed'
     : '/'
@@ -90,6 +95,7 @@ export function AuthPage() {
   const [isValidating, setIsValidating] = useState(false)
   const [error, setError] = useState('')
   const [checkingAuth, setCheckingAuth] = useState(true)
+  const [connectionError, setConnectionError] = useState('')
   const navigate = useNavigate()
   const { t } = useTranslation()
   const { theme, setTheme, themeConfig } = useTheme()
@@ -199,6 +205,8 @@ export function AuthPage() {
           // 直接使用验证响应中的 is_first_setup 字段，避免额外请求
           if (data.requires_custom_token || data.is_first_setup) {
             navigate({ to: '/setup' })
+          } else if (getHostRuntime().host) {
+            window.location.assign(resolvePostAuthTarget())
           } else {
             navigate({ to: resolvePostAuthTarget() })
           }
@@ -226,23 +234,30 @@ export function AuthPage() {
 
   // 如果已经认证，直接跳转到首页；否则尝试用 URL 中的 token 自动登录。
   useEffect(() => {
+    const controller = new AbortController()
+    let retryTimer: ReturnType<typeof setTimeout> | undefined
     const verifyAuth = async () => {
       try {
-        const isAuth = await checkAuthStatus()
+        const isAuth = await checkAuthStatus(controller.signal)
+        if (controller.signal.aborted) return
         if (isAuth) {
           // 已登录场景下，URL 中残留的 token 也清掉，避免外泄。
           stripTokenFromUrl()
-          const setupStatus = await getSetupStatus()
+          const setupStatus = await getSetupStatus(controller.signal)
+          if (controller.signal.aborted) return
+          if (!setupStatus) throw new Error(t('auth.connFailed'))
           navigate({
             to:
-              setupStatus?.requires_custom_token || setupStatus?.is_first_setup
+              setupStatus.requires_custom_token || setupStatus.is_first_setup
                 ? '/setup'
                 : resolvePostAuthTarget(),
           })
           return
         }
 
-        // 未登录：检查 URL 是否带 token，带了就自动尝试登录。
+        setConnectionError('')
+        setCheckingAuth(false)
+        // 明确未登录：检查 URL 是否带 token，带了就自动尝试登录。
         const urlToken = extractUrlToken()
         if (urlToken && !urlTokenHandledRef.current) {
           urlTokenHandledRef.current = true
@@ -252,21 +267,29 @@ export function AuthPage() {
           // 异步触发验证；失败时错误信息会显示在表单上，token 也会保留在输入框中以便用户修正。
           void verifyToken(urlToken)
         }
-      } catch {
-        // 忽略错误，保持在登录页
-      } finally {
-        setCheckingAuth(false)
+      } catch (err) {
+        if (controller.signal.aborted) return
+        // 启动期间无法探测认证状态时保留等待界面；串行重试，避免请求堆积。
+        setConnectionError(err instanceof Error ? err.message : String(err))
+        retryTimer = setTimeout(() => { void verifyAuth() }, 2_000)
       }
     }
-    verifyAuth()
-  }, [navigate, extractUrlToken, stripTokenFromUrl, verifyToken])
+    void verifyAuth()
+    return () => {
+      controller.abort()
+      clearTimeout(retryTimer)
+    }
+  }, [navigate, extractUrlToken, stripTokenFromUrl, verifyToken, t])
 
   // 正在检查认证状态时显示加载
   if (checkingAuth) {
     return (
       <div data-auth-page="true" className="relative isolate flex min-h-screen items-center justify-center overflow-hidden bg-background p-4">
         {showRetroGears && <AuthRetroGears />}
-        <div className="text-muted-foreground">{t('auth.checkingAuth')}</div>
+        <div role="status" className="max-w-md space-y-2 text-center text-muted-foreground">
+          <p>{t(connectionError ? 'auth.waitingConnection' : 'auth.checkingAuth')}</p>
+          {connectionError && <p className="break-words text-xs">{connectionError}</p>}
+        </div>
       </div>
     )
   }
@@ -277,22 +300,7 @@ export function AuthPage() {
 
       {/* 认证卡片 - 磨砂玻璃效果 */}
       <Card className="relative z-10 w-full max-w-md shadow-2xl backdrop-blur-xl bg-card/80 border-border/50">
-        {/* 主题切换按钮 */}
-        <button
-          type="button"
-          data-auth-theme-toggle="true"
-          onClick={toggleTheme}
-          className="absolute right-4 top-4 rounded-lg p-2 hover:bg-accent transition-colors z-10 text-foreground"
-          title={actualTheme === 'dark' ? t('auth.switchToLight') : t('auth.switchToDark')}
-        >
-          {actualTheme === 'dark' ? (
-            <Sun className="h-5 w-5" strokeWidth={2.5} fill="none" />
-          ) : (
-            <Moon className="h-5 w-5" strokeWidth={2.5} fill="none" />
-          )}
-        </button>
-
-        <CardHeader className="pr-16 text-left">
+        <CardHeader className="text-left">
           <div className="space-y-2">
             <CardTitle className="text-2xl font-bold">{t('auth.welcome')}</CardTitle>
             <CardDescription className="flex items-center gap-2 text-base">
@@ -351,69 +359,87 @@ export function AuthPage() {
             </Button>
 
             {/* 帮助文本 */}
-            <Dialog>
-              <DialogTrigger asChild>
-                <button className="flex w-full items-center justify-start gap-1 text-left text-[11px] text-primary transition-colors underline-offset-4 hover:text-primary/80 hover:underline">
-                  <HelpCircle className="h-3 w-3" strokeWidth={2} fill="none" />
-                  {t('auth.helpLink')}
-                </button>
-              </DialogTrigger>
-              <DialogContent className="sm:max-w-md">
-                <DialogHeader>
-                  <DialogTitle className="flex items-center gap-2">
-                    <Lock className="h-5 w-5 text-primary" strokeWidth={2} fill="none" />
-                    {t('auth.helpTitle')}
-                  </DialogTitle>
-                </DialogHeader>
+            <div className="flex items-center justify-between gap-3">
+              <Dialog>
+                <DialogTrigger asChild>
+                  <button type="button" className="flex items-center justify-start gap-1 text-left text-[11px] text-primary transition-colors underline-offset-4 hover:text-primary/80 hover:underline">
+                    <HelpCircle className="h-3 w-3" strokeWidth={2} fill="none" />
+                    {t('auth.helpLink')}
+                  </button>
+                </DialogTrigger>
+                <DialogContent className="sm:max-w-md">
+                  <DialogHeader>
+                    <DialogTitle className="flex items-center gap-2">
+                      <Lock className="h-5 w-5 text-primary" strokeWidth={2} fill="none" />
+                      {t('auth.helpTitle')}
+                    </DialogTitle>
+                  </DialogHeader>
 
-                <div className="space-y-4">
-                  {/* 方式一：查看控制台 */}
-                  <div className="rounded-lg border bg-muted/50 p-4 space-y-2">
-                    <div className="flex items-start gap-3">
-                      <Terminal className="h-5 w-5 text-primary flex-shrink-0 mt-0.5" strokeWidth={2} fill="none" />
-                      <div className="flex-1 space-y-2">
-                        <h4 className="font-semibold text-sm">{t('auth.method1Title')}</h4>
-                        <p className="text-sm text-muted-foreground">
-                          {t('auth.method1Desc')}
-                        </p>
-                        <div className="rounded bg-background p-2 font-mono text-xs">
-                          <p className="text-muted-foreground">{t('auth.method1Example1')}</p>
-                          <p className="text-muted-foreground">{t('auth.method1Example2')}</p>
+                  <div className="space-y-4">
+                    {/* 方式一：查看宿主启动输出 */}
+                    <div className="rounded-lg border bg-muted/50 p-4 space-y-2">
+                      <div className="flex items-start gap-3">
+                        <Terminal className="h-5 w-5 text-primary flex-shrink-0 mt-0.5" strokeWidth={2} fill="none" />
+                        <div className="flex-1 space-y-2">
+                          <h4 className="font-semibold text-sm">{t('auth.method1Title')}</h4>
+                          <p className="text-sm text-muted-foreground">
+                            {t('auth.method1Desc')}
+                          </p>
+                          <div className="rounded bg-background p-2 font-mono text-xs">
+                            <p className="text-muted-foreground">{t('auth.method1Example1')}</p>
+                            <p className="text-muted-foreground">{t('auth.method1Example2')}</p>
+                          </div>
                         </div>
                       </div>
                     </div>
-                  </div>
 
-                  {/* 方式二：查看配置文件 */}
-                  <div className="rounded-lg border bg-muted/50 p-4 space-y-2">
-                    <div className="flex items-start gap-3">
-                      <FileText className="h-5 w-5 text-primary flex-shrink-0 mt-0.5" strokeWidth={2} fill="none" />
-                      <div className="flex-1 space-y-2">
-                        <h4 className="font-semibold text-sm">{t('auth.method2Title')}</h4>
-                        <p className="text-sm text-muted-foreground">
-                          {t('auth.method2Desc')}
-                        </p>
-                        <div className="rounded bg-background p-2 font-mono text-xs break-all">
-                          <code className="text-primary">data/webui.json</code>
+                    {/* 方式二：查看配置文件 */}
+                    <div className="rounded-lg border bg-muted/50 p-4 space-y-2">
+                      <div className="flex items-start gap-3">
+                        <FileText className="h-5 w-5 text-primary flex-shrink-0 mt-0.5" strokeWidth={2} fill="none" />
+                        <div className="flex-1 space-y-2">
+                          <h4 className="font-semibold text-sm">{t('auth.method2Title')}</h4>
+                          <p className="text-sm text-muted-foreground">
+                            {t('auth.method2Desc')}
+                          </p>
+                          <div className="rounded bg-background p-2 font-mono text-xs break-all">
+                            <code className="text-primary">host/webui.json</code>
+                          </div>
+                          <p className="text-xs text-muted-foreground">
+                            {t('auth.method2FileHint')} <code className="px-1 py-0.5 bg-background rounded">access_token</code>
+                          </p>
                         </div>
-                        <p className="text-xs text-muted-foreground">
-                          {t('auth.method2FileHint')} <code className="px-1 py-0.5 bg-background rounded">access_token</code>
-                        </p>
                       </div>
                     </div>
-                  </div>
 
-                  {/* 安全提示 */}
-                  <div className="text-xs text-muted-foreground">
-                    <ul className="list-disc list-inside space-y-1">
-                      <li>{t('auth.securityTip1')}</li>
-                      <li>{t('auth.securityTip2')}</li>
-                    </ul>
+                    {/* 安全提示 */}
+                    <div className="text-xs text-muted-foreground">
+                      <ul className="list-disc list-inside space-y-1">
+                        <li>{t('auth.securityTip1')}</li>
+                        <li>{t('auth.securityTip2')}</li>
+                      </ul>
+                    </div>
                   </div>
-                </div>
-              </DialogContent>
-            </Dialog>
-
+                </DialogContent>
+              </Dialog>
+              {/* 主题切换按钮 */}
+              <Button
+                type="button"
+                variant="ghost"
+                size="icon-sm"
+                data-auth-theme-toggle="true"
+                onClick={toggleTheme}
+                className="shrink-0 text-foreground"
+                title={actualTheme === 'dark' ? t('auth.switchToLight') : t('auth.switchToDark')}
+                aria-label={actualTheme === 'dark' ? t('auth.switchToLight') : t('auth.switchToDark')}
+              >
+                {actualTheme === 'dark' ? (
+                  <Sun className="h-5 w-5" strokeWidth={2.5} fill="none" />
+                ) : (
+                  <Moon className="h-5 w-5" strokeWidth={2.5} fill="none" />
+                )}
+              </Button>
+            </div>
           </form>
         </CardContent>
       </Card>

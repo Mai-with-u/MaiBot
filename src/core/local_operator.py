@@ -8,6 +8,8 @@ BOT_CONSOLE_BOT_ID = "__maibot_console_bot__"
 MAISAKA_CLI_PLATFORM = "maisaka_cli"
 MAISAKA_CLI_BOT_ID = "__maisaka_cli_bot__"
 LOCAL_OPERATOR_CONFIG_KEY = "is_local_operator"
+# 插件代为投递的消息（如桌宠转发主人的发言）在 additional_config 中记录插件 ID。
+PLUGIN_RELAY_CONFIG_KEY = "relayed_by_plugin"
 LOCAL_PLATFORM_BOT_IDS: Dict[str, str] = {
     BOT_CONSOLE_PLATFORM: BOT_CONSOLE_BOT_ID,
     MAISAKA_CLI_PLATFORM: MAISAKA_CLI_BOT_ID,
@@ -18,6 +20,12 @@ def is_local_operator(platform: str, additional_config: Dict[str, Any]) -> bool:
     """判断一条消息是否来自主程序创建的本地操作员终端。"""
 
     return platform == BOT_CONSOLE_PLATFORM and additional_config.get(LOCAL_OPERATOR_CONFIG_KEY) is True
+
+
+def is_plugin_relayed(additional_config: Dict[str, Any]) -> bool:
+    """判断一条消息是否由插件代为投递；这类消息即使发送者身份有权限，也不具备任何受保护权限。"""
+
+    return bool(additional_config.get(PLUGIN_RELAY_CONFIG_KEY))
 
 
 def build_scoped_user_id(platform: str, user_id: str) -> str:
@@ -53,9 +61,12 @@ def has_plugin_management_permission(
     permission_list: Iterable[str],
     *,
     local_operator: bool,
+    relayed_by_plugin: bool = False,
 ) -> bool:
     """判断用户是否具有插件生命周期管理权限。"""
 
+    if relayed_by_plugin:
+        return False
     if local_operator:
         return True
     scoped_user_id = build_scoped_user_id(platform, user_id)
@@ -71,9 +82,12 @@ def has_command_permission(
     command_permissions: Mapping[str, Any],
     *,
     local_operator: bool,
+    relayed_by_plugin: bool = False,
 ) -> bool:
     """判断用户或聊天是否被允许执行受保护命令。"""
 
+    if relayed_by_plugin:
+        return False
     if has_plugin_management_permission(
         platform,
         user_id,

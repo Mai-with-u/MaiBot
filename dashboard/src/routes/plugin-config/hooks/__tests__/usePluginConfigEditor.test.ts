@@ -167,8 +167,6 @@ describe('usePluginConfigEditor 缺口', () => {
     expect(result.current.pluginPageTab).toBe('settings')
     expect(result.current.resetDialogOpen).toBe(false)
 
-    act(() => result.current.setPluginPageTab('host-policy'))
-    expect(result.current.pluginPageTab).toBe('host-policy')
     act(() => result.current.setPluginPageTab('details'))
     expect(result.current.pluginPageTab).toBe('details')
 

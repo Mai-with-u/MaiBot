@@ -56,14 +56,6 @@ export function useModelFetcher(options: UseModelFetcherOptions): UseModelFetche
         return
       }
 
-      // 检查 API Key 是否已配置
-      if (!config.api_key) {
-        setAvailableModels([])
-        setMatchedTemplate(null)
-        setModelFetchError('该提供商未配置 API Key，请先在"模型厂商设置"中填写')
-        return
-      }
-
       // 查找匹配的模板；自定义端点默认按客户端类型尝试获取模型列表
       const template = resolveModelFetcherTemplate(config.base_url, config.client_type)
       setMatchedTemplate(template)

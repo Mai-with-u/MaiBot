@@ -56,7 +56,7 @@ function makeComponent(name: string): PluginRuntimeComponent {
     description: '组件描述',
     enabled: true,
     plugin_name: '演示插件',
-    component_type: 'action',
+    component_type: 'tool',
   }
 }
 

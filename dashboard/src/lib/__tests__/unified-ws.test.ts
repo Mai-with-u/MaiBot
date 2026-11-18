@@ -2,27 +2,15 @@ import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest'
 
 import type { unifiedWsClient as UnifiedWsClientType } from '../unified-ws'
 
-// 可变的 mock 状态：token 响应、ws 基地址与前端设置，均在各用例中按需调整
+// 可变的 mock 状态：ws 基地址与错误与前端设置，均在各用例中按需调整
 const apiState = vi.hoisted(() => ({
   settings: { wsMaxReconnectAttempts: 2, wsReconnectInterval: 1000 } as Record<string, number>,
-  tokenError: null as Error | null,
-  tokenResponse: { success: true, token: 'token/1' } as { success?: boolean; token?: string },
+  wsBaseError: null as Error | null,
   wsBaseUrl: 'ws://test-host',
 }))
 
 vi.mock('@/lib/api-base', () => ({
-  getWsBaseUrl: async () => apiState.wsBaseUrl,
-}))
-
-vi.mock('@/lib/http', () => ({
-  backendApi: {
-    get: async () => {
-      if (apiState.tokenError) {
-        throw apiState.tokenError
-      }
-      return apiState.tokenResponse
-    },
-  },
+  getWsBaseUrl: async () => { if (apiState.wsBaseError) throw apiState.wsBaseError; return apiState.wsBaseUrl },
 }))
 
 vi.mock('../settings-manager', () => ({
@@ -138,8 +126,7 @@ describe('unifiedWsClient', () => {
     vi.resetModules()
     FakeWebSocket.instances = []
     apiState.settings = { wsMaxReconnectAttempts: 2, wsReconnectInterval: 1000 }
-    apiState.tokenError = null
-    apiState.tokenResponse = { success: true, token: 'token/1' }
+    apiState.wsBaseError = null
     apiState.wsBaseUrl = 'ws://test-host'
     vi.stubGlobal('WebSocket', FakeWebSocket)
     // 静音重连/心跳路径上的预期错误日志
@@ -155,7 +142,7 @@ describe('unifiedWsClient', () => {
     vi.useRealTimers()
   })
 
-  it('连接成功：URL 携带编码后的 token，状态依次经过 connecting 与 connected', async () => {
+  it('连接成功：URL 通过宿主 Cookie 登录，状态依次经过 connecting 与 connected', async () => {
     const client = await loadClient()
     const statuses: string[] = []
     const connections: boolean[] = []
@@ -166,8 +153,7 @@ describe('unifiedWsClient', () => {
     await flushMicrotasks()
 
     const socket = FakeWebSocket.instances[0]
-    // token/1 应被 encodeURIComponent 编码为 token%2F1
-    expect(socket.url).toBe('ws://test-host/api/webui/ws?token=token%2F1')
+    expect(socket.url).toBe('ws://test-host/api/webui/ws')
 
     socket.serverOpen()
     await connectPromise
@@ -178,8 +164,8 @@ describe('unifiedWsClient', () => {
     expect(connections).toEqual([false, false, true])
   })
 
-  it('token 获取失败时 connect 抛错并回到 idle 状态', async () => {
-    apiState.tokenResponse = { success: false }
+  it('基址为空时 connect 抛错并回到 idle 状态', async () => {
+    apiState.wsBaseUrl = ''
     const client = await loadClient()
     const statuses: string[] = []
     client.onStatusChange((status) => statuses.push(status))
@@ -386,13 +372,13 @@ describe('unifiedWsClient', () => {
     expect(received).toHaveLength(1)
   })
 
-  it('token 请求抛错或基址为空时无法建立连接', async () => {
-    apiState.tokenError = new Error('网络中断')
+  it('基址解析抛错或为空时无法建立连接', async () => {
+    apiState.wsBaseError = new Error('网络中断')
     const client = await loadClient()
     await expect(client.connect()).rejects.toThrow('无法建立统一 WebSocket 连接')
-    expect(console.error).toHaveBeenCalledWith('获取统一 WebSocket token 失败:', expect.any(Error))
+    expect(console.error).toHaveBeenCalledWith('构建统一 WebSocket 地址失败:', expect.any(Error))
 
-    apiState.tokenError = null
+    apiState.wsBaseError = null
     apiState.wsBaseUrl = ''
     await expect(client.connect()).rejects.toThrow('无法建立统一 WebSocket 连接')
     expect(FakeWebSocket.instances).toHaveLength(0)
@@ -736,20 +722,20 @@ describe('unifiedWsClient', () => {
     expect(console.error).toHaveBeenCalledWith('统一 WebSocket 重连失败:', expect.any(Error))
   })
 
-  it('重连时 token 接口不可用（后端重启中）会继续按退避重试，直到恢复', async () => {
+  it('重连时 基址解析失败会继续按退避重试，直到恢复', async () => {
     apiState.settings = { wsMaxReconnectAttempts: 5, wsReconnectInterval: 1000 }
     const { client, socket } = await connectAndOpen()
 
-    apiState.tokenError = new Error('后端重启中')
+    apiState.wsBaseError = new Error('后端重启中')
     socket.serverClose(1006)
 
-    // 第 1 次重连（1000ms）：token 获取失败，未创建 socket
+    // 第 1 次重连（1000ms）：基址解析失败，未创建 socket
     await vi.advanceTimersByTimeAsync(1000)
     await flushMicrotasks()
     expect(FakeWebSocket.instances).toHaveLength(1)
 
     // 后端恢复后，第 2 次重连（2000ms 退避）成功建连
-    apiState.tokenError = null
+    apiState.wsBaseError = null
     await vi.advanceTimersByTimeAsync(2000)
     await flushMicrotasks()
     expect(FakeWebSocket.instances).toHaveLength(2)
@@ -758,12 +744,12 @@ describe('unifiedWsClient', () => {
     expect(client.getStatus()).toBe('connected')
   })
 
-  it('首次 connect 因 token 失败时也会自动安排重连', async () => {
-    apiState.tokenError = new Error('后端尚未就绪')
+  it('首次 connect 因基址解析失败时也会自动安排重连', async () => {
+    apiState.wsBaseError = new Error('后端尚未就绪')
     const client = await loadClient()
     await expect(client.connect()).rejects.toThrow('无法建立统一 WebSocket 连接')
 
-    apiState.tokenError = null
+    apiState.wsBaseError = null
     await vi.advanceTimersByTimeAsync(1000)
     await flushMicrotasks()
     expect(FakeWebSocket.instances).toHaveLength(1)

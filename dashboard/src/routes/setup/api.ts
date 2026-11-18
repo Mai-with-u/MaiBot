@@ -1,6 +1,8 @@
 // 设置向导API调用函数
 
+import i18n from '@/i18n'
 import { authApi, backendApi } from '@/lib/http'
+import { testModelCapability, updateBotConfigSection } from '@/lib/config-api'
 import {
   findTemplateByBaseUrl,
   PROVIDER_TEMPLATES,
@@ -9,15 +11,17 @@ import {
 } from '@/routes/config/providerTemplates'
 import type { ProviderTemplate } from '@/routes/config/providerTemplates'
 import { setThinkingEnabled } from '@/routes/config/model/thinkingFormats'
-import { setDeepSeekThinkingEnabled } from '@/routes/config/model/deepSeekExtraParams'
-import type { ModelListItem } from '@/lib/config-api'
+import { getDeepSeekReasoningEffort, setDeepSeekReasoningEffort, setDeepSeekThinkingEnabled } from '@/routes/config/model/deepSeekExtraParams'
+import type { ModelListItem, ModelTestResult } from '@/lib/config-api'
 import type { ModelPricePeriod } from '@/routes/config/model/types'
 
 import type {
   ApiProviderSetupConfig,
+  BasicSetupConfig,
   BotBasicConfig,
   ModelSetupConfig,
   PersonalityConfig,
+  SetupModelRole,
 } from './types'
 
 interface ModelInfo {
@@ -95,14 +99,16 @@ function buildThinkingExtraParams(
   thinkingEnabled: boolean,
   modelIdentifier: string,
   template: ProviderTemplate | null,
-  clientType: string
+  clientType: string,
+  effort: 'low' | 'high' | 'max' = 'high'
 ): Record<string, unknown> {
   const extraParams = { ...(existingParams || {}) }
   delete extraParams.thinking
   delete extraParams.enable_thinking
   delete extraParams.reasoning_effort
   if (template?.id === 'deepseek' && (clientType === 'openai' || clientType === 'openai_responses')) {
-    return setDeepSeekThinkingEnabled(extraParams, clientType, thinkingEnabled)
+    const params = setDeepSeekThinkingEnabled(extraParams, clientType, thinkingEnabled)
+    return thinkingEnabled ? setDeepSeekReasoningEffort(params, clientType, effort) : params
   }
   const format = resolveThinkingFormatForModel(template, modelIdentifier)
   if (!format) return extraParams
@@ -116,14 +122,39 @@ function buildThinkingExtraParams(
 
 export async function loadSetupStatus(): Promise<SetupStatus> {
   return authApi.get<SetupStatus>('/api/webui/setup/status', {
-    errorMessage: '读取设置状态失败',
+    errorMessage: i18n.t('setupPage.errors.loadStatus'),
   })
+}
+
+type ReplyTimingSetupConfig = Pick<BasicSetupConfig, 'inevitable_at_reply'>
+
+export async function loadBasicSetupConfig(): Promise<BasicSetupConfig> {
+  const { config } = await backendApi.get<{ config: {
+    chat: { reply_timing: ReplyTimingSetupConfig }
+    desktop_pet: { enabled: boolean }
+  } }>(
+    '/api/webui/config/bot',
+    { errorMessage: i18n.t('setupPage.errors.loadBot') }
+  )
+  const { inevitable_at_reply } = config.chat.reply_timing
+  return { inevitable_at_reply, desktop_pet_enabled: config.desktop_pet.enabled }
+}
+
+export async function saveBasicSetupConfig(config: ReplyTimingSetupConfig) {
+  return backendApi.post('/api/webui/config/bot/section/chat', {
+    body: { reply_timing: config },
+    errorMessage: i18n.t('setupPage.toast.saveFailedTitle'),
+  })
+}
+
+export async function saveDesktopPetEnabled(enabled: boolean) {
+  return updateBotConfigSection('desktop_pet', { enabled }, i18n.t('setupPage.toast.saveFailedTitle'))
 }
 
 // 读取Bot基础配置
 export async function loadBotBasicConfig(): Promise<BotBasicConfig> {
   const data = await backendApi.get<{ config: { bot?: BotBasicConfig } }>('/api/webui/config/bot', {
-    errorMessage: '读取 Bot 配置失败',
+    errorMessage: i18n.t('setupPage.errors.loadBot'),
   })
   const botConfig = (data.config.bot || {}) as Partial<BotBasicConfig>
   const qqAccount = String(botConfig.qq_account ?? '').trim()
@@ -141,12 +172,13 @@ export async function loadBotBasicConfig(): Promise<BotBasicConfig> {
 export async function loadPersonalityConfig(): Promise<PersonalityConfig> {
   const data = await backendApi.get<{ config: { personality?: PersonalityConfig } }>(
     '/api/webui/config/bot',
-    { errorMessage: '读取人格配置失败' }
+    { errorMessage: i18n.t('setupPage.errors.loadPersonality') }
   )
   const personalityConfig = (data.config.personality || {}) as Partial<PersonalityConfig>
 
   return {
     personality: personalityConfig.personality || '',
+    behavior_style: personalityConfig.behavior_style ?? '',
     reply_style: personalityConfig.reply_style || '',
     multiple_reply_style: personalityConfig.multiple_reply_style || [],
     multiple_probability: personalityConfig.multiple_probability ?? 0.2,
@@ -155,7 +187,7 @@ export async function loadPersonalityConfig(): Promise<PersonalityConfig> {
 
 async function loadModelConfig(): Promise<ModelConfig> {
   const data = await backendApi.get<{ config: ModelConfig }>('/api/webui/config/model', {
-    errorMessage: '读取模型配置失败',
+    errorMessage: i18n.t('setupPage.errors.loadModel'),
   })
   return data.config || {}
 }
@@ -180,9 +212,9 @@ export async function fetchSetupModels(config: ApiProviderSetupConfig): Promise<
       parser: template?.modelFetcher?.parser ?? 'openai',
       endpoint: template?.modelFetcher?.endpoint ?? '/models',
     },
-    errorMessage: '获取模型列表失败',
+    errorMessage: i18n.t('setupPage.errors.fetchModels'),
   })
-  if (response.models.length === 0) throw new Error('提供商返回的模型列表为空')
+  if (response.models.length === 0) throw new Error(i18n.t('setupPage.errors.emptyModelList'))
   return response.models
 }
 
@@ -200,10 +232,12 @@ export async function loadModelSetupConfig(): Promise<ModelSetupConfig> {
     planner_model_name: plannerName,
     planner_model_identifier: plannerModel?.model_identifier || plannerName,
     planner_visual: Boolean(plannerModel?.visual),
+    planner_reasoning_effort: getDeepSeekReasoningEffort(plannerModel?.extra_params ?? {}, 'openai'),
     planner_thinking: readThinkingEnabled(plannerModel, plannerName),
     replyer_model_name: replyerName,
     replyer_model_identifier: replyerModel?.model_identifier || replyerName,
     replyer_visual: Boolean(replyerModel?.visual),
+    replyer_reasoning_effort: getDeepSeekReasoningEffort(replyerModel?.extra_params ?? {}, 'openai'),
     replyer_thinking: readThinkingEnabled(replyerModel, replyerName),
   }
 }
@@ -214,7 +248,7 @@ export async function loadModelSetupConfig(): Promise<ModelSetupConfig> {
 export async function saveBotBasicConfig(config: BotBasicConfig) {
   return backendApi.post('/api/webui/config/bot/section/bot', {
     body: config,
-    errorMessage: '保存 Bot 配置失败',
+    errorMessage: i18n.t('setupPage.errors.saveBot'),
   })
 }
 
@@ -222,7 +256,7 @@ export async function saveBotBasicConfig(config: BotBasicConfig) {
 export async function savePersonalityConfig(config: PersonalityConfig) {
   return backendApi.post('/api/webui/config/bot/section/personality', {
     body: config,
-    errorMessage: '保存人格配置失败',
+    errorMessage: i18n.t('setupPage.errors.savePersonality'),
   })
 }
 
@@ -234,7 +268,8 @@ function createBasicModel(
   thinking: boolean,
   template: ProviderTemplate | null,
   clientType: string,
-  existing?: ModelInfo
+  existing?: ModelInfo,
+  effort: 'low' | 'high' | 'max' = 'high'
 ): ModelInfo {
   return {
     price_in: 0,
@@ -242,7 +277,7 @@ function createBasicModel(
     price_out: 0,
     force_stream_mode: false,
     ...existing,
-    extra_params: buildThinkingExtraParams(existing?.extra_params, thinking, modelIdentifier, template, clientType),
+    extra_params: buildThinkingExtraParams(existing?.extra_params, thinking, modelIdentifier, template, clientType, effort),
     visual,
     model_identifier: modelIdentifier,
     model_type: 'llm',
@@ -292,67 +327,74 @@ export async function saveApiProviderSetupConfig(config: ApiProviderSetupConfig)
 
   return backendApi.post('/api/webui/config/model', {
     body: updatedConfig,
-    errorMessage: '保存 API 提供商配置失败',
+    errorMessage: i18n.t('setupPage.errors.saveProvider'),
   })
 }
 
+// 向导写入 model_config.toml 时使用的模型名称。
+// 同一模型用于两个角色时分别保存，避免思考开关和强度互相覆盖。
+export function resolveSetupModelNames(config: ModelSetupConfig): { planner: string; replyer: string } {
+  const plannerIdentifier = config.planner_model_identifier.trim()
+  const replyerIdentifier = config.replyer_model_identifier.trim()
+  return {
+    planner: plannerIdentifier === replyerIdentifier ? `${plannerIdentifier}-planner` : plannerIdentifier,
+    replyer: replyerIdentifier,
+  }
+}
+
+// 复用模型配置页的单模型测试；模型须已写入配置文件。
+export async function testSetupModel(modelName: string): Promise<ModelTestResult> {
+  return testModelCapability(modelName)
+}
+
 // 保存基础模型配置
-export async function saveModelSetupConfig(config: ModelSetupConfig, providerName: string) {
+export async function saveModelSetupConfig(config: ModelSetupConfig, providerName: string, testRole?: SetupModelRole) {
   const modelConfig = await loadModelConfig()
   const trimmedProviderName = providerName.trim()
   const provider = modelConfig.api_providers?.find((item) => item.name === trimmedProviderName)
   const template = findTemplateByBaseUrl(provider?.base_url ?? '')
   const clientType = provider?.client_type ?? 'openai'
-  const plannerModelIdentifier = config.planner_model_identifier.trim()
-  const plannerModelName = plannerModelIdentifier
-  const replyerModelIdentifier = config.replyer_model_identifier.trim()
-  const replyerModelName = replyerModelIdentifier
-
-  // 新增或更新 planner/replyer 模型，并仅同步 utils 到 planner。
-  let models = modelConfig.models || []
-  const existingPlannerModel = models.find((model) => model.name === plannerModelName)
-  const existingReplyerModel = models.find((model) => model.name === replyerModelName)
-  models = upsertModel(
-    models,
-    createBasicModel(
-      plannerModelName,
-      plannerModelIdentifier,
-      trimmedProviderName,
-      config.planner_visual,
-      config.planner_thinking,
-      template,
-      clientType,
-      existingPlannerModel
-    )
-  )
-  models = upsertModel(
-    models,
-    createBasicModel(
-      replyerModelName,
-      replyerModelIdentifier,
-      trimmedProviderName,
-      config.replyer_visual,
-      config.replyer_thinking,
-      template,
-      clientType,
-      existingReplyerModel
-    )
-  )
-
+  const names = resolveSetupModelNames(config)
   const modelTaskConfig = modelConfig.model_task_config || {}
-  const updatedTaskConfig = {
+  const otherRoles = testRole === 'replyer' ? ['planner', 'utils'] : ['replyer']
+  if (testRole) {
+    const reserved = new Set(otherRoles.flatMap((role) => modelTaskConfig[role]?.model_list ?? []))
+    const name = names[testRole]
+    for (let suffix = 1; reserved.has(names[testRole]); suffix += 1) {
+      names[testRole] = `${name}-${testRole}${suffix > 1 ? `-${suffix}` : ''}`
+    }
+  }
+
+  // 测试只写入当前模型，正式保存时才更新任务分配。
+  let models = modelConfig.models || []
+  for (const role of testRole ? [testRole] : (['planner', 'replyer'] as const)) {
+    const name = names[role]
+    models = upsertModel(models, createBasicModel(
+      name,
+      config[`${role}_model_identifier`].trim(),
+      trimmedProviderName,
+      config[`${role}_visual`],
+      config[`${role}_thinking`],
+      template,
+      clientType,
+      models.find((model) => model.name === name),
+      config[`${role}_reasoning_effort`]
+    ))
+  }
+
+  const updatedTaskConfig = testRole ? modelConfig.model_task_config : {
     ...modelTaskConfig,
     planner: {
       ...(modelTaskConfig.planner || {}),
-      model_list: [plannerModelName],
+      model_list: [names.planner],
     },
     replyer: {
       ...(modelTaskConfig.replyer || {}),
-      model_list: [replyerModelName],
+      model_list: [names.replyer],
     },
     utils: {
       ...(modelTaskConfig.utils || {}),
-      model_list: [plannerModelName],
+      model_list: [names.planner],
     },
   }
 
@@ -363,22 +405,23 @@ export async function saveModelSetupConfig(config: ModelSetupConfig, providerNam
     model_task_config: updatedTaskConfig,
   }
 
-  return backendApi.post('/api/webui/config/model', {
+  await backendApi.post('/api/webui/config/model', {
     body: updatedConfig,
-    errorMessage: '保存模型配置失败',
+    errorMessage: i18n.t('setupPage.errors.saveModel'),
   })
+  return names
 }
 
 // 标记设置完成
 export async function completeSetup() {
-  return backendApi.post('/api/webui/setup/complete', {
-    errorMessage: '标记设置完成失败',
+  return authApi.post('/api/webui/setup/complete', {
+    errorMessage: i18n.t('setupPage.errors.complete'),
   })
 }
 
 export async function updateAccessToken(newToken: string): Promise<TokenUpdateResult> {
   return authApi.post<TokenUpdateResult>('/api/webui/auth/update', {
     body: { new_token: newToken },
-    errorMessage: '更新 Token 失败',
+    errorMessage: i18n.t('setupPage.errors.updateToken'),
   })
 }

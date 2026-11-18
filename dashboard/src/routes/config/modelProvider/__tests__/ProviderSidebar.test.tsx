@@ -52,13 +52,11 @@ describe('ProviderSidebar', () => {
     const allButton = screen.getByRole('button', { name: '全部' })
     expect(allButton).toHaveAttribute('aria-pressed', 'true')
     expect(allButton).toHaveTextContent('0')
-    expect(allButton).toHaveClass('bg-primary')
+    expect(allButton).toHaveAttribute('data-selected', 'true')
 
     await user.click(screen.getByRole('button', { name: '添加厂商' }))
-    expect(onAdd).not.toHaveBeenCalled()
-    await user.click(screen.getByRole('menuitem', { name: '添加 LLM 模型提供商' }))
-    await user.click(allButton)
     expect(onAdd).toHaveBeenCalledOnce()
+    await user.click(allButton)
     expect(onSelectProvider).toHaveBeenCalledWith('')
   })
 
@@ -91,7 +89,7 @@ describe('ProviderSidebar', () => {
 
     const allButton = screen.getByRole('button', { name: '全部' })
     expect(allButton).toHaveAttribute('aria-pressed', 'false')
-    expect(allButton).not.toHaveClass('bg-primary')
+    expect(allButton).not.toHaveAttribute('data-selected')
     // Map 中 2+5+2，idle 不在计数里
     expect(allButton).toHaveTextContent('9')
 
@@ -101,8 +99,8 @@ describe('ProviderSidebar', () => {
       'title',
       expect.stringContaining('beta · https://beta.example/v1')
     )
-    expect(betaButton).toHaveTextContent('https://beta.example/v1')
-    expect(betaButton.closest('div')).toHaveClass('bg-primary')
+    expect(betaButton.closest('div')).toHaveTextContent('https://beta.example/v1')
+    expect(betaButton.closest('div')).toHaveAttribute('data-selected', 'true')
     expect(betaButton.closest('div')).toHaveTextContent('5')
     expect(screen.getByRole('button', { name: '筛选厂商 idle' }).closest('div')).toHaveTextContent('0')
 

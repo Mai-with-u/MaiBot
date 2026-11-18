@@ -259,7 +259,7 @@ def _calculate_theoretical_cache_match(
             best_match_rank = rank
             best_prompt_text = cached_prompt_text
 
-    overlap_rate = best_prefix_length / len(prompt_text) if prompt_text else 0.0
+    overlap_rate = best_prefix_length / len(prompt_text)
     theoretical_hit_tokens = min(prompt_tokens, round(prompt_tokens * overlap_rate))
     theoretical_miss_tokens = max(prompt_tokens - theoretical_hit_tokens, 0)
     return _TheoreticalCacheMatch(
@@ -498,18 +498,22 @@ def _read_usage_events() -> list[dict[str, Any]]:
     events: list[dict[str, Any]] = []
     for file_path in _iter_usage_log_paths():
         try:
-            lines = file_path.read_text(encoding="utf-8").splitlines()
+            # 按二进制行隔离解码错误，坏记录不影响同文件后续记录和其他日期的统计。
+            with file_path.open("rb") as file:
+                for line_number, raw_line in enumerate(file, start=1):
+                    if not raw_line.strip():
+                        continue
+                    try:
+                        event = json.loads(raw_line.decode("utf-8"))
+                    except UnicodeDecodeError:
+                        logger.warning(f"跳过 LLM prompt cache 坏编码记录: {file_path}:{line_number}")
+                        continue
+                    except json.JSONDecodeError:
+                        continue
+                    if isinstance(event, dict):
+                        events.append(event)
         except OSError:
             continue
-        for line in lines:
-            if not line.strip():
-                continue
-            try:
-                event = json.loads(line)
-            except json.JSONDecodeError:
-                continue
-            if isinstance(event, dict):
-                events.append(event)
     return events
 
 
@@ -1133,11 +1137,15 @@ def _aggregate_stats_snapshot(
     return result
 
 
-def _render_html_report(stats_snapshot: List[Dict[str, int | str | float]], *, include_session: bool = False) -> str:
+def _render_html_report(
+    stats_snapshot: List[Dict[str, int | str | float]],
+    usage_events: List[Dict[str, Any]],
+    run_stats: List[Dict[str, int | str | float]],
+    *,
+    include_session: bool = False,
+) -> str:
     updated_at = datetime.now().isoformat(timespec="seconds")
     visible_stats_snapshot = _aggregate_stats_snapshot(stats_snapshot, include_session=include_session)
-    usage_events = _read_usage_events()
-    run_stats = _aggregate_usage_events_by_run(usage_events)
     current_run_id = _store.run_id
     previous_run_id = _get_previous_run_id(run_stats, current_run_id)
     current_by_call_site = _aggregate_usage_events_by_call_site(
@@ -1293,8 +1301,12 @@ def _render_html_report(stats_snapshot: List[Dict[str, int | str | float]], *, i
 
 def _write_html_report(stats_snapshot: List[Dict[str, int | str | float]]) -> None:
     CACHE_STATS_DIR.mkdir(parents=True, exist_ok=True)
-    _get_report_path().write_text(_render_html_report(stats_snapshot, include_session=False), encoding="utf-8")
-    _get_session_report_path().write_text(_render_html_report(stats_snapshot, include_session=True), encoding="utf-8")
+    # 两份报告使用同一次历史快照和运行汇总，避免重复扫描以及新增日志造成的数据差异。
+    usage_events = _read_usage_events()
+    run_stats = _aggregate_usage_events_by_run(usage_events)
+    for include_session, path in ((False, _get_report_path()), (True, _get_session_report_path())):
+        html = _render_html_report(stats_snapshot, usage_events, run_stats, include_session=include_session)
+        path.write_text(html, encoding="utf-8")
 
 
 def _write_usage_event(event: Dict[str, int | str | float | bool]) -> None:

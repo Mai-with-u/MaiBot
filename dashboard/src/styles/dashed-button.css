@@ -1,0 +1,43 @@
+/* 列表和卡片的轻量操作入口，悬停或打开菜单时突出显示。 */
+:where([data-dashed-button]) {
+  border: 2px dashed hsl(var(--border));
+  background: transparent;
+  cursor: pointer;
+  font-size: 0.8125rem;
+  font-weight: 600;
+  color: hsl(var(--foreground));
+}
+
+[data-dashed-button]:enabled:is(:hover, :focus-visible, [data-state='open']) {
+  border-color: currentColor;
+}
+
+[data-dashed-button]:enabled[data-state='open'] {
+  border-style: solid;
+}
+
+[data-dashed-button]:disabled {
+  cursor: default;
+  opacity: 0.5;
+}
+
+:where(:root[data-dashboard-style='millennium'] [data-dashed-button]) {
+  border-color: var(--mil-lo);
+  color: var(--mil-ink);
+}
+
+/* 用机壳同色的高光和阴影表现键帽厚度，保留底下的点阵。 */
+:root[data-dashboard-style='millennium']
+  [data-dashed-button]:enabled:is(:hover, :focus-visible, :active, [data-state='open']) {
+  border-style: solid;
+  border-color: color-mix(in srgb, var(--mil-lo) 65%, var(--mil-print));
+  box-shadow: inset 1px 1px 0 var(--mil-hi), 2px 3px 0 var(--mil-drop);
+}
+
+:root[data-dashboard-style='millennium'] [data-dashed-button]:enabled:is(:active, [data-state='open']) {
+  box-shadow: inset 1px 2px 0 var(--mil-drop), inset -1px -1px 0 var(--mil-hi);
+}
+
+:root[data-dashboard-style='future-retro'] [data-dashed-button] {
+  border-color: var(--retro-line);
+}

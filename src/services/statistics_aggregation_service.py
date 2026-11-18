@@ -92,7 +92,7 @@ def fetch_message_count_by_chat_since(start_time: datetime) -> list[dict[str, An
                         COUNT(*) AS message_count,
                         MAX(COALESCE(received_at, timestamp)) AS latest_timestamp
                     FROM mai_messages
-                    WHERE COALESCE(received_at, timestamp) >= :start_time
+                    WHERE NOT EXISTS (SELECT 1 FROM chat_migration_copies AS migration WHERE migration.table_name='mai_messages' AND migration.target_key=CAST(mai_messages.id AS TEXT)) AND COALESCE(received_at, timestamp) >= :start_time
                       AND (
                           (group_id IS NOT NULL AND group_id != '')
                           OR (user_id IS NOT NULL AND user_id != '')
@@ -122,7 +122,7 @@ def fetch_message_count_by_chat_since(start_time: datetime) -> list[dict[str, An
                                 ORDER BY COALESCE(received_at, timestamp) DESC, id DESC
                             ) AS row_num
                         FROM mai_messages
-                        WHERE COALESCE(received_at, timestamp) >= :start_time
+                        WHERE NOT EXISTS (SELECT 1 FROM chat_migration_copies AS migration WHERE migration.table_name='mai_messages' AND migration.target_key=CAST(mai_messages.id AS TEXT)) AND COALESCE(received_at, timestamp) >= :start_time
                           AND (
                               (group_id IS NOT NULL AND group_id != '')
                               OR (user_id IS NOT NULL AND user_id != '')
@@ -146,6 +146,47 @@ def fetch_message_count_by_chat_since(start_time: datetime) -> list[dict[str, An
     ]
 
 
+def count_chat_messages_between(start_time: datetime, end_time: datetime) -> int:
+    """按 fetch_message_count_by_chat_since 的口径统计 [start_time, end_time) 内的消息数。"""
+
+    with get_db_session(auto_commit=False) as session:
+        row = session.exec(
+            text(
+                """
+                SELECT COUNT(*)
+                FROM mai_messages
+                WHERE NOT EXISTS (SELECT 1 FROM chat_migration_copies AS migration WHERE migration.table_name='mai_messages' AND migration.target_key=CAST(mai_messages.id AS TEXT)) AND COALESCE(received_at, timestamp) >= :start_time
+                  AND COALESCE(received_at, timestamp) < :end_time
+                  AND (
+                      (group_id IS NOT NULL AND group_id != '')
+                      OR (user_id IS NOT NULL AND user_id != '')
+                  )
+                """
+            ),
+            params={"start_time": start_time, "end_time": end_time},
+        ).one()
+    return int(row[0])
+
+
+def count_tool_records_between(start_time: datetime, end_time: datetime, tool_name: str) -> int:
+    """统计 [start_time, end_time) 内的工具调用次数。"""
+
+    with get_db_session(auto_commit=False) as session:
+        row = session.exec(
+            text(
+                """
+                SELECT COUNT(*)
+                FROM tool_records
+                WHERE NOT EXISTS (SELECT 1 FROM chat_migration_copies AS migration WHERE migration.table_name='tool_records' AND migration.target_key=CAST(tool_records.id AS TEXT)) AND timestamp >= :start_time
+                  AND timestamp < :end_time
+                  AND tool_name = :tool_name
+                """
+            ),
+            params={"start_time": start_time, "end_time": end_time, "tool_name": tool_name},
+        ).one()
+    return int(row[0])
+
+
 def count_tool_records_since(start_time: datetime, tool_name: str) -> int:
     """统计指定时间之后的工具调用次数，不加载工具调用明细。"""
 
@@ -155,7 +196,7 @@ def count_tool_records_since(start_time: datetime, tool_name: str) -> int:
                 """
                 SELECT COUNT(*)
                 FROM tool_records
-                WHERE timestamp >= :start_time
+                WHERE NOT EXISTS (SELECT 1 FROM chat_migration_copies AS migration WHERE migration.table_name='tool_records' AND migration.target_key=CAST(tool_records.id AS TEXT)) AND timestamp >= :start_time
                   AND tool_name = :tool_name
                 """
             ),
@@ -194,7 +235,7 @@ def _aggregate_messages(session) -> None:
                     CASE WHEN group_id IS NOT NULL AND group_id != '' THEN 'group' ELSE 'private' END AS chat_type,
                     COALESCE(received_at, timestamp) AS timestamp
                 FROM mai_messages
-                WHERE id > :last_id
+                WHERE NOT EXISTS (SELECT 1 FROM chat_migration_copies AS migration WHERE migration.table_name='mai_messages' AND migration.target_key=CAST(mai_messages.id AS TEXT)) AND id > :last_id
                   AND timestamp IS NOT NULL
                   AND (
                       (group_id IS NOT NULL AND group_id != '')
@@ -257,7 +298,7 @@ def _aggregate_tool_records(session) -> None:
                 COALESCE(tool_name, 'unknown') AS tool_name,
                 COUNT(*) AS call_count
             FROM tool_records
-            WHERE id > :last_id
+            WHERE NOT EXISTS (SELECT 1 FROM chat_migration_copies AS migration WHERE migration.table_name='tool_records' AND migration.target_key=CAST(tool_records.id AS TEXT)) AND id > :last_id
               AND timestamp IS NOT NULL
             GROUP BY bucket_time, COALESCE(tool_name, 'unknown')
             ON CONFLICT(bucket_time, tool_name) DO UPDATE SET
@@ -297,7 +338,7 @@ def _aggregate_model_usage(session) -> None:
                 COALESCE(SUM(time_cost), 0) AS time_cost_sum,
                 COALESCE(SUM(time_cost * time_cost), 0) AS time_cost_sq_sum
             FROM llm_usage
-            WHERE id > :last_id
+            WHERE NOT EXISTS (SELECT 1 FROM chat_migration_copies AS migration WHERE migration.table_name='llm_usage' AND migration.target_key=CAST(llm_usage.id AS TEXT)) AND id > :last_id
               AND timestamp IS NOT NULL
             GROUP BY
                 datetime(strftime('%Y-%m-%d %H:00:00', timestamp)),

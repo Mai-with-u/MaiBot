@@ -52,7 +52,7 @@ def test_validate_public_url_blocks_rfc1918_address_by_default(monkeypatch: pyte
 
 
 @pytest.mark.parametrize("address", ["127.0.0.1", "192.168.1.10", "10.0.0.8"])
-def test_validate_public_url_allows_configured_private_provider(
+def test_validate_public_url_allows_explicit_private_target(
     monkeypatch: pytest.MonkeyPatch,
     address: str,
 ) -> None:
@@ -64,23 +64,20 @@ def test_validate_public_url_allows_configured_private_provider(
     )
 
     assert network_security.validate_public_url(
-        "http://local-model:11434/v1",
-        allow_configured_private_network=True,
-    ) == "http://local-model:11434/v1"
+        f"http://{address}:11434/v1",
+        require_public_network=False,
+    ) == f"http://{address}:11434/v1"
 
 
-def test_validate_public_url_still_blocks_link_local_for_configured_provider(
-    monkeypatch: pytest.MonkeyPatch,
-) -> None:
-    _install_webui_url_check_config(monkeypatch, enabled=True)
+@pytest.mark.parametrize("allow_fake_ip", [False, True])
+def test_unsafe_dns_result_is_blocked_even_with_fake_ip_allowed(monkeypatch: pytest.MonkeyPatch, allow_fake_ip: bool) -> None:
+    addresses = {"169.254.1.44", "114.117.137.126"}
     monkeypatch.setattr(
-        network_security,
-        "_resolve_ip_addresses",
-        lambda hostname, port: {ipaddress.ip_address("169.254.169.254")},
+        network_security, "_resolve_ip_addresses",
+        lambda hostname, port: {ipaddress.ip_address(address) for address in addresses},
     )
 
-    with pytest.raises(ValueError, match="禁止访问非公网地址"):
+    with pytest.raises(ValueError, match="禁止访问非公网地址: 169.254.1.44"):
         network_security.validate_public_url(
-            "http://metadata.internal/latest",
-            allow_configured_private_network=True,
+            "https://cnb.cool/Mai-with-u/plugin.git", require_public_network=True, allow_fake_ip=allow_fake_ip,
         )

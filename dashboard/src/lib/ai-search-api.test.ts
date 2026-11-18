@@ -23,7 +23,8 @@ describe('searchWithAIStream', () => {
       start(controller) {
         controller.enqueue(
           encoder.encode(
-            '{"type":"progress","stage":"start"}\n' +
+            '{"type":"session","id":"help-1"}\n' +
+              '{"type":"progress","stage":"start"}\n' +
               '{"type":"progress","stage":"tool","status":"started","tool":"search_official_docs",'
           )
         )
@@ -46,11 +47,16 @@ describe('searchWithAIStream', () => {
         query: '为什么无法发送表情包',
         language: 'zh',
         candidates: [],
+        help_session_id: 'new',
       },
-      (event) => progressEvents.push(`${event.stage}:${event.tool ?? ''}`)
+      (event) => {
+        progressEvents.push(
+          event.type === 'session' ? `session:${event.id}` : `${event.stage}:${event.tool ?? ''}`
+        )
+      }
     )
 
-    expect(progressEvents).toEqual(['start:', 'tool:search_official_docs'])
+    expect(progressEvents).toEqual(['session:help-1', 'start:', 'tool:search_official_docs'])
     expect(response.answer).toBe('完成')
     expect(backendPostMock).toHaveBeenCalledWith(
       '/api/webui/search/ai/stream',

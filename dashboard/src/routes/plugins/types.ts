@@ -5,51 +5,41 @@ import type { PluginStatsData } from '@/lib/plugin-stats'
 
 export const PLUGIN_TYPE_LABELS: Record<PluginType, string> = {
   adapter: '适配器',
-  chat: '聊天',
-  creative: '创作',
+  tool: '工具',
   provider: '服务提供方',
   management: '管理',
-  search: '检索搜索',
-  knowledge: '知识',
+  data: '数据与知识',
   media: '媒体',
   game: '游戏娱乐',
-  security: '安全防护',
-  automation: '自动化',
-  extension: '通用扩展',
+  integration: '外部集成',
   other: '其他',
+  chat: '聊天',
+  creative: '创作',
+  automation: '自动化',
+  deskpet: '桌宠',
 }
 
-export const PLUGIN_TYPE_OPTIONS: Array<{ value: PluginType; label: string }> = [
-  { value: 'adapter', label: PLUGIN_TYPE_LABELS.adapter },
-  { value: 'chat', label: PLUGIN_TYPE_LABELS.chat },
-  { value: 'creative', label: PLUGIN_TYPE_LABELS.creative },
-  { value: 'provider', label: PLUGIN_TYPE_LABELS.provider },
-  { value: 'management', label: PLUGIN_TYPE_LABELS.management },
-  { value: 'search', label: PLUGIN_TYPE_LABELS.search },
-  { value: 'knowledge', label: PLUGIN_TYPE_LABELS.knowledge },
-  { value: 'media', label: PLUGIN_TYPE_LABELS.media },
-  { value: 'game', label: PLUGIN_TYPE_LABELS.game },
-  { value: 'security', label: PLUGIN_TYPE_LABELS.security },
-  { value: 'automation', label: PLUGIN_TYPE_LABELS.automation },
-  { value: 'extension', label: PLUGIN_TYPE_LABELS.extension },
-  { value: 'other', label: PLUGIN_TYPE_LABELS.other },
-]
+export const PLUGIN_TYPE_OPTIONS: Array<{ value: PluginType; label: string }> = (
+  Object.keys(PLUGIN_TYPE_LABELS) as PluginType[]
+).map(value => ({ value, label: PLUGIN_TYPE_LABELS[value] }))
 
+// 历史类型统一映射到当前分类；未声明类型不参与分类筛选。
 export function getPluginType(plugin: {
   manifest?: { plugin_type?: PluginType | string }
-}): PluginType {
-  const pluginType = plugin.manifest?.plugin_type
-  if (!pluginType?.trim()) {
-    return 'extension'
-  }
-
-  return pluginType in PLUGIN_TYPE_LABELS ? (pluginType as PluginType) : 'other'
+}): PluginType | null {
+  const value = plugin.manifest?.plugin_type?.trim().toLowerCase()
+  if (!value || value === 'extension') return null
+  if (value === 'knowledge') return 'data'
+  if (value === 'entertainment') return 'game'
+  if (value === 'search') return 'integration'
+  return Object.hasOwn(PLUGIN_TYPE_LABELS, value) ? value as PluginType : 'other'
 }
 
 export function getPluginTypeLabel(plugin: {
   manifest?: { plugin_type?: PluginType | string }
 }): string {
-  return PLUGIN_TYPE_LABELS[getPluginType(plugin)]
+  const type = getPluginType(plugin)
+  return type ? PLUGIN_TYPE_LABELS[type] : '无类别'
 }
 
 export function getPluginProgressDetail(progress: PluginLoadProgress): string | null {

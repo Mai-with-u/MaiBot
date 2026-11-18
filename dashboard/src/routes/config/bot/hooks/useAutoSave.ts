@@ -6,6 +6,8 @@ import { updateBotConfigSection } from '@/lib/config-api'
  * Bot 配置页自动保存配置。
  */
 export interface UseAutoSaveOptions {
+  /** 默认保存 Bot 分区；公共设置可提供自己的写入接口。 */
+  saveSection?: (sectionName: string, sectionData: unknown) => Promise<unknown>
   /** 防抖延迟，默认 2000ms */
   debounceMs?: number
   /** 保存成功回调 */
@@ -44,7 +46,7 @@ export function useAutoSave(
   setHasUnsavedChanges: (hasChanges: boolean) => void,
   options: UseAutoSaveOptions = {}
 ): UseAutoSaveReturn {
-  const { debounceMs = 2000, onSaveSuccess, onSaveError } = options
+  const { debounceMs = 2000, onSaveSuccess, onSaveError, saveSection = updateBotConfigSection } = options
   const sectionStatesRef = useRef(new Map<string, SectionSaveState>())
   const activeSaveCountRef = useRef(0)
   const isMountedRef = useRef(true)
@@ -89,7 +91,7 @@ export function useAutoSave(
         writeBarrier,
       ]).then(async () => {
         try {
-          await updateBotConfigSection(sectionName, sectionData)
+          await saveSection(sectionName, sectionData)
           sectionState.savedRevision = Math.max(sectionState.savedRevision, revision)
           if (isMountedRef.current) {
             updateUnsavedState()
@@ -112,7 +114,7 @@ export function useAutoSave(
       sectionState.saveChain = savePromise
       return savePromise
     },
-    [getSectionState, onSaveError, onSaveSuccess, setAutoSaving, updateUnsavedState]
+    [getSectionState, onSaveError, onSaveSuccess, saveSection, setAutoSaving, updateUnsavedState]
   )
 
   // 每个配置分区独立防抖，一个分区的编辑不会取消其他分区的保存。

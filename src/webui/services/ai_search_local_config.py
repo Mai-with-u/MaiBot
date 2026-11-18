@@ -120,10 +120,8 @@ def _read_config_path(path: str) -> Dict[str, Any]:
     return result
 
 
-def read_local_config(paths: Any) -> List[Dict[str, Any]]:
+def read_local_config(paths: List[str]) -> List[Dict[str, Any]]:
     """读取多个配置路径的当前值，忽略空路径和重复路径。"""
 
-    if not isinstance(paths, list):
-        return []
-    normalized_paths = list(dict.fromkeys(path for raw_path in paths if (path := str(raw_path).strip().strip("."))))
-    return [_read_config_path(path) for path in normalized_paths[:LOCAL_CONFIG_MAX_READ_COUNT]]
+    normalized_paths = dict.fromkeys(path for raw_path in paths if (path := raw_path.strip().strip(".")))
+    return [_read_config_path(path) for path in normalized_paths]

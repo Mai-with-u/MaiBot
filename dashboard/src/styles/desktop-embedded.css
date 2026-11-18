@@ -1,0 +1,19 @@
+/* 一键包嵌入模式：品牌、版本号和主程序更新都由外壳顶栏负责，这里不再重复。 */
+:root[data-desktop-embedded='true'] [data-observation-logo='true'],
+:root[data-desktop-embedded='true'] [data-observation-brand-vent='true'],
+:root[data-desktop-embedded='true'] [data-observation-versions='true'],
+:root[data-desktop-embedded='true'] [data-observation-update='true'] {
+  display: none;
+}
+/* 铭牌行只剩折叠键，靠右放 */
+:root[data-desktop-embedded='true'] [data-observation-brand='true'] {
+  justify-content: flex-end;
+}
+:root[data-desktop-embedded='true'] [data-observation-sidebar='true'][data-collapsed='true'] [data-observation-brand='true'] {
+  justify-content: center;
+}
+
+/* 新版一键包把折叠键放到了顶栏品牌列，侧栏顶部这一行整行不要 */
+:root[data-desktop-sidebar-control='true'] [data-observation-brand='true'] {
+  display: none;
+}

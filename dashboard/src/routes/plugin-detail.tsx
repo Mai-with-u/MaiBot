@@ -33,6 +33,7 @@ import {
   checkGitStatus,
   getMaimaiVersion,
   isPluginCompatible,
+  isPluginCompatibilityMode,
   installPlugin,
   uninstallPlugin,
   updatePlugin,
@@ -248,6 +249,7 @@ export function PluginDetailPage({
   const error = pluginError || (installedPluginsQuery.isError ? installedPluginsQuery.error.message : null)
 
   // 由已安装列表派生安装状态与已安装版本（纯函数，不再用本地 state）
+  const isBuiltin = installedPlugins.some(p => p.builtin && (p.id === plugin?.id || p.manifest.id === plugin?.id))
   const isInstalled = plugin ? checkPluginInstalled(plugin.id, installedPlugins) : false
   const installedVersion = plugin ? getInstalledPluginVersion(plugin.id, installedPlugins) : undefined
   const releaseRequest = releaseCatalog?.mode === 'releases'
@@ -297,6 +299,8 @@ export function PluginDetailPage({
 
   // 检查兼容性
   const checkCompatibility = () => {
+    // 内置版本由主程序维护，市场独立发行版本不能代表其兼容性。
+    if (isBuiltin) return true
     if (releaseCatalog?.sync_error) return false
     if (releaseCatalog?.mode === 'releases') return selectedRelease?.compatible ?? false
     if (!plugin || !maimaiVersion) return true
@@ -468,6 +472,11 @@ export function PluginDetailPage({
 
   const isCompatible = checkCompatibility()
   const displayManifest = selectedRelease?.manifest || plugin.manifest
+  const isCompatibilityMode = !isBuiltin && isCompatible && maimaiVersion && isPluginCompatibilityMode(
+    displayManifest.host_application.min_version,
+    displayManifest.host_application.max_version,
+    maimaiVersion
+  )
   const detailActionButtonClassName = 'h-10! flex-1 px-3 text-sm'
   const detailActionButtons = (
     <div className="flex min-w-0 flex-wrap items-center gap-2">
@@ -591,6 +600,7 @@ export function PluginDetailPage({
                         pluginId={plugin.id}
                         manifest={plugin.manifest}
                         installed={isInstalled}
+                        installedVersion={installedVersion ?? undefined}
                         marketplaceIconUrl={plugin.assets?.icon_64}
                         className="h-20 w-20"
                         iconClassName="h-7 w-7"
@@ -618,6 +628,11 @@ export function PluginDetailPage({
                           <Badge variant="outline" className="text-sm border-orange-500 text-orange-500">
                             <RefreshCw className="h-3 w-3 mr-1" />
                             可更新
+                          </Badge>
+                        )}
+                        {isCompatibilityMode && (
+                          <Badge variant="outline" className="text-sm border-orange-500! bg-orange-500! text-white!">
+                            兼容模式
                           </Badge>
                         )}
                         {!isCompatible && (
@@ -671,7 +686,7 @@ export function PluginDetailPage({
                   </select>
                 </label>
               )}
-              {detailActionButtons}
+              {isBuiltin ? <p className="text-sm text-muted-foreground">内置插件随本体更新，可在管理页启用或停用。</p> : detailActionButtons}
               {operationProgress?.plugin_id === plugin.id && (
                 <div className="space-y-2 text-sm" role="status" aria-live="polite">
                   <div className="flex items-center justify-between gap-2">

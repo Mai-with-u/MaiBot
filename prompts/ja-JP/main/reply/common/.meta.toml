@@ -1,0 +1,9 @@
+[maisaka_expression_selector]
+display_name = "表現の選択"
+advanced = true
+description = "チャットの文脈に基づき、候補の中から今回の返信に合う表現を選びます。"
+
+[reply_supplement]
+display_name = "返信補足の構成"
+advanced = true
+description = "本文の並行生成中に、引用・添付・送信順などの返信補足を構成します。"

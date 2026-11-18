@@ -1,0 +1,12 @@
+/* 工具行下的筛选面板：不加底色和外框，上沿一道分隔线，和所在外壳同材质。 */
+[data-filter-panel='true'] {
+  padding-top: 0.625rem;
+  border-top: 1px solid hsl(var(--border));
+}
+
+/* 千禧：刻线（暗线 + 亮线），和卡片标题条下沿一致。 */
+:root[data-dashboard-style='millennium'] [data-filter-panel='true'] {
+  border-top: 2px solid var(--mil-lo);
+  box-shadow: inset 0 2px 0 var(--mil-hi);
+  padding-top: 0.75rem;
+}

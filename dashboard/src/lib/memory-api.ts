@@ -1,6 +1,7 @@
 import type { PluginConfigSchema } from '@/lib/plugin-api'
 import type { VectorSpace, VectorSpaceList } from '@/types/vector-space'
 
+import { scopeBotResourcePath } from '@/host/state'
 import { backendApi } from '@/lib/http'
 import type { HttpMethod } from '@/lib/http'
 
@@ -2555,7 +2556,7 @@ export async function getMemoryImage(assetId: string): Promise<MemoryImageDetail
 }
 
 export function getMemoryImageContentUrl(assetId: string): string {
-  return `${API_BASE}/images/${encodeURIComponent(assetId)}/content`
+  return scopeBotResourcePath(`${API_BASE}/images/${encodeURIComponent(assetId)}/content`)
 }
 
 export async function reindexMemoryImages(): Promise<

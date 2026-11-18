@@ -127,7 +127,7 @@ def compress_messages(items: list[ContextItem], img_target_size: int = 1 * 1024 
             return base64_data
 
         # 如果转换后仍然大于目标大小，进行尺寸压缩
-        scale = min(1.0, target_size / len(base64_data))
+        scale = target_size / len(base64_data)
         image_data, original_size, new_size = rescale_image(image_data, scale)
         base64_data = base64.b64encode(image_data).decode("utf-8")
 

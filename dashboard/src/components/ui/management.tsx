@@ -1,6 +1,6 @@
 import { useId, useRef, useState, type DragEvent, type ReactNode } from 'react'
 import * as RadioGroupPrimitive from '@radix-ui/react-radio-group'
-import { FileArchive, Upload, X } from 'lucide-react'
+import { Check, FileArchive, Upload, X } from 'lucide-react'
 
 import { formatStorageBytes } from '@/lib/storage-size'
 import { cn } from '@/lib/utils'
@@ -106,6 +106,66 @@ export function SelectionCard({
       </span>
       {required && <span data-selection-part="required">必选</span>}
     </label>
+  )
+}
+
+interface OptionCardProps {
+  selected: boolean
+  onSelect: () => void
+  title: ReactNode
+  description?: ReactNode
+  /** 标题左侧的图标；选中时换成主色实心底 */
+  icon?: ReactNode
+  /** 标题下方的额外内容，比如字体样张 */
+  children?: ReactNode
+  disabled?: boolean
+  className?: string
+}
+
+/** 多选一的大卡片：选中时主色边加右上角对勾，未选显示空心圆，色弱时也分得清。 */
+export function OptionCard({
+  selected,
+  onSelect,
+  title,
+  description,
+  icon,
+  children,
+  disabled,
+  className,
+}: OptionCardProps) {
+  return (
+    <button
+      type="button"
+      aria-pressed={selected}
+      disabled={disabled}
+      onClick={onSelect}
+      data-dashboard-option-card="true"
+      className={cn(
+        'bg-card hover:border-primary/70 hover:bg-accent/40 flex items-start gap-3 rounded-lg border p-4 text-left transition-all disabled:cursor-not-allowed disabled:opacity-50',
+        selected && 'border-primary bg-primary/10 shadow-sm',
+        className
+      )}
+    >
+      {icon && (
+        <span
+          data-option-part="icon"
+          className={cn(
+            'bg-background text-muted-foreground shrink-0 rounded-md border p-2 [&_svg]:h-5 [&_svg]:w-5',
+            selected && 'border-primary bg-primary text-primary-foreground'
+          )}
+        >
+          {icon}
+        </span>
+      )}
+      <span className="min-w-0 flex-1 space-y-1">
+        <span className="block font-semibold">{title}</span>
+        {children}
+        {description && <span className="text-muted-foreground block text-sm">{description}</span>}
+      </span>
+      <span data-option-part="indicator" aria-hidden="true" data-selected={selected}>
+        {selected && <Check />}
+      </span>
+    </button>
   )
 }
 

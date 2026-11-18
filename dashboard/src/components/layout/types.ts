@@ -1,10 +1,6 @@
-import type { ComponentType, ReactNode } from 'react'
+import type { ComponentType } from 'react'
 
-export interface LayoutProps {
-  children: ReactNode
-}
-
-export type WorkspaceMode = 'settings' | 'chat' | 'logs' | `plugin:${string}`
+import type { FeatureFlags } from '@/hooks/use-feature-flags'
 
 export type MenuIcon = ComponentType<{
   className?: string
@@ -20,7 +16,7 @@ export interface MenuItem {
   external?: boolean
   searchDescription?: string
   tourId?: string
-  featureFlag?: 'replyEffects'
+  featureFlag?: keyof FeatureFlags
 }
 
 export interface MenuSection {

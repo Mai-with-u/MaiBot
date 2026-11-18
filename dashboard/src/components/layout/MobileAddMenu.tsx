@@ -12,6 +12,7 @@ import { MOBILE_GLASS_CLASS } from './mobile-glass'
 export interface MobileAddMenuItem {
   label: string
   onSelect: () => void
+  disabled?: boolean
 }
 
 interface MobileAddMenuProps {
@@ -46,6 +47,7 @@ export function MobileAddMenu({ label, items }: MobileAddMenuProps) {
           <DropdownMenuItem
             key={item.label}
             onSelect={item.onSelect}
+            disabled={item.disabled}
             className="h-12 rounded-[18px] px-4 text-[17px]"
           >
             {item.label}

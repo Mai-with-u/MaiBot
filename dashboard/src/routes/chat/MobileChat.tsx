@@ -21,6 +21,11 @@ import { cn } from '@/lib/utils'
 import type { SessionInfo, StageStatusInfo } from '@/routes/monitor/use-maisaka-monitor'
 import { StageStatusLabel } from '@/routes/monitor/StageStatusLabel'
 
+import { Button } from '@/components/ui/button'
+import { ConversationAvatar } from '@/components/ui/conversation'
+
+import { useChatTabAvatarUrl } from './local-bot-avatar'
+import { isFocusFlowId } from './observed-sessions'
 import type { ChatTab, ObservedMessagePreview } from './types'
 import { getChatTabDisplayName } from './utils'
 
@@ -289,10 +294,7 @@ function TabAvatar({ tab }: { tab: ChatTab }) {
   const { t } = useTranslation()
   const isVirtual = tab.type === 'virtual'
   const displayName = getChatTabDisplayName(tab, t('chat.botNameFallback'))
-  const avatarUrl = useResolvedAvatarUrl(
-    isVirtual ? tab.virtualConfig?.platform : 'qq',
-    isVirtual ? tab.virtualConfig?.userId : tab.sessionInfo.bot_qq
-  )
+  const avatarUrl = useChatTabAvatarUrl(tab)
   const Icon = isVirtual ? UserCircle2 : Bot
   return (
     <span className="relative shrink-0">
@@ -347,6 +349,8 @@ function ObservedAvatar({ session }: { session: SessionInfo }) {
 }
 
 interface MobileChatListProps {
+  agentEnabled?: boolean
+  onOpenAgent?: () => void
   tabs: ChatTab[]
   observedSessions: Map<string, SessionInfo>
   observedSessionsError?: boolean
@@ -360,6 +364,8 @@ interface MobileChatListProps {
 
 /** 手机端会话列表：点按进入全屏对话页，左滑露出设置/关闭 */
 export function MobileChatList({
+  agentEnabled = false,
+  onOpenAgent,
   tabs,
   observedSessions,
   observedSessionsError = false,
@@ -381,6 +387,7 @@ export function MobileChatList({
       getChatTabDisplayName(tab, t('chat.botNameFallback')).toLowerCase().includes(normalizedQuery)
   )
   const visibleObserved = Array.from(observedSessions.values())
+    .filter((session) => session.platform !== 'internal')
     .sort((a, b) => b.lastActivity - a.lastActivity)
     .filter(
       (session) => !normalizedQuery || session.sessionName.toLowerCase().includes(normalizedQuery)
@@ -448,7 +455,7 @@ export function MobileChatList({
           return (
             <SwipeRow
               key={session.sessionId}
-              actions={[
+              actions={isFocusFlowId(session.sessionId) ? [] : [
                 {
                   label: t('chat.mobile.settings'),
                   onClick: () => onOpenObservedSettings(session.sessionId),
@@ -458,7 +465,7 @@ export function MobileChatList({
               <ChatRow
                 avatar={<ObservedAvatar session={session} />}
                 title={session.sessionName}
-                badge={t('chat.sidebar.observedBadge')}
+                badge={isFocusFlowId(session.sessionId) ? 'Focus 共享流' : t('chat.sidebar.observedBadge')}
                 preview={preview}
                 time={formatRowTime(session.lastActivity, language)}
                 onOpen={() => onOpenObserved(session.sessionId)}
@@ -499,6 +506,15 @@ export function MobileChatList({
       {/* 与麦麦的会话和麦麦的聊天流放在同一个列表里 */}
       <div data-mobile-chat-screen="true">
         {localSection}
+        {agentEnabled && onOpenAgent && (!normalizedQuery || t('sidebar.menu.agent').toLowerCase().includes(normalizedQuery)) && (
+          <ChatRow
+            avatar={<ConversationAvatar name={t('sidebar.menu.agent')} bot />}
+            title={t('sidebar.menu.agent')}
+            preview=""
+            time=""
+            onOpen={onOpenAgent}
+          />
+        )}
         {observedSection}
       </div>
     </div>
@@ -512,6 +528,7 @@ interface MobileChatRoomBarProps {
   avatar: ReactNode
   onBack: () => void
   /** 观察聊天流显示设置入口，本地会话显示「我的头像」入口 */
+  onObserve?: () => void
   onOpenSettings?: () => void
   userAvatar?: {
     userId: string
@@ -530,6 +547,7 @@ export function MobileChatRoomBar({
   avatar,
   onBack,
   onOpenSettings,
+  onObserve,
   userAvatar,
 }: MobileChatRoomBarProps) {
   const { t } = useTranslation()
@@ -582,6 +600,7 @@ export function MobileChatRoomBar({
         </span>
       </div>
       <span className="flex-1" />
+      {onObserve && <Button variant="outline" size="sm" onClick={onObserve}>观察</Button>}
       {onOpenSettings && (
         <button
           type="button"
@@ -652,10 +671,7 @@ export function MobileChatRoomBar({
 export function MobileChatRoomTabAvatar({ tab }: { tab: ChatTab }) {
   const { t } = useTranslation()
   const isVirtual = tab.type === 'virtual'
-  const avatarUrl = useResolvedAvatarUrl(
-    isVirtual ? tab.virtualConfig?.platform : 'qq',
-    isVirtual ? tab.virtualConfig?.userId : tab.sessionInfo.bot_qq
-  )
+  const avatarUrl = useChatTabAvatarUrl(tab)
   const Icon = isVirtual ? UserCircle2 : Bot
   return (
     <Avatar className="h-[34px] w-[34px] shrink-0">

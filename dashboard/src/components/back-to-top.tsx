@@ -10,6 +10,7 @@ const HIDDEN_TRANSLATE_X = 128
 const DRAG_THRESHOLD = 4
 const VIEWPORT_MARGIN = 16
 const BACK_TO_TOP_OFFSET_STORAGE_KEY = 'maibot-back-to-top-offset-y'
+const PAGE_SCROLLER_SELECTOR = '[data-dashboard-main="true"], [data-dashboard-page-scroll="true"] > [data-radix-scroll-area-viewport]'
 
 const clamp = (value: number, min: number, max: number) => Math.min(Math.max(value, min), max)
 
@@ -31,7 +32,7 @@ export function BackToTop() {
   const scrollerRef = useRef<HTMLElement | null>(null)
   const suppressClickRef = useRef(false)
   const locationKey = useRouterState({
-    select: (state) => state.location.pathname,
+    select: (state) => state.location.href,
   })
   const prefersTouchDrag = typeof window !== 'undefined' && window.matchMedia('(pointer: coarse)').matches
 
@@ -39,8 +40,9 @@ export function BackToTop() {
     const handleScroll = (e: Event) => {
       const target = e.target
 
-      // 只跟随布局的主滚动区；表格、列表和弹窗内部的滚动不能接管页面回顶。
-      if (!(target instanceof HTMLElement) || !target.matches('[data-dashboard-main="true"]')) return
+      // 只跟随主滚动区或明确标记的页面滚动区，排除表格、弹窗与隐藏的页面面板。
+      if (!(target instanceof HTMLElement) || !target.matches(PAGE_SCROLLER_SELECTOR)
+        || target.closest('[inert], [aria-hidden="true"]')) return
 
       scrollerRef.current = target
       const scrollTop = target.scrollTop
@@ -55,7 +57,7 @@ export function BackToTop() {
       setVisible(false)
     }
 
-    // scroll 不冒泡，在捕获阶段接收事件后只处理主滚动区。
+    // scroll 不冒泡，在捕获阶段接收事件后只处理页面滚动区。
     window.addEventListener('scroll', handleScroll, { capture: true, passive: true })
     window.addEventListener('popstate', handleNavigation)
     window.addEventListener('hashchange', handleNavigation)
@@ -69,8 +71,16 @@ export function BackToTop() {
   useEffect(() => {
     scrollerRef.current = null
     const frameId = window.requestAnimationFrame(() => {
-      setProgress(0)
-      setVisible(false)
+      // 返回市场时可能保留原滚动位置，无需再次滚动即可恢复回顶按钮。
+      const scrollers = Array.from(document.querySelectorAll<HTMLElement>(PAGE_SCROLLER_SELECTOR))
+      const target = scrollers.reverse().find((element) => (
+        !element.closest('[inert], [aria-hidden="true"]')
+        && element.scrollHeight > element.clientHeight + 100
+      ))
+      scrollerRef.current = target ?? null
+      const height = target ? target.scrollHeight - target.clientHeight : 0
+      setProgress(target && height > 0 ? (target.scrollTop / height) * 100 : 0)
+      setVisible(!!target && target.scrollTop > 300)
     })
 
     return () => window.cancelAnimationFrame(frameId)

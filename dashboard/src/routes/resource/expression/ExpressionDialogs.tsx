@@ -1,6 +1,5 @@
-import { Database, Info } from 'lucide-react'
-import { useEffect, useRef, useState } from 'react'
-import type { ChangeEvent } from 'react'
+import { Info } from 'lucide-react'
+import { useEffect, useState } from 'react'
 
 import { Alert, AlertDescription } from '@/components/ui/alert'
 import {
@@ -14,7 +13,6 @@ import {
   AlertDialogTitle,
 } from '@/components/ui/alert-dialog'
 import { Button } from '@/components/ui/button'
-import { Checkbox } from '@/components/ui/checkbox'
 import {
   Dialog,
   DialogBody,
@@ -26,7 +24,7 @@ import {
 } from '@/components/ui/dialog'
 import { Input } from '@/components/ui/input'
 import { Label } from '@/components/ui/label'
-import { ThinkingIllustration } from '@/components/ui/thinking-illustration'
+import { Switch } from '@/components/ui/switch'
 import {
   Select,
   SelectContent,
@@ -37,347 +35,9 @@ import {
 import { useToast } from '@/hooks/use-toast'
 import { formatChatDisplayName } from '@/lib/chat-display'
 
-import {
-  createExpression,
-  getExpressionChatTargets,
-  importLegacyExpressions,
-  previewLegacyExpressionImport,
-  previewLegacyExpressionImportFile,
-  updateExpression,
-} from '@/lib/expression-api'
+import { createExpression, updateExpression } from '@/lib/expression-api'
 
-import type {
-  ChatInfo,
-  Expression,
-  ExpressionCreateRequest,
-  ExpressionUpdateRequest,
-  LegacyExpressionGroupPreview,
-  LegacyExpressionImportPreviewResponse,
-} from '@/types/expression'
-
-/**
- * 从旧版数据库导入表达方式对话框
- */
-export function LegacyExpressionImportDialog({
-  open,
-  onOpenChange,
-  chatList,
-  onSuccess,
-}: {
-  open: boolean
-  onOpenChange: (open: boolean) => void
-  chatList: ChatInfo[]
-  onSuccess: () => void
-}) {
-  const [dbPath, setDbPath] = useState('')
-  const [preview, setPreview] = useState<LegacyExpressionImportPreviewResponse | null>(null)
-  const [targetMap, setTargetMap] = useState<Record<string, string>>({})
-  const [enabledMap, setEnabledMap] = useState<Record<string, boolean>>({})
-  const [targetChatList, setTargetChatList] = useState<ChatInfo[]>(chatList)
-  const [loadingPreview, setLoadingPreview] = useState(false)
-  const [importing, setImporting] = useState(false)
-  const { toast } = useToast()
-  const fileInputRef = useRef<HTMLInputElement>(null)
-  const isBusy = loadingPreview || importing
-
-  const getLocalFilePath = (file: File): string => {
-    return (file as File & { path?: string }).path || ''
-  }
-
-  const handleDialogOpenChange = (nextOpen: boolean) => {
-    if (isBusy) return
-    onOpenChange(nextOpen)
-  }
-
-  useEffect(() => {
-    if (!open) return
-
-    const loadTargets = async () => {
-      try {
-        const targets = await getExpressionChatTargets()
-        setTargetChatList(targets)
-      } catch {
-        setTargetChatList(chatList)
-      }
-    }
-
-    loadTargets()
-  }, [open, chatList])
-
-  const handleFileChange = async (event: ChangeEvent<HTMLInputElement>) => {
-    const file = event.target.files?.[0]
-    event.target.value = ''
-    if (!file) return
-
-    const localPath = getLocalFilePath(file)
-    setDbPath(localPath || file.name)
-    setLoadingPreview(true)
-    try {
-      const result = localPath
-        ? await previewLegacyExpressionImport({ db_path: localPath })
-        : await previewLegacyExpressionImportFile(file)
-
-      const initialMap: Record<string, string> = {}
-      const initialEnabledMap: Record<string, boolean> = {}
-      result.groups.forEach((group) => {
-        if (group.matched_sessions.length > 1) {
-          initialMap[group.old_chat_id] = '__all_matched__'
-        } else if (group.matched_session_id) {
-          initialMap[group.old_chat_id] = group.matched_session_id
-        }
-        initialEnabledMap[group.old_chat_id] =
-          group.matched_sessions.length > 0 || Boolean(group.matched_session_id)
-      })
-      setPreview(result)
-      setDbPath(localPath || result.db_path)
-      setTargetMap(initialMap)
-      setEnabledMap(initialEnabledMap)
-    } catch (error) {
-      toast({
-        title: '预览失败',
-        description: error instanceof Error ? error.message : '预览旧版导入失败',
-        variant: 'destructive',
-      })
-    } finally {
-      setLoadingPreview(false)
-    }
-  }
-
-  const handleImport = async () => {
-    if (!preview) return
-
-    const mappings = preview.groups.map((group) => {
-      const selectedTarget = targetMap[group.old_chat_id]
-      const targetChatIds =
-        selectedTarget === '__all_matched__'
-          ? group.matched_sessions.map((session) => session.session_id)
-          : []
-      return {
-        old_chat_id: group.old_chat_id,
-        target_chat_id:
-          enabledMap[group.old_chat_id] && selectedTarget !== '__all_matched__'
-            ? selectedTarget || null
-            : null,
-        target_chat_ids: enabledMap[group.old_chat_id] ? targetChatIds : [],
-      }
-    })
-
-    setImporting(true)
-    try {
-      const result = await importLegacyExpressions({
-        db_path: preview.db_path,
-        mappings,
-      })
-      toast({
-        title: '导入完成',
-        description: result.message,
-      })
-      onSuccess()
-      onOpenChange(false)
-    } catch (error) {
-      toast({
-        title: '导入失败',
-        description: error instanceof Error ? error.message : '旧版导入失败',
-        variant: 'destructive',
-      })
-    } finally {
-      setImporting(false)
-    }
-  }
-
-  const renderGroupLabel = (group: LegacyExpressionGroupPreview) => {
-    if (group.platform && group.target_id && group.chat_type) {
-      return `${group.platform}:${group.chat_type === 'group' ? '群' : '私聊'}:${group.target_id}`
-    }
-    return group.old_chat_id
-  }
-
-  return (
-    <Dialog open={open} onOpenChange={handleDialogOpenChange}>
-      <DialogContent className="!fixed !top-4 !translate-y-0 [--dialog-width:72rem] sm:!top-6">
-        {isBusy && (
-          <div className="bg-background/80 absolute inset-0 z-20 flex items-center justify-center rounded-lg backdrop-blur-sm">
-            <div className="bg-background rounded-lg border px-5 py-4 text-center shadow-lg">
-              {loadingPreview ? (
-                <ThinkingIllustration className="mx-auto" />
-              ) : (
-                <div className="text-sm font-medium">正在导入表达方式，请勿关闭</div>
-              )}
-              <div className="text-muted-foreground mt-1 text-xs">
-                数据量较大时可能需要等待一会儿
-              </div>
-            </div>
-          </div>
-        )}
-        <DialogHeader>
-          <DialogTitle className="flex items-center gap-2">
-            <Database className="h-5 w-5" />
-            从旧版本导入
-          </DialogTitle>
-          <DialogDescription>
-            读取旧数据库中的 expression 表，并根据 chat_streams 自动匹配当前聊天流。
-          </DialogDescription>
-        </DialogHeader>
-
-        <DialogBody>
-          <div className="space-y-4">
-            <div className="flex flex-col gap-2 sm:flex-row sm:items-end">
-              <div className="flex-1 space-y-2">
-                <Label htmlFor="legacy-db-path">旧数据库路径</Label>
-                <Input
-                  id="legacy-db-path"
-                  value={dbPath}
-                  readOnly
-                  placeholder="选择旧版 SQLite 数据库文件"
-                />
-              </div>
-              <Button
-                variant="outline"
-                onClick={() => fileInputRef.current?.click()}
-                disabled={isBusy}
-              >
-                浏览
-              </Button>
-              <input
-                ref={fileInputRef}
-                type="file"
-                accept=".db,.sqlite,.sqlite3,application/vnd.sqlite3,application/octet-stream"
-                className="hidden"
-                onChange={handleFileChange}
-              />
-            </div>
-
-            {preview && (
-              <div className="space-y-3">
-                <div className="text-muted-foreground flex flex-wrap gap-2 text-sm">
-                  <span>表达方式 {preview.total_count} 条</span>
-                  <span>已匹配 {preview.matched_count} 组</span>
-                  <span>未匹配 {preview.unmatched_count} 组</span>
-                </div>
-
-                <div className="max-h-[50vh] overflow-y-auto rounded-lg border">
-                  <div className="bg-muted/50 text-muted-foreground grid grid-cols-[2.5rem_minmax(0,1.4fr)_5rem_minmax(0,1.1fr)_minmax(14rem,1fr)] gap-3 border-b px-3 py-2 text-xs font-medium">
-                    <div>导入</div>
-                    <div>旧聊天流</div>
-                    <div>数量</div>
-                    <div>自动匹配</div>
-                    <div>导入到</div>
-                  </div>
-                  {preview.groups.map((group) => (
-                    <div
-                      key={group.old_chat_id}
-                      className="grid grid-cols-[2.5rem_minmax(0,1.4fr)_5rem_minmax(0,1.1fr)_minmax(14rem,1fr)] items-center gap-3 border-b px-3 py-2 last:border-b-0"
-                    >
-                      <Checkbox
-                        checked={enabledMap[group.old_chat_id] ?? false}
-                        onCheckedChange={(checked) => {
-                          setEnabledMap((current) => ({
-                            ...current,
-                            [group.old_chat_id]: checked === true,
-                          }))
-                        }}
-                      />
-                      <div className="min-w-0">
-                        <div
-                          className="truncate text-sm font-medium"
-                          title={renderGroupLabel(group)}
-                        >
-                          {renderGroupLabel(group)}
-                        </div>
-                        <div
-                          className="text-muted-foreground truncate text-xs"
-                          title={group.old_chat_id}
-                        >
-                          {group.old_chat_id}
-                        </div>
-                      </div>
-                      <div className="text-sm">{group.expression_count}</div>
-                      <div className="min-w-0 text-sm">
-                        {group.matched ? (
-                          <span
-                            className="truncate text-green-600"
-                            title={
-                              group.matched_sessions
-                                .map((session) => session.chat_name)
-                                .join(' / ') || undefined
-                            }
-                          >
-                            {group.matched_sessions.length > 1
-                              ? `${group.matched_sessions.length} 个匹配`
-                              : group.matched_chat_name || group.matched_session_id}
-                          </span>
-                        ) : (
-                          <span className="text-amber-600">未找到</span>
-                        )}
-                      </div>
-                      <Select
-                        value={targetMap[group.old_chat_id] || 'skip'}
-                        onValueChange={(value) => {
-                          setTargetMap((current) => ({
-                            ...current,
-                            [group.old_chat_id]: value === 'skip' ? '' : value,
-                          }))
-                          setEnabledMap((current) => ({
-                            ...current,
-                            [group.old_chat_id]: value !== 'skip',
-                          }))
-                        }}
-                      >
-                        <SelectTrigger className="h-8">
-                          <SelectValue placeholder="跳过" />
-                        </SelectTrigger>
-                        <SelectContent>
-                          <SelectItem value="skip">跳过</SelectItem>
-                          {group.matched_sessions.length > 1 && (
-                            <SelectItem value="__all_matched__">全部匹配项</SelectItem>
-                          )}
-                          {group.matched_sessions.map((session) => (
-                            <SelectItem
-                              key={`matched-${session.session_id}`}
-                              value={session.session_id}
-                            >
-                              {formatChatDisplayName(session.chat_name, session.account_id)}
-                            </SelectItem>
-                          ))}
-                          {targetChatList
-                            .filter(
-                              (chat) =>
-                                !group.matched_sessions.some(
-                                  (session) => session.session_id === chat.chat_id
-                                )
-                            )
-                            .map((chat) => (
-                              <SelectItem key={chat.chat_id} value={chat.chat_id}>
-                                {formatChatDisplayName(chat.chat_name, chat.account_id)}
-                              </SelectItem>
-                            ))}
-                        </SelectContent>
-                      </Select>
-                    </div>
-                  ))}
-                  {preview.groups.length === 0 && (
-                    <div className="text-muted-foreground px-3 py-8 text-center text-sm">
-                      未读取到可导入的表达方式
-                    </div>
-                  )}
-                </div>
-              </div>
-            )}
-          </div>
-        </DialogBody>
-
-        <DialogFooter>
-          <Button variant="outline" onClick={() => onOpenChange(false)} disabled={isBusy}>
-            取消
-          </Button>
-          <Button onClick={handleImport} disabled={!preview || isBusy}>
-            {importing ? '导入中...' : '确认导入'}
-          </Button>
-        </DialogFooter>
-      </DialogContent>
-    </Dialog>
-  )
-}
+import type { ChatInfo, Expression, ExpressionCreateRequest, ExpressionUpdateRequest } from '@/types/expression'
 
 /**
  * 表达方式创建对话框
@@ -391,7 +51,7 @@ export function ExpressionCreateDialog({
   open: boolean
   onOpenChange: (open: boolean) => void
   chatList: ChatInfo[]
-  onSuccess: () => void
+  onSuccess: (isGlobal: boolean) => void
 }) {
   const [formData, setFormData] = useState<ExpressionCreateRequest>({
     situation: '',
@@ -402,10 +62,10 @@ export function ExpressionCreateDialog({
   const { toast } = useToast()
 
   const handleCreate = async () => {
-    if (!formData.situation || !formData.style || !formData.chat_id) {
+    if (!formData.situation.trim() || !formData.style.trim() || (!formData.is_global && !formData.chat_id)) {
       toast({
         title: '验证失败',
-        description: '请填写必填字段：情境、风格和聚天',
+        description: formData.is_global ? '请填写必填字段：情境和风格' : '请填写必填字段：情境、风格和聊天',
         variant: 'destructive',
       })
       return
@@ -413,7 +73,9 @@ export function ExpressionCreateDialog({
 
     try {
       setSaving(true)
-      await createExpression(formData)
+      await createExpression(formData.is_global ? {
+        situation: formData.situation, style: formData.style, is_global: true,
+      } : formData)
       toast({
         title: '创建成功',
         description: '表达方式已创建',
@@ -423,7 +85,7 @@ export function ExpressionCreateDialog({
         style: '',
         chat_id: '',
       })
-      onSuccess()
+      onSuccess(formData.is_global === true)
     } catch (error) {
       toast({
         title: '创建失败',
@@ -470,7 +132,12 @@ export function ExpressionCreateDialog({
               </div>
             </div>
 
-            <div className="space-y-2">
+            <div className="flex items-center gap-2">
+              <Switch id="expression-create-global" checked={formData.is_global ?? false} disabled={saving}
+                onCheckedChange={(checked) => setFormData({ ...formData, is_global: checked })} />
+              <Label htmlFor="expression-create-global">全局（所有聊天）</Label>
+            </div>
+            {!formData.is_global && <div className="space-y-2">
               <Label htmlFor="chat_id">
                 聊天 <span className="text-destructive">*</span>
               </Label>
@@ -478,7 +145,7 @@ export function ExpressionCreateDialog({
                 value={formData.chat_id}
                 onValueChange={(value) => setFormData({ ...formData, chat_id: value })}
               >
-                <SelectTrigger>
+                <SelectTrigger id="chat_id">
                   <SelectValue placeholder="选择关联的聊天" />
                 </SelectTrigger>
                 <SelectContent>
@@ -494,7 +161,7 @@ export function ExpressionCreateDialog({
                   ))}
                 </SelectContent>
               </Select>
-            </div>
+            </div>}
           </div>
         </DialogBody>
 

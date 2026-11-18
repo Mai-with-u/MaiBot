@@ -576,13 +576,12 @@ describe('createListItemEditorHook', () => {
     )
 
     expect(screen.getByText('当前配置已折叠，可手动展开查看或编辑。')).toBeInTheDocument()
-    // 可见文案是「展开」，但 aria-label 使用源码里的默认乱码字节
-    const expandButton = screen.getByRole('button', { name: '灞曞紑' })
+    const expandButton = screen.getByRole('button', { name: '展开' })
     expect(expandButton).toHaveTextContent('展开')
 
     await user.click(expandButton)
     expect(screen.getByText('尚未添加任何条目，点击下方按钮新增。')).toBeInTheDocument()
-    const collapseButton = screen.getByRole('button', { name: '鎶樺彔' })
+    const collapseButton = screen.getByRole('button', { name: '折叠' })
     expect(collapseButton).toHaveTextContent('折叠')
   })
 

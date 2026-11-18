@@ -14,9 +14,10 @@ R = TypeVar("R")
 
 @contextmanager
 def log_operation(
-    logger: BoundLogger, operation: str, *, report: bool = False, quiet: bool = False, **details: Any
+    logger: BoundLogger, operation: str, *, report: bool = False, quiet: bool = False,
+    warn_slow: bool = True, **details: Any
 ) -> Iterator[Dict[str, Any]]:
-    """慢操作或异常记 WARNING；quiet 省略正常操作日志，维护可显式记 INFO。"""
+    """慢操作或异常记 WARNING；子阶段可关闭慢告警，quiet 省略正常日志，report 显式记 INFO。"""
     started_at = time.perf_counter()
     thread_name = threading.current_thread().name
     log = logger.info if report else logger.debug
@@ -28,8 +29,9 @@ def log_operation(
         outcome = "completed"
     finally:
         elapsed = time.perf_counter() - started_at
-        log = logger.warning if elapsed >= 0.5 or outcome == "failed" else logger.info if report else logger.debug
-        if not quiet or elapsed >= 0.5 or outcome == "failed":
+        slow = warn_slow and elapsed >= 0.5
+        log = logger.warning if slow or outcome == "failed" else logger.info if report else logger.debug
+        if not quiet or slow or outcome == "failed":
             log(
                 f"存储操作结束: operation={operation} thread={thread_name} "
                 f"耗时={elapsed:.3f}s outcome={outcome} details={details}"

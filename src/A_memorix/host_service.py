@@ -16,8 +16,9 @@ import tomlkit
 
 from src.common.logger import get_logger
 from src.common.runtime_loop import run_on_main_loop
-from src.common.utils.utils_config import AMemorixConfigUtils
+from src.services.sharing_group_service import resolve_scope
 from src.config.official_configs import AMemorixConfig
+from src.config.image_memory import is_image_embedding_configured
 from src.webui.utils.toml_utils import _update_toml_doc
 
 from .core.runtime.admin_contracts import (
@@ -222,6 +223,19 @@ class AMemorixHostService:
         return await run_on_main_loop(self._invoke_on_runtime(component_name, args, timeout_ms=timeout_ms))
 
     async def _invoke_on_runtime(
+        self, component_name: str, args: Dict[str, Any] | None = None,
+        *, timeout_ms: Optional[int] = None,
+    ) -> Any:
+        from src.services.chat_migration_gate import chat_migration_gate
+
+        payload = args or {}
+        session_id = str(payload.get("chat_id") or payload.get("session_id") or "")
+        if session_id and component_name != "memory_chat_migration":
+            async with chat_migration_gate.activity(session_id):
+                return await self._invoke_unguarded(component_name, args, timeout_ms=timeout_ms)
+        return await self._invoke_unguarded(component_name, args, timeout_ms=timeout_ms)
+
+    async def _invoke_unguarded(
         self,
         component_name: str,
         args: Dict[str, Any] | None = None,
@@ -253,16 +267,28 @@ class AMemorixHostService:
                 await self._ensure_startup_task()
             return await self._unavailable_response(component_name, payload)
 
+        if component_name == "memory_chat_migration":
+            from .core.runtime.services.chat_migration_service import ChatMemoryMigration
+            from src.services.chat_migration_gate import settled_thread
+
+            service = ChatMemoryMigration(kernel.metadata_store)
+            action = payload["action"]
+            arguments = {key: value for key, value in payload.items() if key != "action"}
+            if action == "snapshot":
+                return await asyncio.to_thread(service.snapshot, **arguments)
+            if action == "apply":
+                return await settled_thread(service.apply, **arguments)
+            if action == "restore":
+                return await settled_thread(service.restore, **arguments)
+            raise ValueError("未知记忆迁移动作")
+
         if component_name == "search_memory":
             from .core.runtime.sdk_memory_kernel import KernelSearchRequest
 
             chat_id = str(payload.get("chat_id", "") or "").strip()
-            config = self._read_config()
-            global_memory_sharing_enabled = bool(config.get("global_memory_sharing_enabled", False))
+            shared_ids, global_memory_sharing_enabled = resolve_scope(chat_id, "memory")
             search_chat_id = "" if global_memory_sharing_enabled else chat_id
-            shared_chat_ids = ()
-            if not global_memory_sharing_enabled:
-                shared_chat_ids = tuple(AMemorixConfigUtils.get_shared_memory_session_ids(chat_id))
+            shared_chat_ids = () if global_memory_sharing_enabled else tuple(shared_ids)
 
             return await kernel.search_memory(
                 KernelSearchRequest(
@@ -317,15 +343,8 @@ class AMemorixHostService:
             scoped_payload = dict(payload)
             if action in {"search", "get"} and "chat_ids" not in scoped_payload:
                 chat_id = str(payload.get("chat_id") or "").strip()
-                config = self._read_config()
-                if bool(config.get("global_memory_sharing_enabled", False)):
-                    scoped_payload["chat_ids"] = None
-                else:
-                    scoped_payload["chat_ids"] = [
-                        item
-                        for item in (chat_id, *AMemorixConfigUtils.get_shared_memory_session_ids(chat_id))
-                        if item
-                    ]
+                shared_ids, is_global = resolve_scope(chat_id, "memory")
+                scoped_payload["chat_ids"] = None if is_global else sorted(shared_ids)
             scoped_payload.pop("action", None)
             return await kernel.image_memory(action=action, **scoped_payload)
 
@@ -375,9 +394,10 @@ class AMemorixHostService:
             async with self._lock:
                 self._runtime_state = "migrating"
                 self._startup_error_stage = "startup_migration"
-            kernel = SDKMemoryKernel(plugin_root=repo_root(), config=config)
+            kernel = SDKMemoryKernel(plugin_root=repo_root(), config=self._build_kernel_config(config))
             await kernel.initialize()
-            async with self._lock:
+            # 等待启动期写入落盘后再发布就绪状态，避免回放快照漏掉正在入队的记录。
+            async with self._queue_lock, self._lock:
                 self._kernel = kernel
                 self._runtime_state = "ready"
                 self._startup_error = ""
@@ -417,6 +437,15 @@ class AMemorixHostService:
                     self._startup_error_stage = "startup"
                 self._startup_finished_at = time.time()
             logger.error(f"A_Memorix 后台初始化失败: {exc}", exc_info=True)
+
+    @staticmethod
+    def _build_kernel_config(config: Dict[str, Any]) -> Dict[str, Any]:
+        """仅对运行时关闭缺少图片嵌入模型的图片记忆，保留用户配置。"""
+        image_config = dict(config.get("image_memory", {}))
+        image_config["enabled"] = image_config.get("enabled", True) and is_image_embedding_configured(
+            image_config.get("task_name", "image_embedding")
+        )
+        return {**config, "image_memory": image_config}
 
     def _read_config(self) -> Dict[str, Any]:
         if self._config_cache is not None:
@@ -508,7 +537,7 @@ class AMemorixHostService:
             component_name = str(item.get("component_name", "") or "").strip()
             if not record_id or record_id in done_ids:
                 continue
-            if component_name not in {"ingest_summary", "ingest_text", "image_memory"}:
+            if component_name not in {"ingest_summary", "ingest_text", "image_memory", "memory_profile_admin"}:
                 continue
             records.append(item)
         records.sort(key=lambda item: float(item.get("created_at", 0.0) or 0.0))
@@ -563,8 +592,15 @@ class AMemorixHostService:
             "payload": queued_payload,
             "created_at": time.time(),
         }
-        await self._append_jsonl(self._startup_queue_path(), record)
-        self._startup_queue_pending_count += 1
+        async with self._queue_lock:
+            # 等锁期间可能已经完成初始化，此时直接执行，不能写入已读取过的启动队列。
+            if self._runtime_state in {"starting", "migrating"}:
+                await asyncio.to_thread(self._append_jsonl_sync, self._startup_queue_path(), record)
+                self._startup_queue_pending_count += 1
+            else:
+                record = None
+        if record is None:
+            return await self._invoke(component_name, payload)
         return {
             "success": True,
             "queued": True,
@@ -584,7 +620,11 @@ class AMemorixHostService:
             "ingest",
             "describe",
         }
-        if initializing and (component_name in {"ingest_summary", "ingest_text"} or image_write):
+        identity_write = (
+            component_name == "memory_profile_admin"
+            and str(payload.get("action") or "").strip().lower() == "observe_identity"
+        )
+        if initializing and (component_name in {"ingest_summary", "ingest_text"} or image_write or identity_write):
             return await self._enqueue_startup_write(component_name, payload)
 
         reason = "a_memorix_initializing" if initializing else "a_memorix_initialization_failed"
@@ -622,6 +662,11 @@ class AMemorixHostService:
     async def _dispatch_ingest_write(
         self, kernel: SDKMemoryKernel, component_name: str, payload: Dict[str, Any]
     ) -> Any:
+        if component_name == "memory_profile_admin":
+            command = parse_admin_command(component_name, payload)
+            if command.action != "observe_identity":
+                raise ValueError(f"不支持的启动队列身份写入操作: {command.action}")
+            return await dispatch_admin_command(kernel, command)
         if component_name == "ingest_summary":
             return await kernel.ingest_summary(
                 external_id=str(payload.get("external_id", "") or ""),
@@ -671,6 +716,7 @@ class AMemorixHostService:
         if not records:
             return
         logger.info(f"A_Memorix 开始回放启动写入队列: pending={len(records)}")
+        failure_counts: Dict[str, int] = {}
         for record in records:
             record_id = str(record.get("record_id", "") or "").strip()
             component_name = str(record.get("component_name", "") or "").strip()
@@ -699,7 +745,20 @@ class AMemorixHostService:
                         "error": str(exc),
                     },
                 )
-                logger.warning(f"A_Memorix 启动队列回放失败: record={record_id}, error={exc}")
+                error = str(exc)
+                failure_counts[error] = failure_counts.get(error, 0) + 1
+
+        if failure_counts:
+            failed_count = sum(failure_counts.values())
+            # 控制汇总长度，完整的逐条错误保留在失败记录文件中。
+            reasons = sorted(failure_counts.items(), key=lambda item: item[1], reverse=True)
+            summary = "；".join(f"{' '.join(error.split())[:120]}（{count} 条）" for error, count in reasons[:3])
+            if len(reasons) > 3:
+                summary += f"；另有 {len(reasons) - 3} 种原因"
+            logger.warning(
+                f"A_Memorix 启动队列回放完成: 成功={len(records) - failed_count}, 失败={failed_count}；"
+                f"原因: {summary}；详细记录: {self._startup_queue_failed_path()}"
+            )
 
     @staticmethod
     def _config_model_to_runtime_dict(config_model: AMemorixConfig) -> Dict[str, Any]:

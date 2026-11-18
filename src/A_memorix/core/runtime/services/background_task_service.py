@@ -5,9 +5,11 @@ from typing import Any, Callable, Coroutine, Dict, List, Tuple
 import asyncio
 import time
 
+from src.common.async_work import run_sync_work
 from src.common.logger import get_logger
 
 from ...utils import profile_policy
+from ...utils.async_work import cancel_and_wait_for_tasks, cancellation_safe_to_thread
 from .base import KernelServiceBase
 
 logger = get_logger("A_Memorix.SDKMemoryKernel")
@@ -197,15 +199,7 @@ class MemoryBackgroundTaskService(KernelServiceBase):
         async with self._background_lock:
             self._background_stopping = True
             tasks = [task for task in self._background_tasks.values() if task is not None and not task.done()]
-            for task in tasks:
-                task.cancel()
-            for task in tasks:
-                try:
-                    await task
-                except asyncio.CancelledError:
-                    pass
-                except Exception as exc:
-                    logger.warning(f"后台任务退出异常: {exc}")
+            await cancel_and_wait_for_tasks(tasks, operation="关闭记忆后台任务")
             self._background_tasks.clear()
 
     async def _auto_save_loop(self) -> None:
@@ -242,11 +236,13 @@ class MemoryBackgroundTaskService(KernelServiceBase):
             if self._background_stopping:
                 break
             try:
-                self._maintenance_service._reconcile_relation_graph_projection_jobs()
+                # 图通道初始化失败的原因已在启动时记录；清理任务继续运行，投影等待图通道可用。
+                if self.graph_store is not None:
+                    await run_sync_work(self._maintenance_service._reconcile_relation_graph_projection_jobs)
             except asyncio.CancelledError:
                 raise
             except Exception as exc:
-                logger.warning(f"relation graph projection loop 异常，将在下一轮重试: {exc}")
+                logger.exception(f"relation graph projection loop 异常，将在下一轮重试: {exc}")
             try:
                 result = await self._delete_admin_service.process_pending_storage_cleanup_jobs(limit=100)
                 if int(result.get("failed", 0) or 0) > 0:
@@ -267,32 +263,10 @@ class MemoryBackgroundTaskService(KernelServiceBase):
         return [(name, store) for name, store in candidates if store is not None]
 
     async def _warmup_vector_store_in_thread(self, store: Any) -> Dict[str, Any]:
-        worker = asyncio.create_task(
-            asyncio.to_thread(store.warmup_index, force_train=True),
-            name="A_Memorix.vector_index_training.worker",
-        )
-        try:
-            return await asyncio.shield(worker)
-        except asyncio.CancelledError:
-            try:
-                await worker
-            except Exception as exc:
-                logger.warning(f"向量索引训练任务取消收尾异常: {exc}")
-            raise
+        return await cancellation_safe_to_thread(store.warmup_index, force_train=True)
 
     async def _run_legacy_vector_io_in_thread(self, operation: Callable[..., Any], *args: Any, **kwargs: Any) -> Any:
-        worker = asyncio.create_task(
-            asyncio.to_thread(operation, *args, **kwargs),
-            name="A_Memorix.legacy_vector_copy.worker",
-        )
-        try:
-            return await asyncio.shield(worker)
-        except asyncio.CancelledError:
-            try:
-                await worker
-            except Exception as exc:
-                logger.warning(f"可信旧向量复制任务取消收尾异常: {exc}")
-            raise
+        return await cancellation_safe_to_thread(operation, *args, **kwargs)
 
     async def _train_runtime_vector_indexes_once(self) -> Dict[str, Dict[str, Any]]:
         threshold_value = self._cfg("embedding.runtime_train_threshold", 256)

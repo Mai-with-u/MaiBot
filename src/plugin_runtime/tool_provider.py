@@ -17,7 +17,7 @@ from .component_query import component_query_service
 
 
 class PluginToolProvider(ToolProvider):
-    """将插件 Tool 与兼容旧 Action 暴露为统一工具 Provider。"""
+    """将插件 Tool 暴露为统一工具 Provider。"""
 
     provider_name = "plugin_runtime"
     provider_type = "plugin"
@@ -35,7 +35,7 @@ class PluginToolProvider(ToolProvider):
         invocation: ToolInvocation,
         context: Optional[ToolExecutionContext] = None,
     ) -> ToolExecutionResult:
-        """执行插件工具或兼容旧 Action 的工具调用。
+        """执行插件工具 的工具调用。
 
         Args:
             invocation: 工具调用请求。

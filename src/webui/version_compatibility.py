@@ -165,8 +165,11 @@ def get_webui_version_compatibility(
     root = project_root or PROJECT_ROOT
     required_webui_version = read_required_webui_version(root)
     comparison = compare_versions(webui_version, required_webui_version)
-    if comparison < 0:
-        status: WebUICompatibilityStatus = "webui_outdated"
+    # 测试版依赖用于开发迭代，不据此提示前后端版本不匹配。
+    if _parse_version(required_webui_version).phase[0] < 4:
+        status: WebUICompatibilityStatus = "compatible"
+    elif comparison < 0:
+        status = "webui_outdated"
     elif not _has_same_release(webui_version, required_webui_version):
         status = "main_program_outdated"
     else:

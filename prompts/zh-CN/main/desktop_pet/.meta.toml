@@ -1,0 +1,10 @@
+[desktop_pet_exploration]
+display_name = "桌宠探索任务"
+advanced = false
+description = "人工设定目标后探索工具组合，并保存有实验证据的候选图式。"
+
+[desktop_pet_thinking_caption]
+display_name = "桌宠思考状态"
+advanced = false
+description = "把当前运行阶段概括成一句简短风趣的桌宠状态文字。"
+

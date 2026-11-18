@@ -36,7 +36,7 @@ class ReplyerManager:
             logger.warning(f"[ReplyerManager] 未找到会话，stream_id={stream_id}")
             return None
 
-        logger.info(
+        logger.debug(
             f"[ReplyerManager] 开始创建 replyer: cache_key={cache_key}, "
             f"replyer_type={replyer_type}, is_group_session={target_stream.is_group_session}"
         )

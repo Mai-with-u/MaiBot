@@ -9,7 +9,7 @@ import time
 
 import pytest
 from PIL import Image
-from fastapi import FastAPI, HTTPException
+from fastapi import FastAPI
 from fastapi.testclient import TestClient
 from pydantic import ValidationError
 
@@ -109,11 +109,6 @@ def test_authenticated_multipart_and_owner_binding(tmp_path, monkeypatch):
     store = storage.UploadStore(tmp_path / "stage")
     monkeypatch.setattr(routes, "upload_store", lambda: store)
 
-    def auth(token):
-        if token != "valid":
-            raise HTTPException(401)
-
-    monkeypatch.setattr(routes, "require_plugin_token", auth)
     extension = WebUIExtension.model_validate(declaration())
     registry = APIRegistry()
     registry.register_api("add", "test.plugin", {"handler_name": "add_image"})
@@ -129,8 +124,6 @@ def test_authenticated_multipart_and_owner_binding(tmp_path, monkeypatch):
     app.include_router(routes.router, prefix="/plugins")
     path = "/plugins/runtime/webui/test.plugin/images/uploads/library"
     with TestClient(app) as client:
-        assert client.post(path, files={"file": ("fake.exe", png())}).status_code == 401
-        client.cookies.set("maibot_session", "valid")
         assert (
             client.post(
                 path.replace("/uploads/library", "/uploads/undeclared"), files={"file": ("x.png", png())}
@@ -159,7 +152,6 @@ def test_authenticated_multipart_and_owner_binding(tmp_path, monkeypatch):
 def test_upload_admission_happens_before_multipart_parsing(monkeypatch):
     budget = storage.UploadBudget()
     monkeypatch.setattr(routes, "upload_budget", budget)
-    monkeypatch.setattr(routes, "require_plugin_token", lambda _token: "valid")
     monkeypatch.setattr(routes, "_authorize_upload", AsyncMock())
     app = FastAPI()
     app.include_router(routes.router, prefix="/plugins")

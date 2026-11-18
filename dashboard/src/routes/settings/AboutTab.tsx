@@ -7,7 +7,6 @@ import { ScrollArea } from '@/components/ui/scroll-area'
 import { APP_NAME, APP_VERSION } from '@/lib/version'
 
 import { LibraryItem } from './LibraryItem'
-import { SelfUpdateCard } from './SelfUpdateCard'
 
 export function AboutTab() {
   const { t } = useTranslation()
@@ -40,7 +39,7 @@ export function AboutTab() {
             </p>
             <Button asChild>
               <a
-                href="https://github.com/Mai-with-u/MaiBot-Dashboard"
+                href="https://github.com/Mai-with-u/MaiBot"
                 target="_blank"
                 rel="noopener noreferrer"
               >
@@ -75,9 +74,6 @@ export function AboutTab() {
           </div>
         </div>
       </Card>
-
-      {/* 主程序更新 */}
-      <SelfUpdateCard />
 
       {/* 应用信息 */}
       <Card className="p-4 sm:p-6">

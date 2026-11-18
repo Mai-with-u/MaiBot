@@ -27,6 +27,7 @@ export interface MaisakaToolCall {
 }
 
 export interface SessionStartEvent {
+  focus_session_ids?: string[]
   session_id: string
   session_name: string
   is_group_chat?: boolean
@@ -37,6 +38,7 @@ export interface SessionStartEvent {
 }
 
 export interface StageStatusEvent {
+  focus_session_ids?: string[]
   session_id: string
   session_name?: string
   platform?: string
@@ -91,6 +93,7 @@ export interface FlowStepEvent {
 }
 
 export interface LlmRetryEvent {
+  replayed?: boolean
   session_id: string
   platform?: string
   user_id?: string | null
@@ -106,6 +109,7 @@ export interface LlmRetryEvent {
 }
 
 export interface LlmErrorEvent {
+  replayed?: boolean
   session_id: string
   platform?: string
   user_id?: string | null
@@ -245,6 +249,7 @@ export interface MaisakaNativeToolCall {
 
 export interface MaisakaPlannerBlock {
   content: string | null
+  reasoning?: string | null
   model_name?: string | null
   tool_calls: MaisakaToolCall[]
   native_tool_calls?: MaisakaNativeToolCall[]
@@ -272,6 +277,8 @@ export interface MaisakaTimingGateBlock {
 }
 
 export interface MaisakaFinalizedToolResult {
+  session_id?: string
+  session_name?: string
   started_at?: number
   ended_at?: number
   tool_call_id: string
@@ -282,16 +289,22 @@ export interface MaisakaFinalizedToolResult {
   tool_call_source?: string
   tool_call_source_label?: string
   success: boolean
+  error_message?: string
   stop_after_execution?: boolean
   duration_ms: number
   summary: string
   prompt_html_uri?: string
   detail?: unknown
+  reply_schedule?: { mode: 'serial' | 'parallel'; dependencies: string[] } | null
+  reply_supplement?: Record<string, unknown>
+  reply_text?: string
   matched_tool_names?: string[]
   newly_discovered_tool_names?: string[]
 }
 
 export interface PlannerFinalizedEvent {
+  focus_scope_id?: string
+  focus_session_ids?: string[]
   planner_started_at?: number | null
   planner_ended_at?: number | null
   session_id: string
@@ -341,8 +354,6 @@ export interface SubagentStartedEvent {
   call_id: string
   description: string
   granted_tools: string[]
-  /** 是否在后台运行（开启高级子代理） */
-  background: boolean
   max_rounds: number
   timestamp: number
 }

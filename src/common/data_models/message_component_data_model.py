@@ -1,6 +1,7 @@
 from abc import ABC, abstractmethod
 from copy import deepcopy
 from maim_message import BaseMessageInfo, MessageBase, Seg, UserInfo
+from pathlib import Path
 from sqlmodel import select
 from typing import Any, Dict, List, Optional, Union
 
@@ -113,13 +114,15 @@ class EmojiComponent(BaseMessageComponentModel, ByteComponent):
         from src.common.database.database import get_db_session
         from src.common.database.database_model import Images, ImageType
 
-        try:
+        def find_image_path() -> Path:
             with get_db_session() as db:
                 statement = select(Images).filter_by(image_hash=self.binary_hash, image_type=ImageType.EMOJI).limit(1)
                 if image_record := db.exec(statement).first():
-                    image_path = resolve_stored_image_path(image_record.full_path)
-                else:
-                    raise ValueError(f"无法通过 emoji_hash 加载表情二进制数据: {self.binary_hash}")
+                    return resolve_stored_image_path(image_record.full_path)
+                raise ValueError(f"无法通过 emoji_hash 加载表情二进制数据: {self.binary_hash}")
+
+        try:
+            image_path = await asyncio.to_thread(find_image_path)
             self.binary_data = await asyncio.to_thread(image_path.read_bytes)
         except Exception as e:
             raise ValueError(f"通过 emoji_hash 加载表情二进制数据时发生错误: {e}") from e
@@ -169,6 +172,8 @@ class FileComponent(BaseMessageComponentModel):
         file_id: str = "",
         mime_type: str = "",
         base64_data: str = "",
+        file_ref: str = "",
+        busid: int = 0,
     ) -> None:
         self.name = str(name or "").strip()
         """文件名"""
@@ -182,6 +187,9 @@ class FileComponent(BaseMessageComponentModel):
         """文件 MIME 类型"""
         self.base64_data = str(base64_data or "").strip()
         """文件内容 Base64，通常仅 WebUI 本地消息携带。"""
+        self.file_ref = file_ref
+        """主程序签发的附件引用，权限按聊天流检查。"""
+        self.busid = busid
 
     async def to_seg(self) -> Seg:
         return Seg(type="file", data=self.to_payload())
@@ -190,6 +198,10 @@ class FileComponent(BaseMessageComponentModel):
         """转换为稳定的文件消息负载。"""
 
         payload: Dict[str, Any] = {}
+        if self.file_ref:
+            payload["file_ref"] = self.file_ref
+        if self.busid:
+            payload["busid"] = self.busid
         if self.name:
             payload["name"] = self.name
         if self.size:
@@ -215,6 +227,8 @@ class FileComponent(BaseMessageComponentModel):
             file_id=payload.get("file_id") or payload.get("id") or "",
             mime_type=payload.get("mime_type") or payload.get("mimeType") or "",
             base64_data=payload.get("base64") or "",
+            file_ref=payload.get("file_ref") or "",
+            busid=int(payload.get("busid") or 0),
         )
 
     def to_plain_text(self) -> str:
@@ -227,10 +241,8 @@ class FileComponent(BaseMessageComponentModel):
             text_parts.append(f"大小: {self.size}")
         if self.mime_type:
             text_parts.append(f"类型: {self.mime_type}")
-        if self.url:
-            text_parts.append(f"链接: {self.url}")
-        if self.file_id:
-            text_parts.append(f"文件ID: {self.file_id}")
+        if self.file_ref:
+            text_parts.append(f"file_ref: {self.file_ref}")
         return "[文件]" if not text_parts else f"[文件] {'，'.join(text_parts)}"
 
 
@@ -480,7 +492,15 @@ class MessageSequence:
                 },
             }
         elif isinstance(item, ReplyComponent):
-            return {"type": "reply", "data": item.target_message_id}
+            # 原消息可能不在本地历史中，摘要重读时仍需要已确认的引用作者和正文。
+            return {
+                "type": "reply",
+                "data": item.target_message_id,
+                "target_message_content": item.target_message_content,
+                "target_message_sender_id": item.target_message_sender_id,
+                "target_message_sender_nickname": item.target_message_sender_nickname,
+                "target_message_sender_cardname": item.target_message_sender_cardname,
+            }
         elif isinstance(item, ForwardNodeComponent):
             return {
                 "type": "forward",
@@ -534,7 +554,13 @@ class MessageSequence:
                 uses_configured_bot_nickname=item["data"].get("uses_configured_bot_nickname", False),
             )
         elif item_type == "reply":
-            return ReplyComponent(target_message_id=item["data"])
+            return ReplyComponent(
+                target_message_id=item["data"],
+                target_message_content=item.get("target_message_content"),
+                target_message_sender_id=item.get("target_message_sender_id"),
+                target_message_sender_nickname=item.get("target_message_sender_nickname"),
+                target_message_sender_cardname=item.get("target_message_sender_cardname"),
+            )
         elif item_type == "dict":
             raw_data = item.get("data") or {}
             if isinstance(raw_data, dict) and str(raw_data.get("type") or "").strip().lower() == "file":

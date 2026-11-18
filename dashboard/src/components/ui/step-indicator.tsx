@@ -9,12 +9,16 @@ import { cn } from '@/lib/utils'
 export function StepIndicator({
   steps,
   currentStep,
+  currentSubstep,
   label,
 }: {
-  steps: { id: string; label: string }[]
+  steps: { id: string; label: string; substeps?: { id: string; label: string }[] }[]
   currentStep: number
+  currentSubstep?: string
   label: string
 }) {
+  const active = steps[currentStep]
+  const activeSubstep = active?.substeps?.findIndex((step) => step.id === currentSubstep) ?? -1
   return (
     <nav aria-label={label}>
       <ol className="flex items-center justify-center gap-3 sm:gap-4">
@@ -26,7 +30,7 @@ export function StepIndicator({
               </li>
             )}
             <li
-              aria-current={index === currentStep ? 'step' : undefined}
+              aria-current={index === currentStep && !active?.substeps?.length ? 'step' : undefined}
               className="flex min-w-0 flex-col items-center gap-2 sm:flex-row sm:gap-3"
             >
               <Button
@@ -51,6 +55,25 @@ export function StepIndicator({
           </Fragment>
         ))}
       </ol>
+      {!!active?.substeps?.length && (
+        <ol aria-label={active.label} className="mt-3 flex flex-wrap justify-center gap-x-4 gap-y-2 text-xs sm:text-sm">
+          {active.substeps.map((step, index) => (
+            <li
+              key={step.id}
+              aria-current={step.id === currentSubstep ? 'step' : undefined}
+              className={cn(
+                'flex items-center gap-1.5 border-b-2 border-transparent px-1 pb-1',
+                index === activeSubstep ? 'border-primary font-semibold' : 'text-muted-foreground'
+              )}
+            >
+              {index < activeSubstep ? <Check className="size-3.5" aria-hidden /> : (
+                <span className="font-mono tabular-nums" aria-hidden>{currentStep + 1}.{index + 1}</span>
+              )}
+              {step.label}
+            </li>
+          ))}
+        </ol>
+      )}
     </nav>
   )
 }

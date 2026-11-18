@@ -220,10 +220,12 @@ export const generatePalette = (accentHSL: string, isDark: boolean): ColorTokens
 
   const destructive = formatHSL(0, clamp(accent.s, 60, 90), isDark ? 30.6 : 60.2)
 
-  const border = formatHSL(accent.h, clamp(accent.s * 0.2, 5, 25), isDark ? 17.5 : 91.4)
+  // 描边和控件边分两档：卡片描边轻，输入框、描边按钮的边要一眼看得出是能点的控件。
+  const border = formatHSL(accent.h, clamp(accent.s * 0.2, 5, 25), isDark ? 17.5 : 89.5)
+  const input = formatHSL(accent.h, clamp(accent.s * 0.16, 4, 20), isDark ? 26 : 83)
 
   const mutedForeground = setSaturation(
-    setLightness(muted, isDark ? 65.1 : 46.9),
+    setLightness(muted, isDark ? 65.1 : 40),
     clamp(accent.s * 0.2, 10, 30)
   )
 
@@ -257,7 +259,7 @@ export const generatePalette = (accentHSL: string, isDark: boolean): ColorTokens
     popover,
     'popover-foreground': foreground,
     border,
-    input: border,
+    input,
     ring: primary,
     'chart-1': charts[0],
     'chart-2': charts[1],

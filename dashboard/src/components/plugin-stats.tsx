@@ -2,6 +2,7 @@ import { DataPanel } from '@/components/ui/surface'
 import { Download, Star, ThumbsDown, ThumbsUp } from 'lucide-react'
 import { useEffect, useState } from 'react'
 
+import { PluginFeedback } from '@/components/plugin-feedback'
 import { Button } from '@/components/ui/button'
 import { Checkbox } from '@/components/ui/checkbox'
 import {
@@ -30,6 +31,10 @@ import {
 interface PluginStatsProps {
   pluginId: string
   compact?: boolean
+  ratingOnly?: boolean
+  pluginName?: string
+  onRatingDialogClose?: () => void
+  onRated?: () => void
 }
 
 type RecentRating = NonNullable<PluginStatsData['recent_ratings']>[number]
@@ -71,9 +76,17 @@ export function PluginStats(props: PluginStatsProps) {
   return <PluginStatsContent key={props.pluginId} {...props} />
 }
 
-function PluginStatsContent({ pluginId, compact = false }: PluginStatsProps) {
+function PluginStatsContent({
+  pluginId,
+  compact = false,
+  ratingOnly = false,
+  pluginName,
+  onRatingDialogClose,
+  onRated,
+}: PluginStatsProps) {
   const [stats, setStats] = useState<PluginStatsData | null>(null)
   const [loading, setLoading] = useState(true)
+  const [loadError, setLoadError] = useState('')
   const [userRating, setUserRating] = useState(0)
   const [savedUserRating, setSavedUserRating] = useState(0)
   const [userComment, setUserComment] = useState('')
@@ -87,7 +100,7 @@ function PluginStatsContent({ pluginId, compact = false }: PluginStatsProps) {
   const [liked, setLiked] = useState(false)
   const [disliked, setDisliked] = useState(false)
   const [actionLoading, setActionLoading] = useState<'like' | 'dislike' | 'rating' | null>(null)
-  const [isRatingDialogOpen, setIsRatingDialogOpen] = useState(false)
+  const [isRatingDialogOpen, setIsRatingDialogOpen] = useState(ratingOnly)
   const { toast } = useToast()
 
   useEffect(() => {
@@ -121,6 +134,9 @@ function PluginStatsContent({ pluginId, compact = false }: PluginStatsProps) {
       })
       .catch((error: unknown) => {
         console.error('加载插件统计失败:', error)
+        if (!cancelled) {
+          setLoadError(error instanceof Error ? error.message : '加载插件评价失败')
+        }
       })
       .finally(() => {
         if (!cancelled) {
@@ -134,7 +150,7 @@ function PluginStatsContent({ pluginId, compact = false }: PluginStatsProps) {
   }, [pluginId])
 
   useEffect(() => {
-    if (!isRatingDialogOpen || identityReady) return
+    if (!isRatingDialogOpen || loading || identityReady) return
     let cancelled = false
     setIdentityError('')
     void getPluginReviewIdentity()
@@ -150,7 +166,14 @@ function PluginStatsContent({ pluginId, compact = false }: PluginStatsProps) {
         }
       })
     return () => { cancelled = true }
-  }, [isRatingDialogOpen, identityReady])
+  }, [isRatingDialogOpen, loading, identityReady])
+
+  const handleRatingDialogOpenChange = (open: boolean) => {
+    setIsRatingDialogOpen(open)
+    if (!open) {
+      onRatingDialogClose?.()
+    }
+  }
 
   const identityChanged = anonymous !== savedAnonymous || (!anonymous && username !== savedUsername)
   const canSubmitReview = userRating > 0 || userComment !== savedUserComment ||
@@ -212,6 +235,7 @@ function PluginStatsContent({ pluginId, compact = false }: PluginStatsProps) {
   }
 
   const handleSubmitRating = async () => {
+    if (loading || !stats || loadError) return
     const commentChanged = userComment !== savedUserComment
     if (!canSubmitReview) {
       toast({
@@ -260,8 +284,10 @@ function PluginStatsContent({ pluginId, compact = false }: PluginStatsProps) {
           comment_count: Number(result.comment_count ?? currentStats.comment_count),
         }
         : currentStats)
-      setIsRatingDialogOpen(false)
+      onRated?.()
+      handleRatingDialogOpenChange(false)
       toast({ title: '评价已更新', description: '你的评分或评论已保存' })
+      if (ratingOnly) return
       const refreshedStats = await getPluginStats(pluginId)
       if (refreshedStats) {
         setStats((current) => current ? { ...current, recent_ratings: refreshedStats.recent_ratings } : refreshedStats)
@@ -274,6 +300,119 @@ function PluginStatsContent({ pluginId, compact = false }: PluginStatsProps) {
       description: result.error || '未知错误',
       variant: 'destructive',
     })
+  }
+
+  const ratingDialog = (
+    <Dialog open={isRatingDialogOpen} onOpenChange={handleRatingDialogOpenChange}>
+      {!ratingOnly && (
+        <DialogTrigger asChild>
+          <Button variant="default" size="sm" disabled={actionLoading !== null}>
+            <Star className="mr-1 h-4 w-4" />
+            {userRating > 0 || savedUserComment ? '修改评价' : '评价'}
+          </Button>
+        </DialogTrigger>
+      )}
+      <DialogContent>
+        <DialogHeader>
+          <DialogTitle>{pluginName ? `评价 ${pluginName}` : '评价插件'}</DialogTitle>
+          <DialogDescription>可以单独评分或评论；再次提交会更新你的评价。</DialogDescription>
+        </DialogHeader>
+
+        {loading ? (
+          <p role="status" className="py-4 text-sm text-muted-foreground">正在加载评价...</p>
+        ) : loadError || !stats ? (
+          <p role="alert" className="py-4 text-sm text-destructive">
+            {loadError || '暂时无法获取插件评价，请稍后重试'}
+          </p>
+        ) : (
+          <div className="space-y-4 py-4">
+            <div className="space-y-2">
+              <label htmlFor="plugin-review-username" className="block text-sm font-medium">
+                用户名
+              </label>
+              <Input
+                id="plugin-review-username"
+                value={anonymous ? '' : username}
+                onChange={(event) => setUsername(event.target.value)}
+                disabled={anonymous || !identityReady}
+                placeholder={anonymous ? '匿名用户' : '默认使用 bot 昵称'}
+                maxLength={100}
+              />
+              <div className="flex items-center gap-2">
+                <Checkbox
+                  id="plugin-review-anonymous"
+                  checked={anonymous}
+                  onCheckedChange={(checked) => setAnonymous(checked === true)}
+                />
+                <label htmlFor="plugin-review-anonymous" className="text-sm">匿名评价（不发送用户名）</label>
+              </div>
+              {identityError && !anonymous && <p role="alert" className="text-sm text-destructive">{identityError}</p>}
+            </div>
+            <div className="flex flex-col items-center gap-2">
+              <div className="flex gap-2">
+                {[1, 2, 3, 4, 5].map((star) => (
+                  <button
+                    key={star}
+                    type="button"
+                    onClick={() => setUserRating(star)}
+                    className="focus:outline-none"
+                  >
+                    <Star
+                      className={`h-8 w-8 transition-colors ${
+                        star <= userRating
+                          ? 'fill-yellow-400 text-yellow-400'
+                          : 'text-muted-foreground hover:text-yellow-300'
+                      }`}
+                    />
+                  </button>
+                ))}
+              </div>
+              <span className="text-sm text-muted-foreground">
+                {userRating === 0 && '点击星星进行评分'}
+                {userRating === 1 && '很差'}
+                {userRating === 2 && '一般'}
+                {userRating === 3 && '还行'}
+                {userRating === 4 && '不错'}
+                {userRating === 5 && '非常好'}
+              </span>
+            </div>
+
+            <div>
+              <label htmlFor="plugin-rating-comment" className="mb-2 block text-sm font-medium">
+                评论
+              </label>
+              <Textarea
+                value={userComment}
+                id="plugin-rating-comment"
+                onChange={(event) => setUserComment(event.target.value)}
+                placeholder="分享你的使用体验..."
+                rows={4}
+                maxLength={500}
+              />
+              <div className="mt-1 text-right text-xs text-muted-foreground">
+                {userComment.length} / 500
+              </div>
+            </div>
+          </div>
+        )}
+
+        <DialogFooter>
+          <Button variant="outline" onClick={() => handleRatingDialogOpenChange(false)}>
+            取消
+          </Button>
+          <Button
+            onClick={handleSubmitRating}
+            disabled={loading || !stats || !!loadError || actionLoading !== null || !canSubmitReview || !canSubmitIdentity}
+          >
+            {actionLoading === 'rating' ? '提交中...' : '提交评价'}
+          </Button>
+        </DialogFooter>
+      </DialogContent>
+    </Dialog>
+  )
+
+  if (ratingOnly) {
+    return ratingDialog
   }
 
   if (loading) {
@@ -314,14 +453,19 @@ function PluginStatsContent({ pluginId, compact = false }: PluginStatsProps) {
     )
   }
 
-  // 评分与评论分流：有评论内容的进入「最近评论」（同时展示其星级），仅有评分的进入「最近评分」
+  const hasFourDigitCount = [stats.downloads, stats.rating_count, stats.likes, stats.dislikes]
+    .some((count) => count >= 1000)
+
+  // 评分与评论分流：评论及其星级、回复由独立服务读取，仅有评分的进入「最近评分」。
   const recentRatings = stats.recent_ratings ?? []
-  const recentComments = recentRatings.filter((item) => item.comment?.trim())
   const recentRatingOnly = recentRatings.filter((item) => item.rating != null && !item.comment?.trim())
 
   return (
     <div className="space-y-4">
-      <div data-plugin-stat-tiles="true" className="grid grid-cols-2 gap-4 sm:grid-cols-4">
+      <div
+        data-plugin-stat-tiles="true"
+        className={hasFourDigitCount ? 'grid grid-cols-2 gap-4' : 'grid grid-cols-2 gap-4 sm:grid-cols-4'}
+      >
         <DataPanel data-plugin-stat-tile="true" className="flex flex-col items-center p-3">
           <Download className="mb-1 h-5 w-5 text-muted-foreground" />
           <span className="text-2xl font-bold">{stats.downloads.toLocaleString()}</span>
@@ -368,115 +512,11 @@ function PluginStatsContent({ pluginId, compact = false }: PluginStatsProps) {
           {disliked ? '已点踩' : '点踩'}
         </Button>
 
-        <Dialog open={isRatingDialogOpen} onOpenChange={setIsRatingDialogOpen}>
-          <DialogTrigger asChild>
-            <Button variant="default" size="sm" disabled={actionLoading !== null}>
-              <Star className="mr-1 h-4 w-4" />
-              {userRating > 0 || savedUserComment ? '修改评价' : '评价'}
-            </Button>
-          </DialogTrigger>
-          <DialogContent>
-            <DialogHeader>
-              <DialogTitle>评价插件</DialogTitle>
-              <DialogDescription>可以单独评分或评论；再次提交会更新你的评价。</DialogDescription>
-            </DialogHeader>
-
-            <div className="space-y-4 py-4">
-              <div className="space-y-2">
-                <label htmlFor="plugin-review-username" className="block text-sm font-medium">
-                  用户名
-                </label>
-                <Input
-                  id="plugin-review-username"
-                  value={anonymous ? '' : username}
-                  onChange={(event) => setUsername(event.target.value)}
-                  disabled={anonymous || !identityReady}
-                  placeholder={anonymous ? '匿名用户' : '默认使用 bot 昵称'}
-                  maxLength={100}
-                />
-                <div className="flex items-center gap-2">
-                  <Checkbox
-                    id="plugin-review-anonymous"
-                    checked={anonymous}
-                    onCheckedChange={(checked) => setAnonymous(checked === true)}
-                  />
-                  <label htmlFor="plugin-review-anonymous" className="text-sm">匿名评价（不发送用户名）</label>
-                </div>
-                {identityError && !anonymous && <p role="alert" className="text-sm text-destructive">{identityError}</p>}
-              </div>
-              <div className="flex flex-col items-center gap-2">
-                <div className="flex gap-2">
-                  {[1, 2, 3, 4, 5].map((star) => (
-                    <button
-                      key={star}
-                      type="button"
-                      onClick={() => setUserRating(star)}
-                      className="focus:outline-none"
-                    >
-                      <Star
-                        className={`h-8 w-8 transition-colors ${
-                          star <= userRating
-                            ? 'fill-yellow-400 text-yellow-400'
-                            : 'text-muted-foreground hover:text-yellow-300'
-                        }`}
-                      />
-                    </button>
-                  ))}
-                </div>
-                <span className="text-sm text-muted-foreground">
-                  {userRating === 0 && '点击星星进行评分'}
-                  {userRating === 1 && '很差'}
-                  {userRating === 2 && '一般'}
-                  {userRating === 3 && '还行'}
-                  {userRating === 4 && '不错'}
-                  {userRating === 5 && '非常好'}
-                </span>
-              </div>
-
-              <div>
-                <label htmlFor="plugin-rating-comment" className="mb-2 block text-sm font-medium">
-                  评论
-                </label>
-                <Textarea
-                  value={userComment}
-                  id="plugin-rating-comment"
-                  onChange={(event) => setUserComment(event.target.value)}
-                  placeholder="分享你的使用体验..."
-                  rows={4}
-                  maxLength={500}
-                />
-                <div className="mt-1 text-right text-xs text-muted-foreground">
-                  {userComment.length} / 500
-                </div>
-              </div>
-            </div>
-
-            <DialogFooter>
-              <Button variant="outline" onClick={() => setIsRatingDialogOpen(false)}>
-                取消
-              </Button>
-              <Button
-                onClick={handleSubmitRating}
-                disabled={actionLoading !== null || !canSubmitReview || !canSubmitIdentity}
-              >
-                {actionLoading === 'rating' ? '提交中...' : '提交评价'}
-              </Button>
-            </DialogFooter>
-          </DialogContent>
-        </Dialog>
+        {ratingDialog}
       </div>
 
       {/* 评分与评论是两种内容：有评论文字的归入「最近评论」并保留星级，仅有评分的归入「最近评分」 */}
-      {recentComments.length > 0 && (
-        <div className="space-y-2">
-          <h4 data-plugin-stats-heading="true" className="text-sm font-semibold">最近评论</h4>
-          <div className="space-y-3">
-            {recentComments.map((item, index) => (
-              <RecentRatingItem key={`${item.user_id}-${item.created_at}-${index}`} item={item} />
-            ))}
-          </div>
-        </div>
-      )}
+      <PluginFeedback key={pluginId} pluginId={pluginId} />
 
       {recentRatingOnly.length > 0 && (
         <div className="space-y-2">

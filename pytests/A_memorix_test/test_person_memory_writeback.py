@@ -31,15 +31,16 @@ async def test_store_person_memory_from_answer_writes_person_fact(monkeypatch):
 
     assert len(calls) == 1
     payload = calls[0]
-    assert payload["external_id"].startswith("person_fact:person-1:")
+    expected_person_id = person_info_module.get_person_id("qq", "10001")
+    assert payload["external_id"].startswith(f"person_fact:{expected_person_id}:")
     assert payload["source_type"] == "person_fact"
     assert payload["chat_id"] == "session-1"
-    assert payload["person_ids"] == ["person-1"]
+    assert payload["person_ids"] == [expected_person_id]
     assert payload["participants"] == ["Alice"]
     assert payload["respect_filter"] is True
     assert payload["user_id"] == "10001"
     assert payload["group_id"] == ""
-    assert payload["metadata"]["person_id"] == "person-1"
+    assert payload["metadata"]["person_id"] == expected_person_id
 
 
 @pytest.mark.asyncio

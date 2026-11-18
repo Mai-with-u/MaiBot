@@ -1,6 +1,7 @@
 import * as React from 'react'
 
 import { cn } from '@/lib/utils'
+import { PageFrame } from './surface'
 
 interface AccentPanelProps extends React.HTMLAttributes<HTMLDivElement> {
   contentClassName?: string
@@ -20,13 +21,13 @@ const AccentPanel = React.forwardRef<HTMLDivElement, AccentPanelProps>(
     },
     ref
   ) => (
-    <div
+    <PageFrame
       ref={ref}
       data-dashboard-accent-panel="true"
       data-retro-stripes={showRetroStripes ? 'true' : 'false'}
       data-retro-stripe-divider={showRetroStripeDivider ? 'true' : 'false'}
       className={cn(
-        'bg-card border-border text-card-foreground relative overflow-hidden border-2',
+        'text-card-foreground relative overflow-hidden',
         className
       )}
       {...props}
@@ -46,7 +47,7 @@ const AccentPanel = React.forwardRef<HTMLDivElement, AccentPanelProps>(
       >
         {children}
       </div>
-    </div>
+    </PageFrame>
   )
 )
 AccentPanel.displayName = 'AccentPanel'

@@ -3,7 +3,7 @@ import { DAY_MINUTES, formatTimelineMinute, formatTalkTimeRange, getTimelineSegm
 /**
  * 麦麦聊天页的聊天流设置弹窗。
  *
- * 弹窗内展示 Session 基本信息、适配器规则、发言频率规则、聊天 Prompt 与学习配置，
+ * 弹窗内展示 Session 基本信息、适配器规则、群聊频率或私聊暂停开关、聊天 Prompt 与学习配置，
  * 并提供删除聊天流的严肃确认入口。
  */
 import { useMutation, useQuery, useQueryClient } from '@tanstack/react-query'
@@ -37,6 +37,7 @@ import { Label } from '@/components/ui/label'
 import { Progress } from '@/components/ui/progress'
 import { Slider } from '@/components/ui/slider'
 import { Skeleton } from '@/components/ui/skeleton'
+import { Switch } from '@/components/ui/switch'
 import { Textarea } from '@/components/ui/textarea'
 import { useToast } from '@/hooks/use-toast'
 import { formatChatDisplayName, getChatTypeText } from '@/lib/chat-display'
@@ -49,6 +50,7 @@ import {
   getChatStreamDetail,
   updateChatStreamAdapterPolicy,
   updateChatStreamLearning,
+  updateChatStreamPrivateReplyPause,
   updateChatStreamTalkFrequency,
   upsertChatStreamPrompt,
   type ChatAdapterStatus,
@@ -222,7 +224,8 @@ function TalkFrequencyRuleStackItem({ rule }: { rule: ChatTalkFrequencyRule }) {
       )}
     >
       <div className="flex flex-wrap items-center gap-2">
-        {!rule.is_effective && !rule.time_active && <Badge variant="outline">时间未命中</Badge>}
+        {!rule.enabled && <Badge variant="outline">已关闭</Badge>}
+        {rule.enabled && !rule.time_active && <Badge variant="outline">时间未命中</Badge>}
         <span className="font-mono text-xs">{targetLabel}</span>
       </div>
       <div className="mt-1 flex flex-wrap gap-x-4 gap-y-1">
@@ -244,11 +247,13 @@ function TalkFrequencyRuleEditor({
   const { toast } = useToast()
   const [time, setTime] = useState(rule.time)
   const [value, setValue] = useState(() => clampTalkFrequencyValue(rule.value))
+  const [enabled, setEnabled] = useState(rule.enabled)
 
   useEffect(() => {
     const frameId = window.requestAnimationFrame(() => {
       setTime(rule.time)
       setValue(clampTalkFrequencyValue(rule.value))
+      setEnabled(rule.enabled)
     })
 
     return () => window.cancelAnimationFrame(frameId)
@@ -262,6 +267,8 @@ function TalkFrequencyRuleEditor({
   const saveMutation = useMutation({
     mutationFn: () =>
       updateChatStreamTalkFrequency(detail.session_id, {
+        active_group: detail.talk_frequency.active_group,
+        enabled,
         previous_time: rule.time,
         time: time.trim(),
         value: clampTalkFrequencyValue(value),
@@ -269,13 +276,13 @@ function TalkFrequencyRuleEditor({
     onSuccess: (updatedDetail) => {
       updateDetailCache(updatedDetail)
       toast({
-        title: '发言频率规则已保存',
+        title: '查看频率规则已保存',
         description: '已写入当前聊天流的精确动态频率规则。',
       })
     },
     onError: (error) => {
       toast({
-        title: '保存发言频率失败',
+        title: '保存查看频率失败',
         description: error instanceof Error ? error.message : '请稍后重试',
         variant: 'destructive',
       })
@@ -283,17 +290,17 @@ function TalkFrequencyRuleEditor({
   })
 
   const deleteMutation = useMutation({
-    mutationFn: () => deleteChatStreamTalkFrequency(detail.session_id, rule.time),
+    mutationFn: () => deleteChatStreamTalkFrequency(detail.session_id, rule.time, detail.talk_frequency.active_group),
     onSuccess: (updatedDetail) => {
       updateDetailCache(updatedDetail)
       toast({
-        title: '发言频率规则已删除',
+        title: '查看频率规则已删除',
         description: '已删除当前聊天流的这条精确规则。',
       })
     },
     onError: (error) => {
       toast({
-        title: '删除发言频率规则失败',
+        title: '删除查看频率规则失败',
         description: error instanceof Error ? error.message : '请稍后重试',
         variant: 'destructive',
       })
@@ -311,7 +318,7 @@ function TalkFrequencyRuleEditor({
         />
       </div>
       <div className="space-y-2">
-        <Label className="text-xs">发言频率</Label>
+        <Label className="text-xs">查看频率</Label>
         <Input
           type="number"
           min={0}
@@ -322,6 +329,7 @@ function TalkFrequencyRuleEditor({
         />
       </div>
       <div className="flex items-center justify-end gap-2">
+        <Switch checked={enabled} onCheckedChange={setEnabled} aria-label="启用查看频率规则" />
         <Button
           type="button"
           className="shrink-0"
@@ -336,7 +344,7 @@ function TalkFrequencyRuleEditor({
           size="icon"
           className="text-destructive hover:text-destructive shrink-0"
           disabled={deleteMutation.isPending}
-          aria-label={`删除时间段 ${rule.time || '默认'} 的发言频率规则`}
+          aria-label={`删除时间段 ${rule.time || '默认'} 的查看频率规则`}
           onClick={() => deleteMutation.mutate()}
         >
           <Trash2 className="h-4 w-4" />
@@ -355,8 +363,9 @@ function TalkFrequencyTimelineRule({
 }) {
   const queryClient = useQueryClient()
   const { toast } = useToast()
-  const [time, setTime] = useState(rule.time || '00:00-23:59')
+  const [time, setTime] = useState(rule.time)
   const [value, setValue] = useState(() => clampTalkFrequencyValue(rule.value))
+  const [enabled, setEnabled] = useState(rule.enabled)
   const range = !time.trim() || time.trim() === '*' ? { start: 0, end: DAY_MINUTES - 1 } : parseTalkTimeRange(time)
   const draggableRange = range && time.trim() !== '' && time.trim() !== '*'
   const segments = range ? getTimelineSegments(range) : []
@@ -367,8 +376,9 @@ function TalkFrequencyTimelineRule({
 
   useEffect(() => {
     const frameId = window.requestAnimationFrame(() => {
-      setTime(rule.time || '00:00-23:59')
+      setTime(rule.time)
       setValue(clampTalkFrequencyValue(rule.value))
+      setEnabled(rule.enabled)
     })
 
     return () => window.cancelAnimationFrame(frameId)
@@ -382,6 +392,8 @@ function TalkFrequencyTimelineRule({
   const saveMutation = useMutation({
     mutationFn: () =>
       updateChatStreamTalkFrequency(detail.session_id, {
+        active_group: detail.talk_frequency.active_group,
+        enabled,
         previous_time: rule.time,
         time: time.trim(),
         value: clampTalkFrequencyValue(value),
@@ -389,13 +401,13 @@ function TalkFrequencyTimelineRule({
     onSuccess: (updatedDetail) => {
       updateDetailCache(updatedDetail)
       toast({
-        title: '发言频率规则已保存',
+        title: '查看频率规则已保存',
         description: '已写入当前聊天流的精确动态频率规则。',
       })
     },
     onError: (error) => {
       toast({
-        title: '保存发言频率失败',
+        title: '保存查看频率失败',
         description: error instanceof Error ? error.message : '请稍后重试',
         variant: 'destructive',
       })
@@ -403,17 +415,17 @@ function TalkFrequencyTimelineRule({
   })
 
   const deleteMutation = useMutation({
-    mutationFn: () => deleteChatStreamTalkFrequency(detail.session_id, rule.time),
+    mutationFn: () => deleteChatStreamTalkFrequency(detail.session_id, rule.time, detail.talk_frequency.active_group),
     onSuccess: (updatedDetail) => {
       updateDetailCache(updatedDetail)
       toast({
-        title: '发言频率规则已删除',
+        title: '查看频率规则已删除',
         description: '已删除当前聊天流的这条精确规则。',
       })
     },
     onError: (error) => {
       toast({
-        title: '删除发言频率规则失败',
+        title: '删除查看频率规则失败',
         description: error instanceof Error ? error.message : '请稍后重试',
         variant: 'destructive',
       })
@@ -421,11 +433,11 @@ function TalkFrequencyTimelineRule({
   })
 
   return (
-    <div className="bg-muted/25 grid min-w-0 gap-3 rounded-md border p-3 xl:grid-cols-[minmax(12rem,1fr)_8rem_8rem] xl:items-center">
+    <div className="bg-muted/25 grid min-w-0 gap-3 rounded-md border p-3 xl:grid-cols-[minmax(12rem,1fr)_8rem_auto] xl:items-center">
       <div className="min-w-0">
         <TimeRangeTicks />
         <TimeRangeTrack range={range} segments={segments} disabled={!draggableRange}
-          colorClassName={cn(talkValueColor(value), range ? 'opacity-85' : 'opacity-35')}
+          colorClassName={cn(talkValueColor(value), range && enabled ? 'opacity-85' : 'opacity-35')}
           onChange={(next) => setTime(formatTalkTimeRange(next))} />
         <div className="text-muted-foreground relative mt-1 h-4 text-[11px]">
           {range ? (
@@ -460,7 +472,8 @@ function TalkFrequencyTimelineRule({
         />
         <span className="w-12 text-right font-mono text-xs tabular-nums">{value.toFixed(2)}</span>
       </div>
-      <div className="flex justify-end gap-2">
+      <div className="flex items-center justify-end gap-2">
+        <Switch checked={enabled} onCheckedChange={setEnabled} aria-label="启用查看频率规则" />
         <Button
           type="button"
           size="sm"
@@ -475,7 +488,7 @@ function TalkFrequencyTimelineRule({
           size="icon"
           className="text-destructive hover:text-destructive h-8 w-8"
           disabled={deleteMutation.isPending}
-          aria-label={`删除时间段 ${rule.time || '默认'} 的发言频率规则`}
+          aria-label={`删除时间段 ${rule.time || '默认'} 的查看频率规则`}
           onClick={() => deleteMutation.mutate()}
         >
           <Trash2 className="h-4 w-4" />
@@ -501,7 +514,7 @@ function TalkFrequencyTimelineEditor({
       </div>
       {exactRules.length === 0 ? (
         <div className="text-muted-foreground rounded-md border border-dashed px-3 py-2 text-sm">
-          当前聊天流还没有专属发言频率规则。
+          当前聊天流还没有专属查看频率规则。
         </div>
       ) : (
         <div className="space-y-2">
@@ -521,6 +534,7 @@ function AddTalkFrequencyRuleButton({ detail }: { detail: ChatStreamDetail }) {
   const addMutation = useMutation({
     mutationFn: () =>
       updateChatStreamTalkFrequency(detail.session_id, {
+        active_group: detail.talk_frequency.active_group,
         previous_time: null,
         time: '00:00-23:59',
         value: 1,
@@ -529,13 +543,13 @@ function AddTalkFrequencyRuleButton({ detail }: { detail: ChatStreamDetail }) {
       queryClient.setQueryData(['chat-stream-detail', detail.session_id], updatedDetail)
       void queryClient.invalidateQueries({ queryKey: ['chat-streams'] })
       toast({
-        title: '发言频率规则已新增',
+        title: '查看频率规则已新增',
         description: '已写入当前聊天流的精确动态频率规则。',
       })
     },
     onError: (error) => {
       toast({
-        title: '新增发言频率规则失败',
+        title: '新增查看频率规则失败',
         description: error instanceof Error ? error.message : '请稍后重试',
         variant: 'destructive',
       })
@@ -595,7 +609,7 @@ function TalkFrequencyEditor({ detail }: { detail: ChatStreamDetail }) {
         <div className="space-y-3">
           {exactRules.length === 0 ? (
             <div className="text-muted-foreground rounded-md border border-dashed px-3 py-2 text-sm">
-              当前聊天流还没有专属发言频率规则。
+              当前聊天流还没有专属查看频率规则。
             </div>
           ) : (
             <div className="space-y-2">
@@ -614,17 +628,66 @@ function TalkFrequencyEditor({ detail }: { detail: ChatStreamDetail }) {
   )
 }
 
-function TalkFrequencySection({ detail }: { detail: ChatStreamDetail }) {
+function PrivateReplyPauseSection({ detail }: { detail: ChatStreamDetail }) {
+  const queryClient = useQueryClient()
+  const { toast } = useToast()
+  const settings = detail.private_reply
+  const mutation = useMutation({
+    mutationFn: (paused: boolean | null) => updateChatStreamPrivateReplyPause(detail.session_id, paused),
+    onSuccess: (nextDetail) => {
+      queryClient.setQueryData(['chat-stream-detail', detail.session_id], nextDetail)
+      toast({ title: '私聊暂停设置已保存' })
+    },
+    onError: (error) => {
+      toast({
+        title: '私聊暂停设置保存失败',
+        description: error instanceof Error ? error.message : '请稍后重试',
+        variant: 'destructive',
+      })
+    },
+  })
+  if (!settings) return null
+
   return (
     <section className="space-y-3 rounded-md border p-3">
       <div className="flex items-center justify-between gap-3">
-        <div className="font-medium">发言频率规则</div>
-        <StatusBadge enabled={detail.talk_frequency.enabled} />
+        <Label htmlFor="private-reply-paused" className="font-medium">暂停回复</Label>
+        <Switch
+          id="private-reply-paused"
+          checked={settings.paused}
+          disabled={mutation.isPending}
+          onCheckedChange={(paused) => mutation.mutate(paused)}
+        />
+      </div>
+      <p className="text-muted-foreground text-sm">
+        暂停后仍会接收消息并保留聊天历史，麦麦暂时不再思考和回复这个私聊。
+      </p>
+      <div className="flex items-center justify-between gap-3 text-sm">
+        <span className="text-muted-foreground">
+          {settings.has_override ? '已为当前私聊单独设置' : '跟随全局私聊设置'}
+          {`（全局${settings.global_paused ? '已暂停' : '正常回复'}）`}
+        </span>
+        {settings.has_override && (
+          <Button size="sm" variant="outline" disabled={mutation.isPending} onClick={() => mutation.mutate(null)}>
+            恢复跟随全局
+          </Button>
+        )}
+      </div>
+    </section>
+  )
+}
+
+function TalkFrequencySection({ detail }: { detail: ChatStreamDetail }) {
+  return (
+    <section className="space-y-3 rounded-md border p-3">
+      <div className="flex flex-wrap items-center gap-2">
+        <span className="font-medium">查看频率规则</span>
+        <Badge variant="outline">{detail.talk_frequency.active_group}</Badge>
       </div>
       <div className="grid gap-2 text-sm sm:grid-cols-3">
-        <FrequencySummaryItem label="默认频率" value={detail.talk_frequency.base_value_label} />
+        <FrequencySummaryItem label="默认查看概率" value={detail.talk_frequency.base_value_label} />
         <FrequencySummaryItem
-          label="当前生效"
+          label="外部查看概率"
           value={detail.talk_frequency.effective_value_label}
         />
         <FrequencySummaryItem
@@ -636,7 +699,7 @@ function TalkFrequencySection({ detail }: { detail: ChatStreamDetail }) {
       <div className="space-y-2">
         {detail.talk_frequency.matched_rules.length === 0 ? (
           <div className="bg-muted text-muted-foreground rounded-md px-3 py-2 text-sm">
-            没有可应用的动态发言频率规则，使用默认频率。
+            没有可应用的动态查看频率规则，使用默认频率。
           </div>
         ) : (
           detail.talk_frequency.matched_rules.map((rule, index) => (
@@ -1107,7 +1170,7 @@ function ChatDetailContent({
       </section>
 
       <ChatAdapterSection detail={detail} />
-      <TalkFrequencySection detail={detail} />
+      {detail.chat_type === 'private' ? <PrivateReplyPauseSection detail={detail} /> : <TalkFrequencySection detail={detail} />}
       <ChatPromptSection detail={detail} />
       <ConfigStatusRows detail={detail} />
     </div>

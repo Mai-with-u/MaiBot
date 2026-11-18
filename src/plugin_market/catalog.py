@@ -160,7 +160,7 @@ def _sort_stat_plugins(plugins: List[Dict[str, Any]], sort_by: str) -> List[Dict
         raise ValueError(f"sort_by 必须是以下值之一：{', '.join(PLUGIN_STATS_SORTS)}")
     growth = "_growth_" in sort_by
     field = sort_by.replace("_growth_", "_growth_rank_") if growth else sort_by
-    if growth and plugins and not any(field in plugin.get("stats", {}) for plugin in plugins):
+    if growth and plugins and not any(field in (plugin.get("stats") or {}) for plugin in plugins):
         raise ValueError(f"统计接口未提供 {field}，无法查询该飙升榜")
     # 缺失指标不能参与排序；null 飙升位次表示未上榜，不自行计算替代排名。
     candidates = [

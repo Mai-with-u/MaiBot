@@ -4,5 +4,6 @@
   "prompt.invalid_category": "Promptカテゴリ '{category}' は無効です",
   "prompt.invalid_name": "Prompt名 '{name}' は無効です",
   "prompt.missing_placeholder": "Promptテンプレート '{name}' にプレースホルダー '{placeholder}' がありません",
-  "prompt.template_not_found": "ロケール '{locale}' にPromptテンプレート '{name}' が見つかりません"
+  "prompt.template_not_found": "ロケール '{prompt_locale}' にPromptテンプレート '{name}' が見つかりません",
+  "prompt.template_outdated": "Prompt テンプレート '{name}' は古いため、デフォルトのテンプレートを使用します"
 }

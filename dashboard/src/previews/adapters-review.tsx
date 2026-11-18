@@ -72,6 +72,7 @@ export function AdaptersReview() {
   return (
     <main className="management-review-screen">
       <AdapterManagementView
+        onInstalled={() => {}}
         groups={groups.filter((group) => group.plugins.length > 0)}
         defaults={
           <AdapterPolicyDefaultsView

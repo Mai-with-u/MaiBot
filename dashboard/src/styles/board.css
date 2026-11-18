@@ -1,0 +1,360 @@
+/* 面板（Board）：12 列模块网格。材质只在这里按界面风格分支，页面只描述内容。
+   规则放在 components 层，页面传入的 Tailwind 工具类（grid、flex-col 等）才能覆盖默认排版。 */
+:root {
+  --board-gap: 1.25rem;
+  --board-bg: transparent;
+  --board-border: 0;
+  --board-padding: 0;
+  --board-shadow: none;
+  --board-module-bg: hsl(var(--card));
+  --board-module-border: 1px solid hsl(var(--border));
+  --board-module-radius: 0.75rem;
+  --board-module-shadow: 0 1px 2px rgb(16 24 40 / 0.05), 0 4px 12px rgb(16 24 40 / 0.04);
+  --board-module-padding: 1rem 1.125rem;
+  --board-screen-bg: transparent;
+  --board-screen-border: 0;
+  --board-screen-shadow: none;
+  --board-screen-padding: 0.25rem 0 0;
+  --board-screen-radius: 0;
+  --board-ink: hsl(var(--foreground));
+  --board-dim: hsl(var(--muted-foreground));
+  --board-rule: 1px solid hsl(var(--border));
+  --board-accent: hsl(var(--primary));
+  --board-number-font: inherit;
+  --board-code-font: inherit;
+  --board-chart-1: hsl(var(--primary) / 0.7);
+  --board-chart-2: hsl(var(--primary) / 0.3);
+  --board-chart-grid: hsl(var(--border));
+  --board-chart-axis: hsl(var(--border));
+  --board-chart-ink: hsl(var(--muted-foreground));
+}
+
+/* 千禧：整块面板是一个机壳，模块只是印在机壳上的丝印标题 + 下沉屏幕 */
+:root[data-dashboard-style='millennium'] {
+  --board-gap: 1.25rem;
+  --board-bg: var(--mil-panel);
+  --board-border: 2px solid var(--mil-line);
+  --board-padding: 1rem 1.25rem 1.25rem;
+  --board-shadow: var(--mil-raise);
+  --board-module-bg: transparent;
+  --board-module-border: 0;
+  --board-module-radius: 0;
+  --board-module-shadow: none;
+  --board-module-padding: 0;
+  --board-screen-bg: var(--mil-screen);
+  --board-screen-border: 2px solid var(--mil-line);
+  --board-screen-shadow: var(--mil-sunk);
+  --board-screen-padding: 0.875rem 1rem;
+  --board-ink: var(--mil-screen-ink);
+  --board-dim: var(--mil-screen-dim);
+  --board-rule: 1px solid var(--mil-rule);
+  --board-accent: var(--mil-accent-text);
+  --board-number-font: var(--mil-font-pixel);
+  --board-code-font: var(--mil-font-pixel);
+  --board-chart-1: var(--mil-on);
+  --board-chart-2: var(--mil-screen-dim);
+  --board-chart-grid: var(--mil-scope-grid);
+  --board-chart-axis: var(--mil-line);
+  --board-chart-ink: var(--mil-print);
+}
+
+/* 未来复古：一整张纸，粗墨线分格，没有投影 */
+:root[data-dashboard-style='future-retro'] {
+  --board-gap: 3px;
+  --board-bg: var(--retro-ink);
+  --board-border: 4px solid var(--retro-ink);
+  --board-module-bg: var(--retro-paper);
+  --board-module-border: 0;
+  --board-module-radius: 0;
+  --board-module-shadow: none;
+  --board-module-padding: 1rem 1.25rem 1.125rem;
+  --board-ink: var(--retro-ink);
+  --board-dim: var(--retro-ink-soft);
+  --board-rule: 2px dashed color-mix(in srgb, var(--retro-ink) 30%, transparent);
+  --board-accent: var(--retro-rust);
+  --board-number-font: var(--retro-font-display);
+  --board-code-font: var(--retro-font-display);
+  --board-chart-1: color-mix(in srgb, var(--retro-rust) 70%, var(--retro-gold));
+  --board-chart-2: var(--retro-gold);
+  --board-chart-grid: color-mix(in srgb, var(--retro-ink) 14%, transparent);
+  --board-chart-axis: var(--retro-ink);
+  --board-chart-ink: var(--retro-ink-soft);
+}
+
+@layer components {
+  [data-board-frame='true'] {
+    display: flex;
+    flex-direction: column;
+    container: board / inline-size;
+  }
+  [data-board='true'] {
+    flex: 1;
+    display: flex;
+    flex-direction: column;
+    gap: var(--board-gap);
+    box-sizing: border-box;
+    padding: var(--board-padding);
+    background: var(--board-bg);
+    border: var(--board-border);
+    box-shadow: var(--board-shadow);
+  }
+  :root[data-dashboard-style='millennium'] [data-board='true'] {
+    background-image: var(--mil-speck);
+    background-size: 5px 5px;
+  }
+
+  [data-board-grid='true'] {
+    display: grid;
+    flex-shrink: 0;
+    grid-template-columns: repeat(12, minmax(0, 1fr));
+    grid-template-rows: var(--board-rows, none);
+    grid-auto-rows: minmax(12rem, auto);
+    gap: var(--board-gap);
+  }
+  [data-board-grid='true'][data-grow='true'] {
+    flex: 1 0 auto;
+  }
+
+  /* 刻线：一段网格和下一段之间压一道线，左端印代号，右端装控件 */
+  [data-board-rule='true'] {
+    display: flex;
+    flex-shrink: 0;
+    align-items: center;
+    gap: 0.75rem;
+    min-height: 1.75rem;
+    padding: 0 0.25rem;
+    color: var(--board-ink);
+  }
+  [data-board-rule-code='true'] {
+    font-family: var(--board-code-font);
+    font-size: 0.75rem;
+    font-weight: 600;
+    letter-spacing: 0.14em;
+  }
+  [data-board-rule-line='true'] {
+    flex: 1;
+    min-width: 1rem;
+    border-top: 1px solid hsl(var(--border));
+  }
+  :root[data-dashboard-style='millennium'] [data-board-rule='true'] {
+    color: var(--mil-ink);
+  }
+  :root[data-dashboard-style='millennium'] [data-board-rule-code='true'] {
+    font-weight: 400;
+  }
+  :root[data-dashboard-style='millennium'] [data-board-rule-line='true'] {
+    border-top: 2px solid color-mix(in srgb, var(--mil-line) 30%, var(--mil-panel));
+    border-bottom: 2px solid var(--mil-hi);
+  }
+  /* 复古：墨色底上露出的是一条纸带，刻线是虚线 */
+  :root[data-dashboard-style='future-retro'] [data-board-rule='true'] {
+    padding: 0.375rem 1rem;
+    background-color: var(--retro-paper);
+    background-image: var(--retro-paper-brightness-overlay), var(--retro-paper-texture);
+    background-size: auto, var(--retro-paper-texture-size);
+  }
+  :root[data-dashboard-style='future-retro'] [data-board-rule-line='true'] {
+    border-top: 2px dashed color-mix(in srgb, var(--retro-ink) 35%, transparent);
+  }
+
+  [data-board-module='true'] {
+    grid-column: span var(--board-span, 3) / span var(--board-span, 3);
+    display: flex;
+    flex-direction: column;
+    gap: 0.625rem;
+    padding: var(--board-module-padding);
+    color: var(--board-ink);
+    background: var(--board-module-bg);
+    border: var(--board-module-border);
+    border-radius: var(--board-module-radius);
+    box-shadow: var(--board-module-shadow);
+  }
+  :root[data-dashboard-style='millennium'] [data-board-module='true'] {
+    gap: 0.5rem;
+    color: var(--mil-ink);
+  }
+  :root[data-dashboard-style='future-retro'] [data-board-module='true'] {
+    background-image: var(--retro-paper-brightness-overlay), var(--retro-paper-texture);
+    background-size: auto, var(--retro-paper-texture-size);
+  }
+
+  [data-board-module-head='true'] {
+    display: flex;
+    flex-shrink: 0;
+    align-items: center;
+    gap: 0.625rem;
+    min-height: 1.75rem;
+  }
+  :root[data-dashboard-style='millennium'] [data-board-module-head='true'] {
+    padding: 0 0.25rem;
+  }
+  [data-board-module-label='true'] {
+    display: inline-flex;
+    align-items: baseline;
+    gap: 0.5rem;
+    min-width: 0;
+  }
+  [data-board-module-code='true'] {
+    display: none;
+  }
+  [data-board-module-title='true'] {
+    overflow: hidden;
+    font-size: 0.8125rem;
+    font-weight: 600;
+    text-overflow: ellipsis;
+    white-space: nowrap;
+  }
+  [data-board-module-actions='true'] {
+    display: inline-flex;
+    flex-shrink: 0;
+    align-items: center;
+    gap: 0.5rem;
+    margin-left: auto;
+    font-size: 0.75rem;
+  }
+
+  /* 千禧：英文丝印印在机壳上，中文跟在后面 */
+  :root[data-dashboard-style='millennium'] [data-board-module-code='true'] {
+    display: inline;
+    color: var(--mil-print);
+    font-family: var(--board-code-font);
+    font-size: 0.75rem;
+    letter-spacing: 0.16em;
+  }
+  :root[data-dashboard-style='millennium'] [data-board-module-title='true'] {
+    color: var(--mil-print);
+    font-size: 0.75rem;
+    font-weight: 500;
+  }
+
+  /* 未来复古：代号与标题合成一枚低饱和色块标签，三种颜色轮换 */
+  :root[data-dashboard-style='future-retro'] [data-board-module-label='true'] {
+    padding: 0.1875rem 0.625rem 0.125rem;
+    color: var(--retro-paper);
+    background: var(--retro-rust);
+  }
+  :root[data-dashboard-style='future-retro'] [data-board-tone='1'] [data-board-module-label='true'] {
+    color: var(--retro-ink);
+    background: color-mix(in srgb, var(--retro-gold) 82%, var(--retro-paper));
+  }
+  :root[data-dashboard-style='future-retro'] [data-board-tone='2'] [data-board-module-label='true'] {
+    background: color-mix(in srgb, var(--retro-rust) 55%, var(--retro-gold));
+  }
+  :root[data-dashboard-style='future-retro'] [data-board-module-code='true'] {
+    display: inline;
+    font-family: var(--board-code-font);
+    font-size: 0.8125rem;
+    font-weight: 700;
+    letter-spacing: 0.12em;
+  }
+
+  [data-board-screen='true'] {
+    display: flex;
+    flex-direction: column;
+    min-height: 0;
+    padding: var(--board-screen-padding);
+    overflow: hidden;
+    color: var(--board-ink);
+    background: var(--board-screen-bg);
+    border: var(--board-screen-border);
+    border-radius: var(--board-screen-radius);
+    box-shadow: var(--board-screen-shadow);
+  }
+  :root[data-dashboard-style='millennium'] [data-board-screen='true'] {
+    margin: 4px;
+    background-image: var(--mil-screen-tex);
+    background-size: 3px 3px;
+  }
+  [data-board-screen='true'][data-flush='true'] {
+    padding: 0;
+    background: transparent;
+    border: 0;
+    box-shadow: none;
+  }
+  :root[data-dashboard-style='millennium'] [data-board-screen='true'][data-flush='true'] {
+    background-image: none;
+  }
+
+  [data-board-label='true'] {
+    color: var(--board-dim);
+    font-size: 0.75rem;
+  }
+  [data-board-number='true'] {
+    font-family: var(--board-number-font);
+    font-variant-numeric: tabular-nums;
+    font-weight: 600;
+    line-height: 1.1;
+    letter-spacing: -0.01em;
+  }
+  :root[data-dashboard-style='millennium'] [data-board-number='true'] {
+    font-weight: 400;
+    letter-spacing: 0;
+    font-synthesis: none;
+  }
+  [data-board-divider='true'] {
+    border-top: var(--board-rule);
+  }
+  [data-board-link='true'] {
+    display: inline-flex;
+    align-items: center;
+    gap: 0.25rem;
+    color: var(--board-accent);
+  }
+  [data-board-link='true'] svg {
+    width: 0.75rem;
+    height: 0.75rem;
+  }
+  [data-board-badge='true'] {
+    padding: 0.0625rem 0.5rem;
+    color: hsl(var(--primary-foreground));
+    font-size: 0.6875rem;
+    font-weight: 700;
+    background: hsl(var(--primary));
+    border-radius: 999px;
+  }
+  :root[data-dashboard-style='millennium'] [data-board-badge='true'] {
+    color: var(--mil-hot-ink);
+    background: var(--mil-hot);
+    border-radius: 0;
+    box-shadow: inset 0 0 0 2px var(--mil-line);
+  }
+  :root[data-dashboard-style='future-retro'] [data-board-badge='true'] {
+    color: var(--retro-paper);
+    background: var(--retro-rust);
+    border-radius: 0;
+  }
+
+  /* 中尺寸：仍是 12 列，只收紧机壳与卡片的间距和标题条；复古的墨线间隙本来就窄，不动 */
+  @container board (max-width: 81.25rem) {
+    :root[data-dashboard-style='millennium'] [data-board='true'] {
+      --board-gap: 0.875rem 1rem;
+      --board-padding: 0.875rem 1rem 1.125rem;
+    }
+    :root[data-dashboard-style='modern'] [data-board='true'] {
+      --board-gap: 0.875rem;
+    }
+    [data-board-module='true'] {
+      gap: 0.25rem;
+    }
+    [data-board-module-head='true'] {
+      min-height: 1.375rem;
+      white-space: nowrap;
+    }
+    :root[data-dashboard-style='millennium'] [data-board-module-code='true'] {
+      letter-spacing: 0.12em;
+    }
+    :root[data-dashboard-style='millennium'] [data-board-screen='true'] {
+      --board-screen-padding: 0.625rem 0.75rem;
+    }
+  }
+
+  /* 面板太窄时换成窄排法：模块按 spanNarrow 重新排，行高按内容撑开，由页面滚动 */
+  @container board (max-width: 56rem) {
+    [data-board-grid='true'] {
+      grid-template-rows: none;
+    }
+    [data-board-module='true'] {
+      grid-column: span var(--board-span-narrow, 6) / span var(--board-span-narrow, 6);
+    }
+  }
+}

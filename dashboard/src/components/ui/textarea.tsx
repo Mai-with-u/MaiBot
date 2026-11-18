@@ -45,11 +45,16 @@ export interface TextareaProps extends React.ComponentProps<"textarea"> {
    * 设置为 undefined 或 0 表示不限制最大高度
    */
   maxHeight?: number
+  /** 仅滚动期间显示滚动条，保留轨道宽度以避免文字跳动。 */
+  hideScrollbarWhenIdle?: boolean
 }
 
 const Textarea = React.forwardRef<HTMLTextAreaElement, TextareaProps>(
-  ({ className, variant = "default", autoResize = true, minHeight = 60, maxHeight, value, onChange, ...props }, ref) => {
+  ({ className, variant = "default", autoResize = true, minHeight = 60, maxHeight, value, onChange, hideScrollbarWhenIdle = false, onScroll, ...props }, ref) => {
     const innerRef = React.useRef<HTMLTextAreaElement>(null)
+    const scrollTimer = React.useRef<ReturnType<typeof setTimeout> | undefined>(undefined)
+    const [isScrolling, setIsScrolling] = React.useState(false)
+    React.useEffect(() => () => clearTimeout(scrollTimer.current), [])
     const [hasFixedHeight, setHasFixedHeight] = React.useState(false)
 
     // 合并 ref
@@ -141,18 +146,26 @@ const Textarea = React.forwardRef<HTMLTextAreaElement, TextareaProps>(
     const handleChange = React.useCallback(
       (e: React.ChangeEvent<HTMLTextAreaElement>) => {
         onChange?.(e)
-        // 延迟调整高度，确保值已更新
-        requestAnimationFrame(() => {
-          adjustHeight()
-        })
+        // 受控输入由 value 的布局 effect 测量；非受控输入才在事件后调整。
+        if (value === undefined) {
+          requestAnimationFrame(adjustHeight)
+        }
       },
-      [onChange, adjustHeight]
+      [onChange, adjustHeight, value]
     )
 
     return (
       <textarea
         data-dashboard-textarea="true"
         data-textarea-variant={variant}
+        data-scrollbar-idle={hideScrollbarWhenIdle && !isScrolling ? 'true' : undefined}
+        onScroll={(event) => {
+          onScroll?.(event)
+          if (!hideScrollbarWhenIdle) return
+          setIsScrolling(true)
+          clearTimeout(scrollTimer.current)
+          scrollTimer.current = setTimeout(() => setIsScrolling(false), 800)
+        }}
         className={cn(
           "flex min-h-[60px] w-full rounded-md border border-input bg-transparent px-3 py-2 text-base shadow-sm placeholder:text-muted-foreground focus-visible:outline-none focus-visible:ring-1 focus-visible:ring-ring disabled:cursor-not-allowed disabled:opacity-50 md:text-sm",
           "custom-scrollbar",

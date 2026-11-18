@@ -21,11 +21,13 @@ from src.common.logger import get_logger
 
 from ...paths import artifacts_root
 from ..runtime.search_runtime_initializer import build_search_runtime
+from .async_work import cancel_and_wait_for_tasks
 from .model_routing import (
     ResolvedLLMModel,
     generate_with_resolved_model,
     get_text_generation_model_tasks,
     pick_text_generation_task,
+    resolve_fast_text_generation_model,
     resolve_text_generation_model_selector,
 )
 from .search_execution_service import SearchExecutionRequest, SearchExecutionService
@@ -912,13 +914,7 @@ class RetrievalTuningManager:
         worker = self._worker_task
         if worker is None or worker.done():
             return
-        worker.cancel()
-        try:
-            await worker
-        except asyncio.CancelledError:
-            pass
-        except Exception as e:
-            logger.warning(f"Retrieval tuning worker shutdown failed: {e}")
+        await cancel_and_wait_for_tasks([worker], operation="关闭检索调优任务")
 
     async def create_task(self, payload: Optional[Dict[str, Any]] = None) -> Dict[str, Any]:
         if not self._is_enabled():
@@ -1627,10 +1623,12 @@ class RetrievalTuningManager:
             return ResolvedLLMModel(task_name=task_name, task_config=task_config)
         return None
 
-    async def _llm_call_text(self, prompt: str, *, request_type: str) -> str:
+    async def _llm_call_text(self, prompt: str, *, request_type: str, use_fast_model: bool = False) -> str:
         if llm_api is None:
             raise RuntimeError("llm_api unavailable")
-        resolved_model = await self._select_llm_model()
+        resolved_model = (
+            resolve_fast_text_generation_model(llm_api) if use_fast_model else await self._select_llm_model()
+        )
         if resolved_model is None:
             raise RuntimeError("no_llm_model")
 
@@ -1686,7 +1684,9 @@ class RetrievalTuningManager:
             f"样本：\n{json.dumps(payload, ensure_ascii=False)}"
         )
         try:
-            raw = await self._llm_call_text(prompt, request_type="A_Memorix.RetrievalTuning.NLCaseGen")
+            raw = await self._llm_call_text(
+                prompt, request_type="A_Memorix.RetrievalTuning.NLCaseGen", use_fast_model=True
+            )
             obj = _safe_json_loads(raw)
             if not isinstance(obj, dict):
                 return {}

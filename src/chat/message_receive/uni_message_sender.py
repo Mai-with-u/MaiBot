@@ -36,10 +36,10 @@ def get_webui_chat_broadcaster() -> Tuple[Any, Optional[str], Optional[str]]:
     global _webui_chat_broadcaster
     if _webui_chat_broadcaster is None:
         try:
-            from src.webui.routers.chat import WEBUI_CHAT_PLATFORM, chat_manager
+            from src.webui.routers.chat import INTERNAL_CHAT_PLATFORM, chat_manager
 
             # 默认不再强制虚拟群聊；WebUI 默认走私聊频道，需要的话由调用者传入虚拟群 ID。
-            _webui_chat_broadcaster = (chat_manager, WEBUI_CHAT_PLATFORM, None)
+            _webui_chat_broadcaster = (chat_manager, INTERNAL_CHAT_PLATFORM, None)
         except ImportError:
             _webui_chat_broadcaster = (None, None, None)
     return _webui_chat_broadcaster
@@ -79,7 +79,7 @@ async def _send_message(message: SessionMessage, show_log: bool = True) -> bool:
     try:
         # 检查是否是 WebUI 平台的消息，或者是 WebUI 虚拟群的消息
         chat_manager, webui_platform, default_group_id = get_webui_chat_broadcaster()
-        is_webui_message = (platform == webui_platform) or is_webui_virtual_group(group_id)
+        is_webui_message = (platform in {"webui", webui_platform}) or is_webui_virtual_group(group_id)
 
         if is_webui_message and chat_manager is not None:
             # WebUI 聊天室消息（包括虚拟身份模式），通过 WebSocket 广播

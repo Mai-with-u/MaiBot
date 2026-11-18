@@ -14,9 +14,9 @@ class StatisticsSummary(BaseModel):
     cache_hit_tokens: int = Field(0, description="Prompt缓存命中token数")
     cache_miss_tokens: int = Field(0, description="Prompt缓存未命中token数")
     cache_hit_rate: Optional[float] = Field(None, description="Prompt缓存命中率")
-    chat_cache_hit_tokens: int = Field(0, description="聊天任务Prompt缓存命中token数")
-    chat_cache_miss_tokens: int = Field(0, description="聊天任务Prompt缓存未命中token数")
-    chat_cache_hit_rate: Optional[float] = Field(None, description="聊天任务Prompt缓存命中率")
+    core_cache_hit_tokens: int = Field(0, description="核心任务（planner）Prompt缓存命中token数")
+    core_cache_miss_tokens: int = Field(0, description="核心任务（planner）Prompt缓存未命中token数")
+    core_cache_hit_rate: Optional[float] = Field(None, description="核心任务（planner）Prompt缓存命中率")
     online_time: float = Field(0.0, description="在线时间（秒）")
     total_messages: int = Field(0, description="总消息数")
     total_replies: int = Field(0, description="总回复数")
@@ -89,6 +89,7 @@ class DetailedStatisticsBreakdown(BaseModel):
     """模型、任务组、模块或请求类型维度的详细统计行。"""
 
     name: str
+    is_embedding: bool = False
     request_count: int = 0
     input_tokens: int = 0
     output_tokens: int = 0
@@ -102,6 +103,8 @@ class DetailedStatisticsBreakdown(BaseModel):
     avg_calls_per_reply: Optional[float] = None
     avg_tokens_per_reply: Optional[float] = None
     avg_tokens_per_call: Optional[float] = None
+    attempt_count: Optional[int] = Field(None, description="实际调用尝试数（含失败），仅模型和任务组维度有数据")
+    failure_count: Optional[int] = Field(None, description="失败尝试数，仅模型和任务组维度有数据")
 
 
 class DetailedChatStatistics(BaseModel):
@@ -134,6 +137,52 @@ class DetailedStatisticsDistributions(BaseModel):
     chat_costs: List[DetailedDistributionItem]
 
 
+class DetailedReliabilityItem(BaseModel):
+    """模型、供应商或任务维度的调用可靠性。"""
+
+    name: str
+    attempt_count: int = 0
+    failure_count: int = 0
+    failure_rate: Optional[float] = None
+    avg_success_duration: Optional[float] = None
+
+
+class DetailedReliabilityData(BaseModel):
+    """单个统计时段的调用可靠性，来源于 model_task_usage。"""
+
+    coverage_start: str = Field(description="失败统计实际覆盖的起点")
+    truncated: bool = Field(False, description="统计时段早于失败统计保留期时为 True")
+    attempt_count: int = 0
+    failure_count: int = 0
+    failure_rate: Optional[float] = None
+    avg_success_duration: Optional[float] = None
+    by_model: List[DetailedReliabilityItem]
+    by_provider: List[DetailedReliabilityItem]
+    by_task: List[DetailedReliabilityItem]
+
+
+class DetailedPeriodTrend(BaseModel):
+    """与统计时段对齐的趋势、失败时间线和活跃热力图。"""
+
+    start_time: str
+    bucket_minutes: int
+    truncated: bool = Field(False, description="统计时段早于趋势覆盖范围时为 True")
+    time_labels: List[str]
+    costs: List[float]
+    tokens: List[int]
+    requests: List[int]
+    messages: List[int]
+    attempts: List[int]
+    failures: List[int]
+    cost_by_model: Dict[str, List[float]]
+    tokens_by_model: Dict[str, List[int]]
+    requests_by_model: Dict[str, List[int]]
+    cost_by_module: Dict[str, List[float]]
+    message_by_chat: Dict[str, List[int]]
+    heatmap_messages: List[List[int]] = Field(description="7×24，星期一为第 0 行")
+    heatmap_costs: List[List[float]] = Field(description="7×24，星期一为第 0 行")
+
+
 class DetailedStatisticsPeriod(BaseModel):
     """详细统计中的一个统计时段。"""
 
@@ -141,12 +190,15 @@ class DetailedStatisticsPeriod(BaseModel):
     start_time: str
     end_time: str
     summary: DetailedStatisticsSummary
+    previous_summary: Optional[DetailedStatisticsSummary] = Field(None, description="上一个等长周期的汇总")
     models: List[DetailedStatisticsBreakdown]
     modules: List[DetailedStatisticsBreakdown]
     task_groups: List[DetailedStatisticsBreakdown]
     request_types: List[DetailedStatisticsBreakdown]
     chats: List[DetailedChatStatistics]
     distributions: DetailedStatisticsDistributions
+    reliability: DetailedReliabilityData
+    trend: DetailedPeriodTrend
 
 
 class DetailedStatisticsTrendData(BaseModel):
@@ -170,7 +222,7 @@ class DetailedStatisticsMetricsData(BaseModel):
 
 
 class DetailedStatisticsData(BaseModel):
-    """原生 WebUI 与 HTML 报告共享的详细统计快照。"""
+    """WebUI 详细统计快照。"""
 
     generated_at: str
     periods: List[DetailedStatisticsPeriod]

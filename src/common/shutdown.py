@@ -36,7 +36,7 @@ def application_signal_handlers(handler: Callable[[int, FrameType | None], None]
     signals = [signal.SIGINT, signal.SIGTERM]
     if hasattr(signal, "SIGBREAK"):
         signals.append(signal.SIGBREAK)
-    # 依赖 uvicorn 非公开调用链 Server.serve() → capture_signals()；uv.lock 锁定并验证于 0.45.0。
+    # 依赖 uvicorn 非公开调用链 Server.serve() → capture_signals()；已在 Uvicorn 0.45.0 验证。
     # maim_message 的额外 API 会自行创建 uvicorn.Server，无法只在本项目构造处子类化，因此替换类属性。
     # 先读取属性：未来版本移除该方法时，在修改任何信号处理器之前明确失败。
     capture_signals = Server.capture_signals

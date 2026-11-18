@@ -23,6 +23,8 @@ from src.common.logger import get_logger
 from src.plugin_runtime import detect_host_application_version
 from src.plugin_runtime.local_sdk import read_local_sdk_version
 
+from .plugin_enabled import is_plugin_disabled
+
 logger = get_logger("plugin_runtime.runner.manifest_validator")
 
 _SEMVER_PATTERN = re.compile(r"^\d+\.\d+\.\d+$")
@@ -142,15 +144,15 @@ class VersionComparator:
         return True, ""
 
     @staticmethod
-    def is_same_major_minor_higher_version(version: str, max_version: str) -> bool:
-        """判断版本是否仅因修订号更高而超过声明上限。
+    def is_compatible_host_upgrade(version: str, max_version: str) -> bool:
+        """判断主程序是否在声明上限之后的兼容窗口内。
 
         Args:
             version: 当前版本号。
             max_version: Manifest 声明的最大支持版本号。
 
         Returns:
-            bool: 当前版本高于上限，且两者主版本号和次版本号相同时返回 ``True``。
+            bool: 主版本相同，且仅修订号更高或次版本号高 1 时返回 ``True``。
         """
 
         if not version or not max_version:
@@ -160,15 +162,9 @@ class VersionComparator:
         max_major, max_minor, _max_patch = VersionComparator.parse_version(max_version)
         return (
             current_major == max_major
-            and current_minor == max_minor
+            and current_minor - max_minor in (0, 1)
             and VersionComparator.compare(version, max_version) > 0
         )
-
-    @staticmethod
-    def is_same_major_higher_version(version: str, max_version: str) -> bool:
-        """兼容旧调用名称，使用仅修订号向后兼容的规则。"""
-
-        return VersionComparator.is_same_major_minor_higher_version(version, max_version)
 
     @staticmethod
     def is_valid_semver(version: str) -> bool:
@@ -865,11 +861,15 @@ class ManifestValidator:
         """
         return self.parse_manifest(manifest) is not None
 
-    def parse_manifest(self, manifest: Dict[str, Any], source: Optional[str] = None) -> Optional[PluginManifest]:
+    def parse_manifest(
+        self, manifest: Dict[str, Any], source: Optional[str] = None, *, skip_runtime_validation: bool = False
+    ) -> Optional[PluginManifest]:
         """解析并校验 manifest 字典。
 
         Args:
             manifest: 待解析的 Manifest 原始字典。
+            source: 日志中的清单来源。
+            skip_runtime_validation: 禁用插件仅解析管理元数据，不检查运行时兼容性或依赖。
 
         Returns:
             Optional[PluginManifest]: 解析成功时返回强类型 Manifest；失败时返回 ``None``。
@@ -893,7 +893,8 @@ class ManifestValidator:
             self._log_errors(source=source)
             return None
 
-        self._validate_runtime_compatibility(parsed_manifest)
+        if not skip_runtime_validation:
+            self._validate_runtime_compatibility(parsed_manifest)
         if self.errors:
             self._log_errors(source=source or parsed_manifest.id)
             return None
@@ -940,18 +941,22 @@ class ManifestValidator:
             return None
 
         manifest_source = str(manifest_data.get("id", "")).strip() or str(plugin_path)
-        return self.parse_manifest(manifest_data, source=manifest_source)
+        return self.parse_manifest(
+            manifest_data, source=manifest_source, skip_runtime_validation=is_plugin_disabled(plugin_path)
+        )
 
     def iter_plugin_manifests(
         self,
         plugin_dirs: Iterable[Path],
         require_entrypoint: bool = True,
+        enabled_only: bool = False,
     ) -> Iterable[Tuple[Path, PluginManifest]]:
         """扫描插件根目录并迭代所有可成功解析的 Manifest。
 
         Args:
             plugin_dirs: 一个或多个插件根目录。
             require_entrypoint: 是否要求每个插件目录内存在 ``plugin.py``。
+            enabled_only: 是否在读取 Manifest 前跳过明确禁用的插件。
 
         Yields:
             Tuple[Path, PluginManifest]: ``(插件目录路径, 解析结果)`` 二元组。
@@ -966,6 +971,8 @@ class ManifestValidator:
                 for entry in normalized_root.iterdir()
                 if entry.is_dir() and not is_reserved_plugin_directory(entry)
             ):
+                if enabled_only and is_plugin_disabled(candidate_path):
+                    continue
                 parsed_manifest = self.load_from_plugin_path(candidate_path, require_entrypoint=require_entrypoint)
                 if parsed_manifest is None:
                     continue
@@ -975,18 +982,22 @@ class ManifestValidator:
         self,
         plugin_dirs: Iterable[Path],
         require_entrypoint: bool = True,
+        enabled_only: bool = False,
     ) -> Dict[str, List[str]]:
         """扫描目录并构建 ``plugin_id -> 依赖插件 ID 列表`` 映射。
 
         Args:
             plugin_dirs: 一个或多个插件根目录。
             require_entrypoint: 是否要求每个插件目录内存在 ``plugin.py``。
+            enabled_only: 是否忽略禁用插件及其依赖关系。
 
         Returns:
             Dict[str, List[str]]: 所有成功解析到的插件依赖映射。
         """
         dependency_map: Dict[str, List[str]] = {}
-        for _plugin_path, manifest in self.iter_plugin_manifests(plugin_dirs, require_entrypoint=require_entrypoint):
+        for _plugin_path, manifest in self.iter_plugin_manifests(
+            plugin_dirs, require_entrypoint=require_entrypoint, enabled_only=enabled_only
+        ):
             dependency_map[manifest.id] = manifest.plugin_dependency_ids
         return dependency_map
 
@@ -1069,14 +1080,15 @@ class ManifestValidator:
                 manifest.host_application.max_version,
             )
             if not host_ok:
-                if VersionComparator.is_same_major_minor_higher_version(
+                if VersionComparator.is_compatible_host_upgrade(
                     self._host_version,
                     manifest.host_application.max_version,
                 ):
                     self.warnings.append(
                         f"当前版本 {self._host_version} 以兼容模式加载插件"
                         f"（插件声明的 Host 最高支持版本为 "
-                        f"{VersionComparator.normalize_version(manifest.host_application.max_version)}）"
+                        f"{VersionComparator.normalize_version(manifest.host_application.max_version)}）；"
+                        "用户如有插件新版本可用，请及时更新；请插件开发者尽快迁移适配当前主程序版本。"
                     )
                 else:
                     self.errors.append(f"Host 版本不兼容: {host_message} (当前 Host: {self._host_version})")
@@ -1093,7 +1105,7 @@ class ManifestValidator:
             self._validate_python_package_dependencies_against_runtime(manifest)
 
     def _validate_python_package_dependencies_against_runtime(self, manifest: PluginManifest) -> None:
-        """校验 Python 包依赖与主程序运行环境是否冲突。
+        """检查 Python 包依赖；已有包版本不符只提示，仍尝试加载插件。
 
         Args:
             manifest: 已通过结构校验的强类型 Manifest。
@@ -1110,14 +1122,13 @@ class ManifestValidator:
             installed_version = self._get_installed_package_version(dependency.name)
             host_requirement = host_requirements.get(normalized_package_name)
 
-            if installed_version is not None and not self._version_matches_specifier(
-                installed_version,
-                dependency.version_spec,
-            ):
-                self.errors.append(
-                    f"Python 包依赖冲突: {dependency.name} 需要 {dependency.version_spec}，"
-                    f"当前运行环境为 {installed_version}"
-                )
+            if installed_version is not None:
+                if not self._version_matches_specifier(installed_version, dependency.version_spec):
+                    self.warnings.append(
+                        f"Python 包依赖版本不匹配: {dependency.name} 需要 {dependency.version_spec}，"
+                        f"当前运行环境为 {installed_version}，沿用已安装版本并尝试加载"
+                    )
+                # 安装、更新和 Runner 加载使用相同规则，不再用宿主约束二次拦截已有包。
                 continue
 
             if host_requirement is None:
@@ -1233,7 +1244,7 @@ class ManifestValidator:
             self._LOGGED_WARNING_KEYS.add((source_key, warning))
 
         warning_summary = "；".join(pending_warnings)
-        log = logger.warning if any(warning.startswith("SDK 版本") for warning in pending_warnings) else logger.info
+        log = logger.warning if any(warning.startswith(("SDK 版本", "当前版本")) for warning in pending_warnings) else logger.info
         if source:
             if len(pending_warnings) < 2:
                 log(f"插件 [{source}]: {warning_summary}")

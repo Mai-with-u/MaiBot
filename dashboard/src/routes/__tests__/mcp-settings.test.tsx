@@ -785,7 +785,7 @@ describe('MCPSettingsPage 规范化与表单编辑', () => {
     expect(await screen.findByRole('button', { name: '保存并应用' })).toBeEnabled()
   })
 
-  it('schema 信封会过滤 servers、elicitation 与 include_context_support', async () => {
+  it('schema 信封会过滤 servers 与 elicitation', async () => {
     vi.mocked(configApi.getBotConfigSchema).mockResolvedValue({
       schema: {
         className: 'Root',
@@ -806,7 +806,7 @@ describe('MCPSettingsPage 规范化与表单编辑', () => {
                   elicitation: schemaNode({ className: 'Elicitation' }),
                   sampling: schemaNode({
                     className: 'Sampling',
-                    fields: [schemaField('include_context_support'), schemaField('temperature')],
+                    fields: [schemaField('temperature')],
                   }),
                   roots: schemaNode({ className: 'Roots' }),
                 },

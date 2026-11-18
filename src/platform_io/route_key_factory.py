@@ -100,7 +100,7 @@ class RouteKeyFactory:
         metadata_account_id, metadata_scope = cls.extract_components(additional_config)
         route_account_id, route_scope = cls.extract_components(legacy_metadata)
         logger.warning(
-            "消息使用旧版路由归属格式，该特性将在下个版本移除，请及时迁移到消息顶层 account_id/scope: "
+            "消息使用旧版路由归属格式，请及时更新适配器，迁移到消息顶层 account_id/scope: "
             f"platform={platform}, message_id={message_dict.get('message_id', '')}"
         )
         return RouteKey(

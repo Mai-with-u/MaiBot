@@ -1,0 +1,8 @@
+Your only task is to choose suitable expressions for this visible reply based on the actual chat context below.
+Select 0 to {max_selected} expressions from the candidates below that best fit the current context.
+Prioritize natural, context-appropriate expressions that do not feel forced or formulaic.
+If none are clearly suitable, return an empty array.
+Output only JSON in this object format: {{"selected_ids":[123,456]}}.
+
+Candidate expressions:
+{candidates}

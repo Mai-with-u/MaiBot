@@ -25,9 +25,8 @@ export const modelAssignmentTourSteps: Step[] = [
   },
   {
     target: '[data-tour="add-provider-button"]',
-    content: '点击加号，在菜单中选择“添加 LLM 模型提供商”，开始配置模型厂商的连接信息。',
-    disableOverlay: true,
-    placement: 'bottom' as Placement,
+    content: '点击“添加厂商”，开始配置模型厂商的连接信息。',
+    placement: 'top' as Placement,
     disableBeacon: true,
     disableOverlayClose: true,
     hideCloseButton: false,
@@ -37,7 +36,7 @@ export const modelAssignmentTourSteps: Step[] = [
   {
     target: '[data-tour="provider-dialog"]',
     content: '在这里可以选择厂商模板，填写 API Key、URL 和连接参数，保存后即可供模型引用。',
-    placement: 'left' as Placement,
+    placement: 'center' as Placement,
     disableBeacon: true,
     disableOverlayClose: true,
     hideCloseButton: false,
@@ -121,7 +120,7 @@ export const modelAssignmentTourSteps: Step[] = [
   {
     target: '[data-tour="model-dialog"]',
     content: '在这里选择刚才配置好的厂商，并填写模型名称、标识符、价格和能力参数。',
-    placement: 'left' as Placement,
+    placement: 'center' as Placement,
     disableBeacon: true,
     disableOverlayClose: true,
     hideCloseButton: false,
@@ -175,7 +174,7 @@ export const modelAssignmentTourSteps: Step[] = [
   },
   {
     target: '[data-tour="tasks-tab-trigger"]',
-    content: '最后切换到"为模型分配功能"，为麦麦的各个组件选择合适的模型。',
+    content: '最后切换到“分工”，为麦麦的每项工作安排合适的模型。',
     placement: 'bottom' as Placement,
     disableBeacon: true,
     disableOverlayClose: true,
@@ -185,12 +184,15 @@ export const modelAssignmentTourSteps: Step[] = [
   },
   {
     target: '[data-tour="task-model-select"]',
-    content: '在这里可以为每个组件选择一个或多个模型，选择完成后配置会自动保存。',
-    placement: 'bottom' as Placement,
+    content: '这里以“回复”为例，可以添加模型并调整使用顺序。修改会自动保存，其他工作也可以从分工面板打开编辑。',
+    // 下拉选项通过 Portal 渲染在高亮区域外，需同时放开遮罩和目标点击。
+    disableOverlay: true,
+    spotlightClicks: true,
+    placement: 'top' as Placement,
+    floaterProps: { disableFlip: true },
     disableBeacon: true,
     disableOverlayClose: true,
     hideCloseButton: false,
-    spotlightClicks: false,
   },
 ]
 

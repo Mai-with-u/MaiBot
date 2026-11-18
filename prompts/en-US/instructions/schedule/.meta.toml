@@ -1,0 +1,5 @@
+[schedule_due]
+display_name = "Scheduled task due instructions"
+advanced = false
+description = "Instruction template loaded for its triggering scenario; edited separately from main prompts."
+

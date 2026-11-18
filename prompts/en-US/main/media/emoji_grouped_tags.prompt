@@ -1,0 +1,5 @@
+Input type: {image_type}. A GIF is shown as a collage of key frames. Use all frames to understand the action.
+Generate two groups of short sticker tags, with at most five tags per group.
+emotion_tags describes the sender's likely emotion or tone, such as resignation, self-mockery, or agreement. Leave it empty if unclear.
+content_tags describes visible characters, objects, actions, or text, such as cat, facepalm, or the visible words “Here we go again”. Include at least one and avoid guessing identities or background.
+Output only a JSON object with emotion_tags and content_tags, both arrays of strings.

@@ -18,7 +18,6 @@ from src.llm_models.payload_content.tool_option import ToolCall
 class ComponentType(Enum):
     """Host 内部使用的组件类型枚举。"""
 
-    ACTION = "action"  # 动作组件
     COMMAND = "command"  # 命令组件
     TOOL = "tool"  # 工具组件
 
@@ -27,24 +26,6 @@ class ComponentType(Enum):
 
         Returns:
             str: 当前组件类型对应的字符串值。
-        """
-        return self.value
-
-
-# 动作激活类型枚举
-class ActionActivationType(Enum):
-    """动作激活类型枚举。"""
-
-    NEVER = "never"  # 从不激活（默认关闭）
-    ALWAYS = "always"  # 默认参与到planner
-    RANDOM = "random"  # 随机启用action到planner
-    KEYWORD = "keyword"  # 关键词触发启用action到planner
-
-    def __str__(self) -> str:
-        """返回枚举值字符串。
-
-        Returns:
-            str: 当前激活类型对应的字符串值。
         """
         return self.value
 
@@ -92,31 +73,6 @@ class ComponentInfo:
 
     component_type: ComponentType = field(init=False)
     """组件类型。"""
-
-
-@dataclass(slots=True)
-class ActionInfo(ComponentInfo):
-    """供 Planner 与回复链使用的动作信息快照。"""
-
-    action_parameters: Dict[str, str] = field(
-        default_factory=dict
-    )  # 动作参数与描述，例如 {"param1": "描述1", "param2": "描述2"}
-    action_require: List[str] = field(default_factory=list)  # 动作需求说明
-    associated_types: List[str] = field(default_factory=list)  # 关联的消息类型
-    activation_type: ActionActivationType = ActionActivationType.ALWAYS
-    random_activation_probability: float = 0.0
-    activation_keywords: List[str] = field(default_factory=list)  # 激活关键词列表
-    keyword_case_sensitive: bool = False
-    parallel_action: bool = False
-    component_type: ComponentType = field(init=False, default=ComponentType.ACTION)
-    """组件类型。"""
-
-    def __post_init__(self) -> None:
-        """归一化动作快照中的集合字段。"""
-        self.action_parameters = dict(self.action_parameters or {})
-        self.action_require = list(self.action_require or [])
-        self.associated_types = list(self.associated_types or [])
-        self.activation_keywords = list(self.activation_keywords or [])
 
 
 @dataclass(slots=True)
@@ -206,8 +162,6 @@ class MaiMessages:
     llm_response_tool_call: Optional[List[ToolCall]] = None
     """LLM使用的工具调用"""
 
-    action_usage: Optional[List[str]] = None
-    """使用的Action"""
 
     additional_data: Dict[Any, Any] = field(default_factory=dict)
     """附加数据，可以存储额外信息"""

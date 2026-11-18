@@ -7,7 +7,7 @@
  */
 import { ApiError, backendApi, requireSuccess } from '@/lib/http'
 
-import type { PluginConfigBundle, PluginConfigSchema, PluginRuntimeComponent, RuntimeCommand } from './types'
+import type { ConfigWidgetSnapshot, PluginConfigBundle, PluginConfigSchema, PluginRuntimeComponent, RuntimeCommand } from './types'
 
 const API_BASE = '/api/webui/plugins/config'
 const RUNTIME_API_BASE = '/api/webui/plugins/runtime'
@@ -170,4 +170,18 @@ export async function getRuntimeCommands(): Promise<RuntimeCommand[]> {
     commands?: RuntimeCommand[]
   }>(`${RUNTIME_API_BASE}/commands`, { errorMessage: '获取命令列表失败' })
   return requireSuccess(data, '获取命令列表失败').commands ?? []
+}
+
+
+export function getConfigWidgets(pluginId: string, signal?: AbortSignal): Promise<ConfigWidgetSnapshot> {
+  return backendApi.get(`${API_BASE}/${encodeURIComponent(pluginId)}/widgets`, {
+    errorMessage: '获取插件运行状态失败',
+    signal,
+  })
+}
+
+export function invokeConfigWidget(pluginId: string, actionId: string): Promise<ConfigWidgetSnapshot> {
+  return backendApi.post(`${API_BASE}/${encodeURIComponent(pluginId)}/widgets/${encodeURIComponent(actionId)}`, {
+    errorMessage: '插件操作失败',
+  })
 }

@@ -1,20 +1,20 @@
 """Maisaka 历史消息轮次结束后处理。"""
 
 from dataclasses import dataclass
-from math import ceil
+from typing import Dict, List, Optional, Set, Tuple
 
-from src.maisaka.memory.mid_term import is_mid_term_memory_message
-
-from .history import drop_leading_orphan_tool_results, normalize_tool_call_result_pairs
+from .compaction import ContextSummaryMessage
+from .history import collect_tool_turn_anchor_indices, drop_leading_orphan_tool_results, normalize_tool_call_result_pairs
 from .messages import (
-    FOCUS_WAKEUP_SOURCE_KINDS,
     LLMContextMessage,
     ModelOutputContextMessage,
+    ToolResultMediaMessage,
     ToolResultMessage,
 )
 
-TRIM_TARGET_RATIO = 1.0
-TRIM_THRESHOLD_RATIO = 2.0
+# 达到配置的条数或模型返回的输入 Token 阈值时裁切，保留近期上下文。
+TRIM_TARGET_RATIO = 0.2
+MIN_RETAINED_CHAT_MESSAGES = 5
 
 
 @dataclass(slots=True)
@@ -32,17 +32,17 @@ def process_chat_history_after_cycle(
     chat_history: list[LLMContextMessage],
     *,
     max_context_size: int,
+    max_context_tokens: Optional[int] = None,
+    prompt_tokens: int = 0,
     pending_call_ids: set[str] | None = None,
+    consume_references: bool = True,
 ) -> HistoryPostProcessResult:
     """在每轮结束后统一执行历史裁切与清理。"""
 
     processed_history: list[LLMContextMessage] = []
     one_shot_removed_count = 0
     for message in chat_history:
-        if message.source in FOCUS_WAKEUP_SOURCE_KINDS:
-            one_shot_removed_count += 1
-            continue
-        if not message.consume_once():
+        if consume_references and not message.consume_once():
             one_shot_removed_count += 1
             continue
         processed_history.append(message)
@@ -54,12 +54,17 @@ def process_chat_history_after_cycle(
 
     compact_removed_count = 0
     removed_messages: list[LLMContextMessage] = []
-    trim_threshold = ceil(max_context_size * TRIM_THRESHOLD_RATIO)
-    if remaining_context_count > trim_threshold:
-        target_context_count = max(1, int(max_context_size * TRIM_TARGET_RATIO))
+    should_trim = (
+        prompt_tokens >= max_context_tokens
+        if max_context_tokens is not None else remaining_context_count >= max_context_size
+    )
+    if should_trim:
+        retained_base = remaining_context_count if max_context_tokens is not None else max_context_size
+        target_context_count = max(MIN_RETAINED_CHAT_MESSAGES, int(retained_base * TRIM_TARGET_RATIO))
         removed_messages = _trim_history_to_context_target(
             processed_history,
             target_context_count=target_context_count,
+            pending_call_ids=pending_call_ids,
         )
         processed_history, removed_after_trim_count, moved_after_trim_count = _normalize_history_structure(
             processed_history,
@@ -109,77 +114,67 @@ def _trim_history_to_context_target(
     chat_history: list[LLMContextMessage],
     *,
     target_context_count: int,
+    pending_call_ids: Optional[Set[str]] = None,
 ) -> list[LLMContextMessage]:
-    """移除最早的一段历史，直到普通上下文消息数量降到目标值以内。"""
+    """选择连续历史前缀，保留最近五条真实聊天消息、最近用户回合和未完成的工具调用。"""
 
-    remaining_context_count = sum(1 for message in chat_history if message.count_in_context)
-    if remaining_context_count <= target_context_count:
+    remaining_count = sum(message.count_in_context for message in chat_history)
+    if remaining_count <= target_context_count:
         return []
 
-    remove_indexes: list[int] = []
-    visited_indexes: set[int] = set()
+    turn_indexes: Dict[str, List[int]] = {}
     tool_turn_ids = _collect_tool_turn_ids(chat_history)
+    media_turn_ids = {
+        call.call_id: turn_id
+        for message in chat_history if isinstance(message, ModelOutputContextMessage)
+        if (turn_id := _get_logical_turn_id(message)) in tool_turn_ids
+        for call in message.tool_calls
+    }
+    protected_start = max(0, len(chat_history) - 1)
+    chat_message_indices: List[int] = []
     for index, message in enumerate(chat_history):
-        if index in visited_indexes:
-            continue
-        if is_mid_term_memory_message(message):
-            continue
+        if message.count_in_context:
+            chat_message_indices.append(index)
+            protected_start = index
+        turn_id = (
+            media_turn_ids.get(message.tool_call_id)
+            if isinstance(message, ToolResultMediaMessage) else _get_logical_turn_id(message)
+        )
+        if turn_id in tool_turn_ids:
+            turn_indexes.setdefault(turn_id, []).append(index)
+    # 用户与麦麦实际收发的消息合计至少保留五条，工具结果和内部思考不占这个最低数量。
+    # 不足五条时全部保留，裁切不能越过这条保护边界。
+    if chat_message_indices:
+        oldest_retained_index = chat_message_indices[max(0, len(chat_message_indices) - MIN_RETAINED_CHAT_MESSAGES)]
+        protected_start = min(protected_start, oldest_retained_index)
+    anchors = collect_tool_turn_anchor_indices(chat_history, tool_turn_ids)
+    spans: List[Tuple[int, int]] = []
+    for turn_id, indexes in turn_indexes.items():
+        start = min(indexes[0], anchors.get(turn_id, indexes[0]))
+        spans.append((start, indexes[-1] + 1))
+    # user 消息触发的工具调用不能在裁切点两侧拆开，否则剩余历史会从
+    # function call 开始，违反部分模型的消息顺序要求。
+    for index, message in enumerate(chat_history):
+        if isinstance(message, ModelOutputContextMessage) and any(
+            call.call_id in (pending_call_ids or set()) for call in message.tool_calls
+        ):
+            turn_id = _get_logical_turn_id(message)
+            protected_start = min(protected_start, anchors.get(turn_id, index))
 
-        unit_indexes = {index}
-        logical_turn_id = _get_logical_turn_id(message)
-        if logical_turn_id in tool_turn_ids:
-            unit_indexes = {
-                candidate_index
-                for candidate_index, candidate in enumerate(chat_history)
-                if _get_logical_turn_id(candidate) == logical_turn_id
-            }
-        elif message.role == "user":
-            # user 消息触发的工具调用不能在裁切点两侧拆开，否则剩余历史会从
-            # function call 开始，违反部分模型的消息顺序要求。
-            anchored_tool_turn_ids = _collect_following_tool_turn_ids(
-                chat_history,
-                user_index=index,
-                tool_turn_ids=tool_turn_ids,
-            )
-            if anchored_tool_turn_ids:
-                unit_indexes.update(
-                    candidate_index
-                    for candidate_index, candidate in enumerate(chat_history)
-                    if _get_logical_turn_id(candidate) in anchored_tool_turn_ids
-                )
-
-        visited_indexes.update(unit_indexes)
-        remove_indexes.extend(unit_indexes)
-        remaining_context_count -= sum(1 for unit_index in unit_indexes if chat_history[unit_index].count_in_context)
-        if remaining_context_count <= target_context_count:
+    boundary = 0
+    for candidate in range(1, protected_start + 1):
+        message = chat_history[candidate - 1]
+        if not isinstance(message, ContextSummaryMessage):
+            remaining_count -= message.count_in_context
+        if any(start < candidate < end for start, end in spans):
+            continue
+        boundary = candidate
+        if remaining_count <= target_context_count:
             break
 
-    if not remove_indexes:
-        return []
-
-    normalized_remove_indexes = sorted(set(remove_indexes))
-    removed_messages = [chat_history[index] for index in normalized_remove_indexes]
-    for index in reversed(normalized_remove_indexes):
-        del chat_history[index]
+    removed_messages = [message for message in chat_history[:boundary] if not isinstance(message, ContextSummaryMessage)]
+    chat_history[:boundary] = [message for message in chat_history[:boundary] if isinstance(message, ContextSummaryMessage)]
     return removed_messages
-
-
-def _collect_following_tool_turn_ids(
-    chat_history: list[LLMContextMessage],
-    *,
-    user_index: int,
-    tool_turn_ids: set[str],
-) -> set[str]:
-    """收集一条 user 消息之后、下一条 user 消息之前的工具轮次。"""
-
-    following_tool_turn_ids: set[str] = set()
-    for message in chat_history[user_index + 1 :]:
-        if message.role == "user":
-            break
-        logical_turn_id = _get_logical_turn_id(message)
-        if logical_turn_id in tool_turn_ids:
-            following_tool_turn_ids.add(logical_turn_id)
-    return following_tool_turn_ids
 
 
 def _get_logical_turn_id(message: LLMContextMessage) -> str | None:

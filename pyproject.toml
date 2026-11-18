@@ -4,7 +4,7 @@ build-backend = "setuptools.build_meta"
 
 [project]
 name = "MaiBot"
-version = "1.3.12"
+version = "1.4.6"
 description = "MaiCore 是一个基于大语言模型的可交互智能体"
 readme = "README.md"
 requires-python = ">=3.12"
@@ -25,26 +25,31 @@ dependencies = [
     "fastapi>=0.116.0",
     "google-genai>=1.39.1",
     "httpx[socks]",
+    "imageio-ffmpeg>=0.6,<1",
     "jieba>=0.42.1",
     "json-repair>=0.60.1,<0.61",
     "jsonschema>=4.26.0,<5",
     "maim-message==0.6.8",
-    "maibot-dashboard==1.9.6.dev20261019543",
-    "maibot-plugin-sdk>=2.12.0",
+    "maibot-plugin-sdk>=2.23.0",
+    "maibot-dashboard==1.10.6.dev20261117612",
     "mcp>=1.28.1,<2",
     "msgpack>=1.2.1",
     "numpy>=2.2.6",
     "openai>=1.95.0",
     "pandas>=2.3.1",
     "pillow>=12.3.0",
-    "playwright>=1.54.0",
+    "playwright==1.58.0",
     "pyarrow>=20.0.0",
+    "pycryptodome>=3.20,<4",
+    "qrcode>=8,<9",
     "pydantic>=2.11.7",
     "pypinyin>=0.54.0",
+    "pywebview>=6.2,<7; sys_platform == 'win32'",
     "prompt-toolkit>=3.0.52",
     "python-multipart>=0.0.31",
     "rapidfuzz",
     "rich>=14.0.0",
+    "rlottie-python>=1.3.7,<2",
     "scipy>=1.7.0",
     "sqlalchemy>=2.0.40",
     "sqlmodel>=0.0.24",
@@ -69,6 +74,11 @@ exclude = ["src.MaiBot.egg-info*", "src.data*", "*.__pycache__*"]
 namespaces = true
 
 [tool.setuptools.package-data]
+"src.plugins.built_in.chinese_typo" = ["typo_words.tsv", "typo_words.LICENSE", "typo_words.NOTICE"]
+"src.desktop_pet" = ["web/*.html", "web/*.js", "web/*.css", "web/fonts/*", "web/sounds/*.wav", "presets/*/skin.json", "presets/*/*.png", "presets/*/*.webp", "LICENSE"]
+"src.plugins.built_in.weixin_clawbot_adapter" = ["webui.json", "web/*.html", "icon-mascot.webp", "config.toml.example", "README.md", "changelog.md"]
+"src.plugins.built_in.qq_official_adapter" = ["webui.json", "webui/*.html", "assets/*", "README.md", "CHANGELOG.md"]
+"src.plugins.built_in.telegram_adapter" = ["assets/*", "config.example.toml", "README.md", "CHANGELOG.md"]
 "*" = ["_manifest.json", "config_schema.json", "LICENSE", "LICENSE-MAIBOT-GPL.md"]
 
 [dependency-groups]

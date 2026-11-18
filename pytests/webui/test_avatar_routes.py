@@ -17,7 +17,7 @@ def test_save_webui_user_avatar_replaces_previous_format(
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:
     monkeypatch.setattr(avatar, "AVATAR_CACHE_ROOT", tmp_path)
-    old_path = tmp_path / "webui" / "webui_example.jpg"
+    old_path = tmp_path / "internal" / "webui_example.jpg"
     old_path.parent.mkdir(parents=True)
     old_path.write_bytes(b"\xff\xd8\xffold-avatar")
 
@@ -27,7 +27,7 @@ def test_save_webui_user_avatar_replaces_previous_format(
         PNG_BYTES,
     )
 
-    assert saved_path == tmp_path / "webui" / "webui_example.png"
+    assert saved_path == tmp_path / "internal" / "webui_example.png"
     assert saved_path.read_bytes() == PNG_BYTES
     assert not old_path.exists()
 
@@ -92,13 +92,13 @@ async def test_remote_avatar_route_distinguishes_missing_and_failure(monkeypatch
 async def test_local_avatar_remains_persistent(tmp_path: Path, monkeypatch: pytest.MonkeyPatch):
     monkeypatch.setattr(avatar, "AVATAR_CACHE_ROOT", tmp_path)
     cache_path = avatar.save_webui_user_avatar("webui_example", "image/png", PNG_BYTES)
-    response = await avatar.get_webui_avatar("webui", "webui_example", None, "", "", False, None)
+    response = await avatar.get_webui_avatar("internal", "webui_example", None, "", "", False, None)
     # 浏览器带着上次的 ETag 重新校验时只返回 304，头像被替换后才重新下发。
     etag = response.headers["etag"]
-    unchanged = await avatar.get_webui_avatar("webui", "webui_example", None, "", "", False, f"W/{etag}")
+    unchanged = await avatar.get_webui_avatar("internal", "webui_example", None, "", "", False, f"W/{etag}")
     assert unchanged.status_code == 304
     assert unchanged.headers["etag"] == etag
-    changed = await avatar.get_webui_avatar("webui", "webui_example", None, "", "", False, '"stale"')
+    changed = await avatar.get_webui_avatar("internal", "webui_example", None, "", "", False, '"stale"')
     assert changed.path == cache_path
     assert response.path == cache_path
     assert response.headers["cache-control"] == "private, no-cache"

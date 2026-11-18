@@ -116,11 +116,12 @@ describe('TourRenderer 渲染联动', () => {
     expect(captured.props?.stepIndex).toBe(0)
     expect(captured.props?.steps).toBe(steps)
     expect(captured.props?.callback).toBe(context.handleJoyrideCallback)
+    // 按钮文案走 i18n，测试环境下 t 返回翻译键。
     expect(captured.props?.locale).toMatchObject({
-      back: '上一步',
-      last: '完成',
-      next: '下一步',
-      skip: '跳过',
+      back: 'tour.controls.back',
+      last: 'tour.controls.last',
+      next: 'tour.controls.next',
+      skip: 'tour.controls.skip',
     })
   })
 

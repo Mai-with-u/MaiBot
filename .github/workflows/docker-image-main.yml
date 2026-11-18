@@ -10,6 +10,22 @@ on:
       - "v*"
       - "*.*.*"
       - "*.*.*-*"
+  # 正式发布直接调用，避免 GITHUB_TOKEN 创建 tag 后不会触发 push 工作流。
+  workflow_call:
+    inputs:
+      source_ref:
+        description: '已验证的发布提交 SHA'
+        required: true
+        type: string
+      version:
+        description: '已验证的正式版本号，不带 v'
+        required: true
+        type: string
+    secrets:
+      DOCKERHUB_USERNAME:
+        required: true
+      DOCKERHUB_TOKEN:
+        required: true
   workflow_dispatch: # 允许手动触发工作流
     inputs:
       branch:
@@ -28,6 +44,7 @@ jobs:
       - name: Check out git repository
         uses: actions/checkout@v4
         with:
+          ref: ${{ inputs.source_ref || github.sha }}
           fetch-depth: 0
 
       # Clone required dependencies
@@ -52,6 +69,8 @@ jobs:
         uses: docker/metadata-action@v5
         with:
           images: ${{ secrets.DOCKERHUB_USERNAME }}/maibot
+          labels: |
+            org.opencontainers.image.revision=${{ inputs.source_ref || github.sha }}
 
       # Build and push AMD64 image by digest
       - name: Build and push AMD64
@@ -67,7 +86,7 @@ jobs:
           outputs: type=image,name=${{ secrets.DOCKERHUB_USERNAME }}/maibot,push-by-digest=true,name-canonical=true,push=true
           build-args: |
             BUILD_DATE=$(date -u +'%Y-%m-%dT%H:%M:%SZ')
-            VCS_REF=${{ github.sha }}
+            VCS_REF=${{ inputs.source_ref || github.sha }}
 
   build-arm64:
     name: Build ARM64 Image
@@ -78,6 +97,7 @@ jobs:
       - name: Check out git repository
         uses: actions/checkout@v4
         with:
+          ref: ${{ inputs.source_ref || github.sha }}
           fetch-depth: 0
 
       # Clone required dependencies
@@ -102,6 +122,8 @@ jobs:
         uses: docker/metadata-action@v5
         with:
           images: ${{ secrets.DOCKERHUB_USERNAME }}/maibot
+          labels: |
+            org.opencontainers.image.revision=${{ inputs.source_ref || github.sha }}
 
       # Build and push ARM64 image by digest
       - name: Build and push ARM64
@@ -117,7 +139,7 @@ jobs:
           outputs: type=image,name=${{ secrets.DOCKERHUB_USERNAME }}/maibot,push-by-digest=true,name-canonical=true,push=true
           build-args: |
             BUILD_DATE=$(date -u +'%Y-%m-%dT%H:%M:%SZ')
-            VCS_REF=${{ github.sha }}
+            VCS_REF=${{ inputs.source_ref || github.sha }}
 
   create-manifest:
     name: Create Multi-Arch Manifest
@@ -142,17 +164,21 @@ jobs:
         uses: docker/metadata-action@v5
         with:
           images: ${{ secrets.DOCKERHUB_USERNAME }}/maibot
+          labels: |
+            org.opencontainers.image.revision=${{ inputs.source_ref || github.sha }}
           tags: |
-            type=ref,event=branch
-            type=ref,event=tag
-            type=raw,value=latest,enable=${{ github.ref == 'refs/heads/main' }}
-            type=semver,pattern={{version}}
-            type=semver,pattern={{major}}.{{minor}}
-            type=semver,pattern={{major}}
-            type=sha,prefix=${{ github.ref_name }}-,enable=${{ github.ref_type == 'branch' }}
+            type=ref,event=branch,enable=${{ inputs.version == '' }}
+            type=ref,event=tag,enable=${{ inputs.version == '' }}
+            type=raw,value=v${{ inputs.version }},enable=${{ inputs.version != '' }}
+            type=raw,value=latest,enable=${{ inputs.version == '' && github.ref == 'refs/heads/main' }}
+            type=semver,pattern={{version}},value=${{ inputs.version || github.ref_name }},enable=${{ inputs.version != '' || github.ref_type == 'tag' }}
+            type=semver,pattern={{major}}.{{minor}},value=${{ inputs.version || github.ref_name }},enable=${{ inputs.version != '' || github.ref_type == 'tag' }}
+            type=semver,pattern={{major}},value=${{ inputs.version || github.ref_name }},enable=${{ inputs.version != '' || github.ref_type == 'tag' }}
+            type=sha,prefix=${{ github.ref_name }}-,enable=${{ inputs.version == '' && github.ref_type == 'branch' }}
 
       - name: Create and Push Manifest
         run: |
+          set -euo pipefail
           # 为每个标签创建多架构镜像
           for tag in $(echo "${{ steps.meta.outputs.tags }}" | tr '\n' ' '); do
             echo "Creating manifest for $tag"

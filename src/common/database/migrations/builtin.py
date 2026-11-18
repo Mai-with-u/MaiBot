@@ -50,6 +50,16 @@ from .v41_to_v42 import BEHAVIOR_TABLES, migrate_v41_to_v42
 from .v42_to_v43 import migrate_v42_to_v43
 from .v43_to_v44 import migrate_v43_to_v44
 from .v44_to_v45 import migrate_v44_to_v45
+from .v45_to_v46 import migrate_v45_to_v46
+from .v46_to_v47 import migrate_v46_to_v47
+from .v47_to_v48 import migrate_v47_to_v48
+from .v48_to_v49 import migrate_v48_to_v49
+from .v49_to_v50 import migrate_v49_to_v50
+from .v50_to_v51 import migrate_v50_to_v51
+from .v51_to_v52 import migrate_v51_to_v52
+from .v52_to_v53 import migrate_v52_to_v53
+from .v53_to_v54 import migrate_v53_to_v54
+from .v54_to_v55 import migrate_v54_to_v55
 from .version_store import SQLiteUserVersionStore
 
 EMPTY_SCHEMA_VERSION = 0
@@ -98,7 +108,17 @@ V42_SCHEMA_VERSION = 42
 V43_SCHEMA_VERSION = 43
 V44_SCHEMA_VERSION = 44
 V45_SCHEMA_VERSION = 45
-LATEST_SCHEMA_VERSION = 45
+V46_SCHEMA_VERSION = 46
+V47_SCHEMA_VERSION = 47
+V48_SCHEMA_VERSION = 48
+V49_SCHEMA_VERSION = 49
+V50_SCHEMA_VERSION = 50
+V51_SCHEMA_VERSION = 51
+V52_SCHEMA_VERSION = 52
+V53_SCHEMA_VERSION = 53
+V54_SCHEMA_VERSION = 54
+V55_SCHEMA_VERSION = 55
+LATEST_SCHEMA_VERSION = V55_SCHEMA_VERSION
 
 _LEGACY_V1_EXCLUSIVE_TABLES = (
     "chat_streams",
@@ -1979,6 +1999,72 @@ def build_default_migration_registry() -> MigrationRegistry:
                 name="v44_to_v45",
                 description="为消息保留独立的高精度实际接收时间，历史记录保持为空。",
                 handler=migrate_v44_to_v45,
+            ),
+            MigrationStep(
+                version_from=V45_SCHEMA_VERSION,
+                version_to=V46_SCHEMA_VERSION,
+                name="v45_to_v46",
+                description="新增独立文件服务、附件归属和解析状态表。",
+                handler=migrate_v45_to_v46,
+            ),
+            MigrationStep(
+                version_from=V46_SCHEMA_VERSION,
+                version_to=V47_SCHEMA_VERSION,
+                name="v46_to_v47",
+                description="新增 WebUI 答疑会话和问答记录。",
+                handler=migrate_v46_to_v47,
+            ),
+            MigrationStep(
+                version_from=V47_SCHEMA_VERSION,
+                version_to=V48_SCHEMA_VERSION,
+                name="v47_to_v48",
+                description="新增按全部统计维度汇总的小时表，历史数据由统计任务分批回填。",
+                handler=migrate_v47_to_v48,
+            ),
+            MigrationStep(
+                version_from=V48_SCHEMA_VERSION,
+                version_to=V49_SCHEMA_VERSION,
+                name="v48_to_v49",
+                description="新增独立相通组、统一成员、共享能力与配置导入记录。",
+                handler=migrate_v48_to_v49,
+            ),
+            MigrationStep(
+                version_from=V49_SCHEMA_VERSION,
+                version_to=V50_SCHEMA_VERSION,
+                name="v49_to_v50",
+                description="新增在线聊天流迁移任务与复制来源账本。",
+                handler=migrate_v49_to_v50,
+            ),
+            MigrationStep(
+                version_from=V50_SCHEMA_VERSION,
+                version_to=V51_SCHEMA_VERSION,
+                name="v50_to_v51",
+                description="补齐已有聊天迁移账本的记录签名与目标记录索引。",
+                handler=migrate_v50_to_v51,
+            ),
+            MigrationStep(
+                version_from=V51_SCHEMA_VERSION,
+                version_to=V52_SCHEMA_VERSION,
+                name="v51_to_v52",
+                description="移除聊天迁移记录指纹，使用稳定来源记录键去重。",
+                handler=migrate_v51_to_v52,
+            ),
+            MigrationStep(
+                version_from=V52_SCHEMA_VERSION,
+                version_to=V53_SCHEMA_VERSION,
+                name="v52_to_v53",
+                description="新增 Individual，为每个平台用户建立独立个体。",
+                handler=migrate_v52_to_v53,
+            ),
+            MigrationStep(
+                version_from=V53_SCHEMA_VERSION, version_to=V54_SCHEMA_VERSION,
+                name="v53_to_v54", description="统一 Individual 人物资料，保留账号来源与合并资料审计。",
+                handler=migrate_v53_to_v54,
+            ),
+            MigrationStep(
+                version_from=V54_SCHEMA_VERSION, version_to=V55_SCHEMA_VERSION,
+                name="v54_to_v55", description="移除旧记忆点与名称设定原因字段。",
+                handler=migrate_v54_to_v55,
             ),
         ]
     )

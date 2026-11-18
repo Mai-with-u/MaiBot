@@ -1,0 +1,5 @@
+Use for writing plugins, integrating the SDK, registering tools or adapters, or migrating plugin APIs.
+1. Identify the capability, development stage, and SDK/Host version clues. Use lookup_help with the exact API name and read further only when a signature or version constraint is missing. If a real plugin example is needed, load the plugin skill and read the README for its verified ID.
+2. Extract the actual module, class or function, registration entry point, parameters, and compatibility requirements. If documentation branches by version, choose the applicable branch or state its applicability.
+3. Provide the smallest workable path: the plugin file or registration entry point, an example using verified APIs, and an observable verification result. If sources establish the concept but leave signatures unknown, give the implementation steps and identify the missing signature.
+4. Finish when the user can start from the correct entry point and verify the outcome. Keep changes inside the plugin, and distinguish older examples from the current API.

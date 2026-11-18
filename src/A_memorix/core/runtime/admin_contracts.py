@@ -120,6 +120,8 @@ _GRAPH_ACTIONS = {
 _SOURCE_ACTIONS = {"list", "delete", "batch_delete"}
 _EPISODE_ACTIONS = {"query", "list", "get", "status", "rebuild", "process_sources", "discard_migration_backfill"}
 _PROFILE_ACTIONS = {
+    "observe_identity",
+    "resolve_identity",
     "query",
     "evidence",
     "correct_evidence",

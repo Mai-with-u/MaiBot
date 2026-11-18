@@ -166,7 +166,8 @@ class MemoryVectorRecoveryService(KernelServiceBase):
             operation_id="",
             trusted_coverage=0.0,
         )
-        logger.warning(
+        log_unavailable = logger.info if error_code == "embedding_fingerprint_unavailable" else logger.warning
+        log_unavailable(
             "向量通道暂不可用，已保持原文件并降级运行: "
             f"code={error_code}, error={exc}"
         )

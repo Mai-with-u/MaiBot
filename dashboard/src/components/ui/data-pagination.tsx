@@ -16,6 +16,7 @@ interface DataPaginationProps {
   pageSizeOptions?: number[]
   disabled?: boolean
   className?: string
+  compact?: boolean
 }
 
 /** 保留首尾页和当前位置附近的页码；省略的页码通过跳转框访问。 */
@@ -36,11 +37,13 @@ function getPageItems(page: number, pages: number): (number | 'gap')[] {
 }
 
 function PageJump({
+  label,
   page,
   pages,
   disabled,
   onPageChange,
 }: {
+  label?: string
   page: number
   pages: number
   disabled: boolean
@@ -62,11 +65,12 @@ function PageJump({
         <Button
           type="button"
           variant="ghost"
-          size="icon-xs"
+          size={label ? 'xs' : 'icon-xs'}
+          className={label ? 'h-6 px-1.5 font-normal tabular-nums' : undefined}
           disabled={disabled}
           aria-label="跳转到指定页"
         >
-          <Ellipsis />
+          {label ?? <Ellipsis />}
         </Button>
       </PopoverTrigger>
       <PopoverContent align="end" className="w-48 p-3">
@@ -115,12 +119,35 @@ function DataPagination({
   pageSizeOptions = [10, 20, 50, 100],
   disabled = false,
   className,
+  compact = false,
 }: DataPaginationProps) {
   const sizeId = useId()
   const totalPages = Math.ceil(total / pageSize)
   const currentPage = Math.max(1, Math.min(page, totalPages))
   const unavailable = disabled || total === 0
   const sizes = [...new Set([...pageSizeOptions, pageSize])].sort((a, b) => a - b)
+
+  if (compact) {
+    return (
+      <nav aria-label="数据分页" className={cn('flex items-center justify-end gap-1 text-xs text-muted-foreground', className)}>
+        {onPageSizeChange && <Select value={String(pageSize)} onValueChange={value => onPageSizeChange(Number(value))} disabled={disabled}>
+          <SelectTrigger aria-label="每页条数" controlSize="xs" className="mr-1 w-auto gap-1 px-1.5 text-xs font-normal"
+            style={{ height: 24, minHeight: 24, border: 0, boxShadow: 'none', background: 'transparent' }}>
+            <SelectValue />
+          </SelectTrigger>
+          <SelectContent>
+            {sizes.map(size => <SelectItem key={size} value={String(size)}>{size} / 页</SelectItem>)}
+          </SelectContent>
+        </Select>}
+        <Button variant="ghost" size="icon-xs" className="h-6 w-6" aria-label="上一页"
+          disabled={unavailable || currentPage <= 1} onClick={() => onPageChange(currentPage - 1)}><ChevronLeft /></Button>
+        <PageJump label={`${total === 0 ? 0 : currentPage} / ${totalPages}`} page={currentPage} pages={totalPages}
+          disabled={unavailable} onPageChange={onPageChange} />
+        <Button variant="ghost" size="icon-xs" className="h-6 w-6" aria-label="下一页"
+          disabled={unavailable || currentPage >= totalPages} onClick={() => onPageChange(currentPage + 1)}><ChevronRight /></Button>
+      </nav>
+    )
+  }
 
   return (
     <nav

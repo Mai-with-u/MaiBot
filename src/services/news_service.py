@@ -13,6 +13,7 @@ import time
 import httpx
 
 from src.common.logger import get_logger
+from src.common.http_client import get_shared_ssl_context_async
 from src.webui.schemas.news import NewsItem, NewsResponse
 
 logger = get_logger("webui.news")
@@ -71,7 +72,7 @@ def _parse_items(payload: dict[str, Any]) -> NewsResponse:
 async def _request_news() -> NewsResponse:
     url = f"{NEWS_SOURCE_URL}?limit={NEWS_ITEM_LIMIT}"
     try:
-        async with httpx.AsyncClient(timeout=NEWS_REQUEST_TIMEOUT) as client:
+        async with httpx.AsyncClient(verify=await get_shared_ssl_context_async(), timeout=NEWS_REQUEST_TIMEOUT) as client:
             response = await client.get(url)
             response.raise_for_status()
             payload = response.json()

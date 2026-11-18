@@ -33,7 +33,7 @@ jobs:
       - name: Build dashboard
         working-directory: dashboard
         run: |
-          bun install --frozen-lockfile
+          bash ../.github/scripts/install_dashboard_dependencies.sh
           bun run build
 
       - name: Prepare dist package
@@ -107,6 +107,10 @@ jobs:
     needs: build-and-publish
     if: github.ref_name == 'dev'
     runs-on: ubuntu-24.04
+    # 构建发布仍可并行，仅串行执行向 dev 写入依赖的阶段。
+    concurrency:
+      group: dashboard-dependency-dev
+      cancel-in-progress: false
     env:
       # 优先从官方 PyPI 解析刚发布的包，避免镜像同步延迟。
       UV_INDEX: https://pypi.org/simple
@@ -135,14 +139,14 @@ jobs:
         run: |
           set -euo pipefail
 
-          if git diff --quiet -- pyproject.toml requirements.txt uv.lock; then
+          if git diff --quiet -- pyproject.toml requirements.txt; then
             echo "Dashboard dev 依赖已是 ${DASHBOARD_DEV_VERSION}"
             exit 0
           fi
 
           git config user.name "github-actions[bot]"
           git config user.email "github-actions[bot]@users.noreply.github.com"
-          git add pyproject.toml requirements.txt uv.lock
+          git add pyproject.toml requirements.txt
           git commit -m "chore: 更新 dashboard dev 依赖至 ${DASHBOARD_DEV_VERSION}"
           git pull --rebase origin dev
           git push origin HEAD:dev

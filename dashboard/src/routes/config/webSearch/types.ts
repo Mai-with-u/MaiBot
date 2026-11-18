@@ -1,4 +1,4 @@
-export type WebAdapter = 'deepseek' | 'tavily' | 'stepsearch_mcp'
+export type WebAdapter = 'deepseek' | 'tavily' | 'stepsearch_mcp' | 'anysearch' | 'exa' | 'firecrawl'
 
 export interface WebServiceConfig {
   adapter: WebAdapter

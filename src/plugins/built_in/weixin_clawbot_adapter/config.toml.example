@@ -1,0 +1,8 @@
+[plugin]
+enabled = false
+config_version = "0.2.0"
+
+[weixin]
+allowed_users = []
+retry_seconds = 5
+max_image_mb = 5

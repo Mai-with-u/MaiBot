@@ -1,0 +1,25 @@
+[emoji_content_analysis]
+display_name = "Emoji Content Analysis"
+advanced = true
+description = "Template for analyzing the visual content of emoji or sticker images."
+
+[emoji_grouped_tags]
+display_name = "Grouped Sticker Tags"
+advanced = true
+description = "Identifies the sticker's emotion and visible content separately."
+
+[emoji_content_filtration]
+display_name = "Emoji Content Filtration"
+advanced = true
+description = "Template for judging whether emoji or sticker content meets filtration requirements."
+
+[emoji_replace]
+display_name = "Emoji Replacement"
+advanced = true
+description = "Template for selecting or replacing emojis or stickers based on text context."
+
+[image_description]
+display_name = "Image Description"
+advanced = false
+description = "Template for converting image content into a text description."
+

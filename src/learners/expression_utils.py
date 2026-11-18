@@ -1,10 +1,9 @@
 from typing import Any, Dict, List, Optional, Tuple
 
-from json_repair import repair_json
 
-import json
 import re
 
+from src.common.llm_json import parse_llm_json
 from src.common.logger import get_logger
 from src.prompt.prompt_manager import prompt_manager
 from src.services.llm_service import LLMServiceClient
@@ -14,18 +13,6 @@ from .expression_style_utils import normalize_expression_style_for_learning
 logger = get_logger("expression_utils")
 
 judge_llm = LLMServiceClient(task_name="learner", request_type="expression.check")
-
-
-def _normalize_repair_json_result(repaired_result: Any) -> str:
-    """将 `repair_json` 的返回结果统一转换为字符串。"""
-    if isinstance(repaired_result, str):
-        return repaired_result
-    if isinstance(repaired_result, tuple) and repaired_result:
-        first_item = repaired_result[0]
-        if isinstance(first_item, str):
-            return first_item
-        return json.dumps(first_item, ensure_ascii=False)
-    raise TypeError(f"repair_json 返回了无法处理的结果类型: {type(repaired_result)}")
 
 
 def _strip_markdown_code_fence(text: str) -> str:
@@ -177,7 +164,11 @@ async def check_expression_suitability(
         return False, f"评估表达方式时发生错误: {e}", str(e)
 
     try:
-        suitable = bool(evaluation.get("suitable", False))
+        if "suitable" not in evaluation:
+            raise ValueError("评估结果缺少 suitable 字段")
+        suitable = evaluation["suitable"]
+        if not isinstance(suitable, bool):
+            raise ValueError("评估结果 suitable 字段必须为 JSON 布尔类型")
         reason = _normalize_reason_text(evaluation.get("reason", "未提供理由"))
         logger.debug(f"评估结果: {'通过' if suitable else '不通过'}")
         return suitable, reason, None
@@ -221,8 +212,8 @@ def parse_expression_response(response: str) -> Tuple[List[Tuple[str, str, str]]
     解析 LLM 返回的表达方式总结和黑话 JSON，提取两个列表。
 
     Returns:
-        第一个列表是表达方式 (situation, style, source_id)
-        第二个列表是黑话 (content, source_id)
+        第一个列表是表达方式 (situation, style, id)
+        第二个列表是黑话 (content, id)
     """
     if not response:
         return [], []
@@ -254,7 +245,8 @@ def parse_expression_response(response: str) -> Tuple[List[Tuple[str, str, str]]
 
         situation = str(item.get("situation", "")).strip()
         style = normalize_expression_style_for_learning(str(item.get("style", "")).strip())
-        source_id = str(item.get("source_id", "")).strip()
+        # 模型输入和输出使用短字段 id，内部元组及插件 Hook 仍沿用来源编号的既有约定。
+        source_id = str(item.get("id", "")).strip()
 
         if situation and style and source_id:
             expressions.append((situation, style, source_id))
@@ -268,7 +260,7 @@ def parse_expression_response(response: str) -> Tuple[List[Tuple[str, str, str]]
 
 
 def parse_jargon_response(response: str) -> List[Tuple[str, str]]:
-    """解析独立黑话学习 LLM 响应，提取 (content, source_id) 列表。"""
+    """解析独立黑话学习 LLM 响应，提取 (content, id) 列表。"""
 
     _, jargon_entries = parse_expression_response(response)
     return jargon_entries
@@ -290,10 +282,9 @@ def is_single_char_jargon(content: str) -> bool:
 
 def _try_parse(text: str) -> Any:
     try:
-        return json.loads(text)
+        return parse_llm_json(text)
     except Exception:
         try:
-            repaired = _normalize_repair_json_result(repair_json(text))
-            return json.loads(repaired)
+            return parse_llm_json(text, repair=True)
         except Exception:
             return None

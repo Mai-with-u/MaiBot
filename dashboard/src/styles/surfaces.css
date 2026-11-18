@@ -94,6 +94,11 @@
 /* 窗口里的列表、表格留出壳边，标题与页脚仍印在壳上。 */
 [data-dashboard-data-panel='true'][data-inset='true'] { margin: var(--surface-data-inset); }
 
+/* 聊天浏览框没有页脚时，底部壳边与左右留白保持一致。 */
+:root[data-dashboard-style='millennium'] [data-chat-scope-panel-list='true']:last-child {
+  margin-bottom: 0.75rem;
+}
+
 /* 数据屏已负责描边，里面的表格不再叠第二个外框。 */
 :root [data-dashboard-data-panel='true'] > [data-dashboard-table-wrapper='true'] {
   background: transparent;

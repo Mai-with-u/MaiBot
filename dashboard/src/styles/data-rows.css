@@ -1,0 +1,40 @@
+/* 数据屏里的简表：表头一道实线，分组行一道刻线，数据行之间虚线；整张表就是一块数据屏。 */
+[data-rows-head='true'] {
+  position: sticky;
+  top: 0;
+  z-index: 1;
+  background: var(--surface-data-bg);
+  border-bottom: 1px solid hsl(var(--border));
+  color: hsl(var(--muted-foreground));
+  font-size: 0.75rem;
+  font-weight: 700;
+  letter-spacing: 0.06em;
+}
+
+[data-rows-group='true'] {
+  padding: 0.75rem 0.75rem 0.3rem;
+  border-bottom: 1px solid hsl(var(--border));
+  color: hsl(var(--muted-foreground));
+  font-size: 0.75rem;
+  font-weight: 700;
+  letter-spacing: 0.08em;
+}
+
+[data-rows-row='true'] {
+  border-bottom: 1px dashed hsl(var(--border));
+}
+[data-rows-row='true']:hover {
+  background-color: var(--list-hover-bg);
+}
+
+:root[data-dashboard-style='millennium'] [data-rows-head='true'] {
+  border-bottom: 2px solid var(--mil-line);
+  color: var(--mil-screen-dim);
+}
+:root[data-dashboard-style='millennium'] [data-rows-group='true'] {
+  border-bottom: 2px solid var(--mil-lo);
+  color: var(--mil-print);
+}
+:root[data-dashboard-style='millennium'] [data-rows-row='true'] {
+  border-bottom: 2px dashed var(--mil-rule);
+}

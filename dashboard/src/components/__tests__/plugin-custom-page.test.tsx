@@ -178,7 +178,7 @@ describe('custom page bridge lifecycle', () => {
 
   it('isolates markup and forwards only the fixed plugin/page bindings', async () => {
     const { iframe, port } = await start()
-    expect(iframe.getAttribute('sandbox')).toBe('allow-scripts')
+    expect(iframe.getAttribute('sandbox')).toBe('allow-scripts allow-forms')
     expect(screen.queryByText('Plugin content')).not.toBeInTheDocument()
     await act(async () =>
       port.onmessage?.({
@@ -294,9 +294,11 @@ describe('custom page bridge lifecycle', () => {
 
   it('stops a page that floods messages', async () => {
     const { port, iframe } = await start()
+    const clock = vi.spyOn(performance, 'now').mockReturnValue(performance.now())
     act(() => {
-      for (let index = 0; index < 201; index++) void port.onmessage?.({ data: null })
+      for (let index = 0; index < 601; index++) void port.onmessage?.({ data: null })
     })
+    clock.mockRestore()
     expect(port.close).toHaveBeenCalled()
     expect(iframe.isConnected).toBe(false)
     expect(screen.getByText('pluginWebUI.customStopped')).toBeInTheDocument()

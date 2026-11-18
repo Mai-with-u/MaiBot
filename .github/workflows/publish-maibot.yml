@@ -1,6 +1,32 @@
 name: Publish MaiBot
 
 on:
+  pull_request:
+    branches: [main]
+    types: [opened, synchronize, reopened, ready_for_review, closed]
+  workflow_call:
+    inputs:
+      version:
+        required: true
+        type: string
+      ref:
+        required: true
+        type: string
+      publish:
+        default: false
+        type: boolean
+      report_commit:
+        default: ''
+        type: string
+      resume_run_id:
+        default: ''
+        type: string
+    secrets:
+      # 仅验证的调用无需提供；正式发布时传给 Docker 工作流。
+      DOCKERHUB_USERNAME:
+        required: false
+      DOCKERHUB_TOKEN:
+        required: false
   workflow_dispatch:
     inputs:
       version:
@@ -13,7 +39,7 @@ on:
         default: main
         type: string
       publish:
-        description: '上传 PyPI 并创建 GitHub Release（关闭时只构建验证）'
+        description: '上传 PyPI、推送 Docker 版本镜像并创建 GitHub Release（关闭时只构建验证）'
         default: false
         type: boolean
       resume_run_id:
@@ -22,9 +48,13 @@ on:
         default: ''
         type: string
 
+env:
+  # GitHub 运行器优先使用官方 PyPI，项目保留国内运行的混合源配置。
+  UV_INDEX: https://pypi.org/simple
+
 # 防止两次正式发布同时创建同一个 tag 或向同一个项目上传。
 concurrency:
-  group: publish-maibot
+  group: maibot-${{ (inputs.publish || (github.event_name == 'pull_request' && github.event.action == 'closed')) && 'publish' || format('validate-{0}', github.run_id) }}
   cancel-in-progress: false
 
 permissions:
@@ -33,6 +63,11 @@ permissions:
 
 jobs:
   build-and-check:
+    if: >-
+      github.event_name != 'pull_request' ||
+      (github.event.pull_request.head.repo.full_name == github.repository &&
+       startsWith(github.event.pull_request.head.ref, 'release/') &&
+       (github.event.action != 'closed' || github.event.pull_request.merged == true))
     runs-on: ubuntu-24.04
     outputs:
       version: ${{ steps.manifest.outputs.version }}
@@ -43,6 +78,19 @@ jobs:
         with:
           persist-credentials: false
           fetch-depth: 0
+      - name: Resolve release identity
+        id: identity
+        env:
+          INPUT_VERSION: ${{ inputs.version }}
+          RELEASE_BRANCH: ${{ github.event.pull_request.head.ref }}
+        run: |
+          set -euo pipefail
+          VERSION="$INPUT_VERSION"
+          if [ -z "$VERSION" ]; then
+            VERSION="${RELEASE_BRANCH#release/}"
+          fi
+          [[ "$VERSION" =~ ^[0-9]+\.[0-9]+\.[0-9]+$ ]]
+          echo "version=$VERSION" >> "$GITHUB_OUTPUT"
       - uses: astral-sh/setup-uv@v5
         with:
           version: '0.13.0'
@@ -50,7 +98,7 @@ jobs:
         id: recovery
         env:
           GH_TOKEN: ${{ github.token }}
-          RELEASE_VERSION: ${{ inputs.version }}
+          RELEASE_VERSION: ${{ steps.identity.outputs.version }}
           RESUME_RUN_ID: ${{ inputs.resume_run_id }}
         run: |
           set -euo pipefail
@@ -80,7 +128,7 @@ jobs:
         if: steps.recovery.outputs.reuse == 'true'
         uses: actions/download-artifact@v4
         with:
-          name: maibot-${{ inputs.version }}
+          name: maibot-${{ steps.identity.outputs.version }}
           path: release-dist
           run-id: ${{ steps.recovery.outputs.run_id }}
           github-token: ${{ github.token }}
@@ -88,14 +136,14 @@ jobs:
         if: steps.recovery.outputs.reuse != 'true'
         uses: actions/checkout@v4
         with:
-          ref: ${{ inputs.ref }}
+          ref: ${{ github.event_name == 'pull_request' && (github.event.pull_request.merge_commit_sha || github.event.pull_request.head.sha) || inputs.ref }}
           path: source
           fetch-depth: 0
           persist-credentials: false
       - name: Check version, Dashboard availability and changelog
         if: steps.recovery.outputs.reuse != 'true'
         env:
-          RELEASE_VERSION: ${{ inputs.version }}
+          RELEASE_VERSION: ${{ steps.identity.outputs.version }}
         run: uv run --no-project --with packaging python .github/scripts/maibot_release.py prepare --version "$RELEASE_VERSION"
       - name: Build wheel and sdist from the fixed source commit
         if: steps.recovery.outputs.reuse != 'true'
@@ -112,7 +160,7 @@ jobs:
       - name: Verify artifact and expose fixed release identity
         id: manifest
         env:
-          RELEASE_VERSION: ${{ inputs.version }}
+          RELEASE_VERSION: ${{ steps.identity.outputs.version }}
         run: uv run --no-project --with packaging python .github/scripts/maibot_release.py verify --version "$RELEASE_VERSION"
       - name: Ensure existing tag belongs to the same source commit
         env:
@@ -127,14 +175,14 @@ jobs:
         if: steps.recovery.outputs.reuse != 'true' || steps.recovery.outputs.run_id != github.run_id
         uses: actions/upload-artifact@v4
         with:
-          name: maibot-${{ inputs.version }}
+          name: maibot-${{ steps.identity.outputs.version }}
           path: release-dist/
           if-no-files-found: error
           retention-days: 90
 
   publish-pypi:
     needs: build-and-check
-    if: inputs.publish
+    if: inputs.publish || (github.event_name == 'pull_request' && github.event.action == 'closed' && github.event.pull_request.merged == true)
     runs-on: ubuntu-24.04
     environment: maibot
     permissions:
@@ -162,8 +210,19 @@ jobs:
       - name: Verify all files on PyPI before creating a release
         run: uv run --no-project --with packaging python .github/scripts/maibot_release.py pypi-verify
 
-  create-release:
+  # 镜像与 PyPI 使用同一份已验证的发布身份；推送失败时不创建 Release。
+  publish-docker:
     needs: [build-and-check, publish-pypi]
+    uses: ./.github/workflows/docker-image-main.yml
+    with:
+      source_ref: ${{ needs.build-and-check.outputs.commit }}
+      version: ${{ needs.build-and-check.outputs.version }}
+    secrets:
+      DOCKERHUB_USERNAME: ${{ secrets.DOCKERHUB_USERNAME }}
+      DOCKERHUB_TOKEN: ${{ secrets.DOCKERHUB_TOKEN }}
+
+  create-release:
+    needs: [build-and-check, publish-pypi, publish-docker]
     runs-on: ubuntu-24.04
     permissions:
       contents: write
@@ -181,7 +240,7 @@ jobs:
           path: release-dist
       - name: Verify the original artifact again
         run: uv run --no-project --with packaging python .github/scripts/maibot_release.py verify
-      - name: Create release only after PyPI upload succeeds
+      - name: Create release only after PyPI and Docker publishing succeed
         env:
           GH_TOKEN: ${{ github.token }}
           RELEASE_TAG: ${{ needs.build-and-check.outputs.tag }}
@@ -199,3 +258,70 @@ jobs:
             gh release create "$RELEASE_TAG" --target "$SOURCE_COMMIT" \
               --title "$RELEASE_TAG" --notes-file release-dist/notes.md
           fi
+
+  report-validation:
+    if: >-
+      always() && needs.build-and-check.result != 'skipped' &&
+      (inputs.report_commit != '' ||
+       (github.event_name == 'pull_request' && github.event.action != 'closed'))
+    needs: build-and-check
+    runs-on: ubuntu-24.04
+    permissions:
+      statuses: write
+    steps:
+      - name: Report validation on the release PR commit
+        env:
+          GH_TOKEN: ${{ github.token }}
+          RELEASE_COMMIT: ${{ inputs.report_commit || github.event.pull_request.head.sha }}
+          RESULT: ${{ needs.build-and-check.result }}
+        run: |
+          STATE=failure
+          if [ "$RESULT" = success ]; then STATE=success; fi
+          gh api "repos/$GITHUB_REPOSITORY/statuses/$RELEASE_COMMIT" \
+            -f state="$STATE" -f context='Release validation' \
+            -f target_url="$GITHUB_SERVER_URL/$GITHUB_REPOSITORY/actions/runs/$GITHUB_RUN_ID"
+
+  cleanup-release-branch:
+    needs: [build-and-check, create-release]
+    if: needs.create-release.result == 'success'
+    runs-on: ubuntu-24.04
+    permissions:
+      contents: write
+      pull-requests: read
+    steps:
+      - name: Delete merged release branch after successful publishing
+        uses: actions/github-script@v7
+        env:
+          RELEASE_VERSION: ${{ needs.build-and-check.outputs.version }}
+          SOURCE_COMMIT: ${{ needs.build-and-check.outputs.commit }}
+        with:
+          script: |
+            const { owner, repo } = context.repo;
+            const version = process.env.RELEASE_VERSION;
+            if (!/^\d+\.\d+\.\d+$/.test(version)) {
+              throw new Error(`正式版本号无效：${version}`);
+            }
+            const branch = `release/${version}`;
+            const pulls = await github.paginate(github.rest.pulls.list, {
+              owner, repo, state: 'closed', base: 'main', head: `${owner}:${branch}`,
+            });
+            let ref;
+            try {
+              ({ data: ref } = await github.rest.git.getRef({ owner, repo, ref: `heads/${branch}` }));
+            } catch (error) {
+              if (error.status !== 404) throw error;
+              core.info(`${branch} 已删除`);
+              return;
+            }
+            if (!pulls.some(pr => pr.merged_at && pr.head.repo?.full_name === `${owner}/${repo}` &&
+                                  pr.head.sha === ref.object.sha)) {
+              throw new Error(`${branch} 当前提交没有已合并的发布 PR，保留分支`);
+            }
+            const { data: comparison } = await github.rest.repos.compareCommitsWithBasehead({
+              owner, repo, basehead: `${ref.object.sha}...${process.env.SOURCE_COMMIT}`,
+            });
+            if (!['ahead', 'identical'].includes(comparison.status)) {
+              throw new Error(`${branch} 包含未纳入本次发布的提交，保留分支`);
+            }
+            await github.rest.git.deleteRef({ owner, repo, ref: `heads/${branch}` });
+            core.info(`已清理 ${branch}`);

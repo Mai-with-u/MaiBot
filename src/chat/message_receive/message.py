@@ -1,5 +1,5 @@
 from asyncio import Task
-from typing import Dict, List, Optional, Sequence, Tuple
+from typing import Any, Dict, List, Optional, Sequence, Tuple
 
 from rich.traceback import install
 from sqlmodel import select
@@ -29,6 +29,31 @@ install(extra_lines=3)
 logger = get_logger("chat_message")
 
 
+def get_command_text(message: "SessionMessage") -> str:
+    """仅为命令匹配移除指向当前机器人的前导结构化 @，保留原始展示正文。"""
+    text = (message.processed_plain_text or "").strip()
+    if not text.startswith("@"):
+        return text
+
+    for component in message.raw_message.components:
+        if isinstance(component, TextComponent) and not component.text.strip():
+            continue
+        if not isinstance(component, AtComponent):
+            break
+        if component.target_user_id != message.account_id:
+            break
+        name = component.target_user_cardname or component.target_user_nickname or component.target_user_id
+        prefix = f"@{name}"
+        # 只删掉与实际组件一致的渲染前缀；Hook 改写后的不匹配正文保持原样。
+        if not text.startswith(prefix):
+            break
+        remainder = text[len(prefix):]
+        if remainder and not remainder[0].isspace():
+            break
+        text = remainder.lstrip()
+    return text
+
+
 class MsgIDMapping:
     """回复消息内容缓存。"""
 
@@ -38,6 +63,9 @@ class MsgIDMapping:
 
 
 class SessionMessage(MaiMessage):
+    # 仅由 Host 入站链路写入，不接受消息字典或 Hook 序列化恢复。
+    file_source: Optional[Dict[str, Any]] = None
+
     # 仅供当前 Maisaka 引用计数器使用，不序列化、不写入数据库。
     _quote_counter_position: Optional[Tuple[object, int]] = None
 
@@ -428,8 +456,13 @@ class SessionMessage(MaiMessage):
         component: ReplyComponent,
         id_content_map: MsgIDMapping,
     ) -> str:
-        if component.target_message_content:
-            return component.target_message_content
+        if component.target_message_content and component.target_message_sender_id:
+            target_name = (
+                component.target_message_sender_cardname
+                or component.target_message_sender_nickname
+                or component.target_message_sender_id
+            )
+            return f"[回复了{target_name}的消息: {component.target_message_content}]"
         if result_item := id_content_map.mapping.get(component.target_message_id):  # ID映射缓存优先
             content, sender_info = result_item
             if isinstance(content, Task):  # 如果是Task，说明是转发组件传入的占位结果，需要等待其完成
@@ -443,18 +476,28 @@ class SessionMessage(MaiMessage):
             return f"[回复了{tgt_msg_s_name}的消息: {content}]"
         else:  # 尝试从数据库根据消息id查找消息内容
             try:
-                with get_db_session() as session:
-                    statement = select(Messages).filter_by(message_id=component.target_message_id).limit(1)
-                    if db_msg := session.exec(statement).first():
-                        component.target_message_content = db_msg.processed_plain_text
-                        component.target_message_sender_cardname = db_msg.user_cardname
-                        component.target_message_sender_nickname = db_msg.user_nickname
-                        component.target_message_sender_id = db_msg.user_id
-                        tgt_msg_s_name = db_msg.user_cardname or db_msg.user_nickname or db_msg.user_id
-                        return f"[回复了{tgt_msg_s_name}的消息: {db_msg.processed_plain_text}]"
+                def load_original() -> Optional[Messages]:
+                    with get_db_session(auto_commit=False) as session:
+                        statement = select(Messages).filter_by(
+                            platform=self.platform, session_id=self.session_id, message_id=component.target_message_id,
+                        ).limit(2)
+                        matches = session.exec(statement).all()
+                        if len(matches) > 1:
+                            raise ValueError("引用消息 ID 在当前聊天流中不唯一")
+                        return matches[0] if matches else None
+
+                if db_msg := await asyncio.to_thread(load_original):
+                    component.target_message_content = db_msg.processed_plain_text
+                    component.target_message_sender_cardname = db_msg.user_cardname
+                    component.target_message_sender_nickname = db_msg.user_nickname
+                    component.target_message_sender_id = db_msg.user_id
+                    tgt_msg_s_name = db_msg.user_cardname or db_msg.user_nickname or db_msg.user_id
+                    return f"[回复了{tgt_msg_s_name}的消息: {db_msg.processed_plain_text}]"
             except Exception as e:
                 logger.error(f"查询回复消息时发生错误: {e}")
 
+            if component.target_message_content:
+                return f"[回复了一条作者未核验的消息: {component.target_message_content}]"
             return "[回复了一条消息，但原消息已无法访问]"
 
     async def process_forward_component(

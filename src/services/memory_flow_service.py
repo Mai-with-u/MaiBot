@@ -2,22 +2,25 @@ from __future__ import annotations
 
 from dataclasses import dataclass
 from datetime import datetime
+from functools import cached_property
 from pathlib import Path
-from typing import Any, Dict, List, Optional
+from typing import Any, Awaitable, Dict, List, Optional, OrderedDict, Tuple
 
 import asyncio
+import hashlib
 import json
 import os
 import time
 
-from json_repair import repair_json
 
+from src.common.llm_json import parse_llm_json
 from src.common.logger import get_logger
 from src.common.database.database import ROOT_PATH
 from src.common.message_repository import count_messages, find_messages
 from src.common.data_models.message_component_data_model import TextComponent
 from src.chat.utils.utils import is_bot_self
 from src.config.config import global_config
+from src.config.image_memory import is_image_memory_enabled
 from src.person_info.person_info import Person, get_person_id, store_person_memory_from_answer
 from src.services import memory_service as memory_service_module
 from src.services.memory_service import memory_service
@@ -37,6 +40,11 @@ class PersonFactEvidence:
 
 
 class PersonFactWritebackService:
+    @cached_property
+    def _extraction_cache(self) -> OrderedDict[str, List[Any]]:
+        """仅复用成功提取的证据窗口；限制容量，避免长期保存所有聊天证据。"""
+        return OrderedDict()
+
     def __init__(self) -> None:
         self._queue: asyncio.Queue[Any] = asyncio.Queue(maxsize=256)
         self._worker_task: Optional[asyncio.Task] = None
@@ -153,14 +161,26 @@ class PersonFactWritebackService:
             return
         user_evidence_text = self._format_user_evidence(evidence)
 
-        facts = await self._extract_facts(target_person, reply_text, user_evidence_text)
-        if not facts:
-            return
-
         session_id = str(
             getattr(message, "session_id", "") or getattr(getattr(message, "session", None), "session_id", "") or ""
         ).strip()
         if not session_id:
+            return
+
+        # 事实值只来自用户证据；分段回复不应反复提取同一窗口。
+        # 上下文正文或人物身份变化会改变键，调用失败则不写入缓存。
+        cache_key = hashlib.sha256(json.dumps(
+            [session_id, target_person.person_id, user_evidence_text], ensure_ascii=False,
+        ).encode("utf-8")).hexdigest()
+        if cache_key in self._extraction_cache:
+            facts = self._extraction_cache[cache_key]
+            self._extraction_cache.move_to_end(cache_key)
+        else:
+            facts = await self._extract_facts(target_person, reply_text, user_evidence_text)
+            self._extraction_cache[cache_key] = facts
+            while len(self._extraction_cache) > 256:
+                self._extraction_cache.popitem(last=False)
+        if not facts:
             return
 
         person_name = str(
@@ -345,17 +365,15 @@ class PersonFactWritebackService:
                 target_lines.append(f"- [消息ID: {message_id}] {line}" if message_id else f"- {line}")
 
         context_lines: List[str] = []
-        target_ids = {
-            str(getattr(item, "message_id", "") or "").strip()
-            for item in evidence.target_messages
-            if str(getattr(item, "message_id", "") or "").strip()
+        target_references = {
+            str(item.message_id or "").strip() or id(item): str(item.message_id or "").strip() or f"第{index}条"
+            for index, item in enumerate(evidence.target_messages[:3], start=1)
         }
         for item in evidence.context_messages[:8]:
-            line = PersonFactWritebackService._format_evidence_message_line(
-                item,
-                include_sender=True,
-                mark_target=str(getattr(item, "message_id", "") or "").strip() in target_ids,
-            )
+            reference = target_references.get(str(item.message_id or "").strip() or id(item))
+            # 保留对话顺序与短答的位置，但不再次发送目标用户的证据正文。
+            line = (f"[目标用户发言，正文见目标证据 {reference}]" if reference is not None else
+                    PersonFactWritebackService._format_evidence_message_line(item, include_sender=True))
             if line:
                 context_lines.append(f"- {line}")
 
@@ -425,8 +443,7 @@ class PersonFactWritebackService:
                 self._extractor = LLMServiceClient(task_name="utils", request_type="A_Memorix.person_fact_writeback")
             response_result = await self._extractor.generate_response(prompt)
         except Exception as exc:
-            logger.debug(f"人物事实提取模型调用失败: {exc}")
-            return []
+            raise RuntimeError("人物事实提取模型调用失败") from exc
         return self._parse_fact_items(response_result.response)
 
     @staticmethod
@@ -435,14 +452,13 @@ class PersonFactWritebackService:
 
         text = str(raw or "").strip()
         if not text:
-            return []
+            raise ValueError("人物事实提取响应为空")
         try:
-            repaired = repair_json(text)
-            payload = json.loads(repaired) if isinstance(repaired, str) else repaired
-        except Exception:
-            return []
+            payload = parse_llm_json(text, repair=True)
+        except Exception as exc:
+            raise ValueError("人物事实提取响应不是有效 JSON") from exc
         if not isinstance(payload, list):
-            return []
+            raise ValueError("人物事实提取响应必须为数组")
         items: List[Any] = []
         seen = set()
         for raw_item in payload:
@@ -459,8 +475,7 @@ class PersonFactWritebackService:
         if not text:
             return []
         try:
-            repaired = repair_json(text)
-            payload = json.loads(repaired) if isinstance(repaired, str) else repaired
+            payload = parse_llm_json(text, repair=True)
         except Exception:
             payload = None
         if not isinstance(payload, list):
@@ -635,15 +650,25 @@ class ChatSummaryWritebackService:
             if metadata_store is None:
                 return 0
 
-            checkpoint_count = metadata_store.get_summary_checkpoint_count(session_id)
-            paragraphs = metadata_store.get_paragraphs_by_source(f"chat_summary:{session_id}")
+            checkpoint_count, paragraphs = await asyncio.to_thread(
+                lambda: (
+                    metadata_store.get_summary_checkpoint_count(session_id),
+                    metadata_store.get_paragraphs_by_source(f"chat_summary:{session_id}"),
+                )
+            )
             if not paragraphs:
                 return min(total_message_count, checkpoint_count)
 
-            latest_paragraph = max(paragraphs, key=self._paragraph_created_at)
-            metadata = self._paragraph_metadata(latest_paragraph)
-            trigger_message_count = self._coerce_positive_int(metadata.get("trigger_message_count"))
-            if trigger_message_count > 0:
+            # 正文去重会复用较早的段落，created_at 不能代表最后完成的窗口。
+            trigger_message_count = max(
+                (
+                    self._coerce_positive_int(metadata.get("trigger_message_count"))
+                    for paragraph in paragraphs
+                    if (metadata := self._paragraph_metadata(paragraph)).get("chat_id", session_id) == session_id
+                ),
+                default=0,
+            )
+            if max(trigger_message_count, checkpoint_count) > 0:
                 return min(total_message_count, max(trigger_message_count, checkpoint_count))
 
             # 兼容旧摘要数据：没有触发计数时，只能退化为对齐当前计数，
@@ -758,7 +783,10 @@ class ImageMemoryWritebackService:
         if not self._enabled():
             return
         if self._journal is None:
-            self._journal = ImageWritebackJournal(self._journal_path)
+            journal = await asyncio.to_thread(ImageWritebackJournal, self._journal_path)
+            if self._worker_task is not None and not self._worker_task.done():
+                return
+            self._journal = journal
         self._stopping = False
         self._worker_task = asyncio.create_task(self._worker_loop(), name="A_Memorix.image_writeback")
         self._compensation_task = asyncio.create_task(
@@ -781,9 +809,7 @@ class ImageMemoryWritebackService:
             except asyncio.CancelledError:
                 pass
 
-        if self._journal is not None:
-            self._journal.close()
-            self._journal = None
+        self._journal = None
 
     async def enqueue(self, message: Any) -> None:
         if not self._enabled() or self._stopping:
@@ -794,27 +820,21 @@ class ImageMemoryWritebackService:
             await self.start()
         if self._journal is None:
             raise RuntimeError("图片写回服务初始化未完成")
-        self._journal.enqueue(str(message.session_id), str(message.message_id))
+        await asyncio.to_thread(self._journal.enqueue, str(message.session_id), str(message.message_id))
 
     @staticmethod
     def _enabled() -> bool:
-        """接收与后台处理都服从长期记忆总开关和图片开关。"""
-        return global_config.a_memorix.plugin.enabled and global_config.a_memorix.image_memory.enabled
+        """接收与后台处理仅在配置了图片嵌入模型时启用。"""
+        return is_image_memory_enabled()
 
     def list_jobs(self, status: str = "", limit: int = 25, offset: int = 0) -> Dict[str, Any]:
         # 管理服务独立读取任务，不启动消息接收或模型调用。
         journal = ImageWritebackJournal(self._journal_path)
-        try:
-            return journal.list_jobs(status, limit, offset)
-        finally:
-            journal.close()
+        return journal.list_jobs(status, limit, offset)
 
     def retry_failed(self) -> int:
         journal = ImageWritebackJournal(self._journal_path)
-        try:
-            return journal.retry_failed()
-        finally:
-            journal.close()
+        return journal.retry_failed()
 
     async def backfill_messages(self, messages: List[Any]) -> Dict[str, int]:
         """同步回填一批历史消息；出现外部引用保证重复执行仍然幂等。"""
@@ -837,21 +857,26 @@ class ImageMemoryWritebackService:
                 continue
             if self._journal is None:
                 raise RuntimeError("图片写回任务库未初始化")
-            job = self._journal.next_job()
+            journal = self._journal
+            job = await asyncio.to_thread(journal.next_job)
             if job is None:
                 await asyncio.sleep(max(0.1, global_config.a_memorix.image_memory.job_poll_interval_seconds))
                 continue
             try:
-                messages = find_messages(session_id=job["session_id"], message_id=job["message_id"], limit=1)
+                messages = await asyncio.to_thread(
+                    find_messages, session_id=job["session_id"], message_id=job["message_id"], limit=1
+                )
                 if not messages:
                     raise ValueError("图片入库任务的来源消息不存在")
                 message = messages[0]
                 await self._handle_message(message)
-                self._journal.complete(job["session_id"], job["message_id"])
+                await asyncio.to_thread(journal.complete, job["session_id"], job["message_id"])
             except asyncio.CancelledError:
                 raise
             except Exception as exc:
-                self._journal.fail(job, str(exc), 1 + int(global_config.a_memorix.image_memory.job_max_retries))
+                await asyncio.to_thread(
+                    journal.fail, job, str(exc), 1 + int(global_config.a_memorix.image_memory.job_max_retries)
+                )
                 logger.warning(f"图片记忆写入失败，任务已保留: {exc}", exc_info=True)
 
     async def _compensation_loop(self) -> None:
@@ -876,16 +901,23 @@ class ImageMemoryWritebackService:
         if not claimed.get("success"):
             return
         lease_token = str(claimed.get("lease_token") or "")
+        # 同一消息的多张图片共享聊天窗口，合并本批已领取任务后只补偿一次摘要。
+        # 消息或时间不同的任务保持独立，避免跨窗口遗漏事实。
+        grouped: Dict[Tuple[str, str, float, str], List[Dict[str, Any]]] = {}
         for item in claimed.get("items") or []:
-            occurrence_id = str(item.get("occurrence_id") or "")
-            description_hash = str(item.get("description_hash") or "")
+            key = (
+                str(item["chat_id"]), str(item["message_id"]), float(item["occurred_at"]),
+                str(item["summary_external_id"]),
+            )
+            grouped.setdefault(key, []).append(item)
+        for (chat_id, message_id, occurred_at, external_id), items in grouped.items():
             try:
                 result = await memory_service.ingest_summary(
-                    external_id=(f"image_description_compensation:{occurrence_id}:{description_hash}"),
-                    chat_id=str(item["chat_id"]),
+                    external_id=external_id,
+                    chat_id=chat_id,
                     text="",
                     participants=[],
-                    time_end=float(item["occurred_at"]) + 0.001,
+                    time_end=occurred_at + 0.001,
                     metadata={
                         "generate_from_chat": True,
                         "context_length": int(
@@ -893,7 +925,7 @@ class ImageMemoryWritebackService:
                         ),
                         "writeback_source": "image_description_compensation",
                         "trigger": "image_description_ready",
-                        "image_message_id": str(item["message_id"]),
+                        "image_message_id": message_id,
                         "summary_review_count": 2,
                     },
                     respect_filter=True,
@@ -903,14 +935,15 @@ class ImageMemoryWritebackService:
             except Exception as exc:
                 success = False
                 error = str(exc)
-            await memory_service.image_memory(
-                action="complete_description_compensation",
-                occurrence_id=occurrence_id,
-                description_hash=description_hash,
-                lease_token=lease_token,
-                success=success,
-                error=error,
-            )
+            for item in items:
+                await memory_service.image_memory(
+                    action="complete_description_compensation",
+                    occurrence_id=str(item["occurrence_id"]),
+                    description_hash=str(item["description_hash"]),
+                    lease_token=lease_token,
+                    success=success,
+                    error=error,
+                )
 
     @staticmethod
     def _explicit_user_text(components: List[Any]) -> str:
@@ -920,6 +953,8 @@ class ImageMemoryWritebackService:
         return " ".join(part for part in parts if part)
 
     async def _handle_message(self, message: Any, *, component_paths: Optional[List[str]] = None) -> bool:
+        if not self._enabled():
+            return False
         raw_message = message.raw_message
         components = raw_message.components
         image_components = list(iter_message_image_components(components))
@@ -1007,13 +1042,59 @@ class MemoryAutomationService:
     async def on_incoming_message(self, message: Any) -> None:
         if not self._started:
             await self.start()
-        await self.image_writeback.enqueue(message)
+        await self._run_message_tasks(self._observe_sender_identity(message), self.image_writeback.enqueue(message))
 
     async def on_message_sent(self, message: Any) -> None:
         if not self._started:
             await self.start()
-        await self.fact_writeback.enqueue(message)
-        await self.chat_summary_writeback.enqueue(message)
+        await self._run_message_tasks(
+            self._observe_sender_identity(message),
+            self.fact_writeback.enqueue(message),
+            self.chat_summary_writeback.enqueue(message),
+        )
+
+    @staticmethod
+    async def _run_message_tasks(*tasks: Awaitable[None]) -> None:
+        """独立完成身份登记和各队列入队，再向调用方完整报告失败。"""
+        results = await asyncio.gather(*tasks, return_exceptions=True)
+        failures: List[Exception] = []
+        for result in results:
+            if isinstance(result, asyncio.CancelledError):
+                raise result
+            if isinstance(result, Exception):
+                failures.append(result)
+        if failures:
+            raise ExceptionGroup("记忆身份登记或写回入队失败", failures)
+
+    @staticmethod
+    async def _observe_sender_identity(message: Any) -> None:
+        """在昵称被后续消息覆盖前，按真实发送者 ID 保存本次观察到的称呼。"""
+        if not global_config.a_memorix.plugin.enabled:
+            return
+        user = message.message_info.user_info
+        group = message.message_info.group_info
+        if not message.platform.strip() or not user.user_id.strip():
+            raise ValueError("消息缺少真实的发送者 platform/user_id")
+        identity = {
+            "platform": message.platform,
+            "user_id": user.user_id,
+            "aliases": [user.user_nickname, user.user_cardname or ""],
+            "group_id": group.group_id if group else "",
+        }
+        # 短暂的内核初始化或存储故障可以重试；原始 ID 和本次昵称始终来自同一条消息。
+        for attempt in range(3):
+            try:
+                result = await memory_service.profile_admin(action="observe_identity", **identity)
+                if not result.get("success"):
+                    detail = result.get("error") or result.get("message") or result.get("reason")
+                    raise RuntimeError(f"登记发送者身份失败: {detail}")
+                return
+            except Exception:
+                if attempt == 2:
+                    raise
+                delay = 0.1 * (attempt + 1)
+                logger.warning(f"登记发送者身份失败，{delay:.1f} 秒后重试", exc_info=True)
+                await asyncio.sleep(delay)
 
 
 memory_automation_service = MemoryAutomationService()

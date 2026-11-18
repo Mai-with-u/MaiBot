@@ -2,7 +2,7 @@
 
 from __future__ import annotations
 
-from typing import Any
+from typing import Any, List, Optional
 
 import asyncio
 import threading
@@ -26,6 +26,7 @@ class MaisakaStageStatusBoard:
         round_text: str = "",
         agent_state: str = "",
         wait_until: float | None = None,
+        focus_session_ids: Optional[List[str]] = None,
     ) -> None:
         """更新一个会话的阶段状态。"""
 
@@ -40,6 +41,7 @@ class MaisakaStageStatusBoard:
             payload = {
                 "session_id": session_id,
                 "session_name": session_name,
+                **({"focus_session_ids": list(focus_session_ids)} if focus_session_ids is not None else {}),
                 "stage": stage,
                 "detail": detail,
                 "round_text": round_text,
@@ -103,6 +105,7 @@ def update_stage_status(
     round_text: str = "",
     agent_state: str = "",
     wait_until: float | None = None,
+    focus_session_ids: Optional[List[str]] = None,
 ) -> None:
     """更新 WebUI 麦麦观察中的阶段状态。"""
 
@@ -114,6 +117,7 @@ def update_stage_status(
         round_text=round_text,
         agent_state=agent_state,
         wait_until=wait_until,
+        focus_session_ids=focus_session_ids,
     )
 
 

@@ -3,7 +3,7 @@ from __future__ import annotations
 from dataclasses import dataclass
 from functools import lru_cache
 from pathlib import Path
-from typing import Any, Dict
+from typing import Any, Callable, Dict
 from tomlkit import parse as parse_toml
 
 import json
@@ -24,6 +24,23 @@ PROMPT_EXTENSIONS = (".prompt",)
 SAFE_SEGMENT_PATTERN = re.compile(r"^[A-Za-z0-9_.-]+$")
 STRICT_ENV_KEYS = ("MAIBOT_PROMPT_I18N_STRICT", "MAIBOT_I18N_STRICT")
 STRICT_ENV_VALUES = {"1", "true", "yes", "on"}
+# 内置模板按场景命名，用户覆盖和版本历史沿用原来的存储名。
+_CUSTOM_PROMPT_STORAGE_NAMES = {
+    "planner_default_group": "maisaka_chat",
+    "planner_passive_group": "maisaka_chat_passive",
+    "planner_default_private": "maisaka_chat_private",
+    "planner_passive_private": "maisaka_chat_private_passive",
+    "planner_focus": "maisaka_chat_focus",
+    "reply_group": "retro_replyer",
+    "reply_private": "retro_private_replyer",
+    "reply_private_followup": "retro_private_replyer_self",
+}
+_RENAMED_PROMPTS = {old_name: name for name, old_name in _CUSTOM_PROMPT_STORAGE_NAMES.items()}
+_RENAMED_PROMPTS.update({
+    "reply_creative_group": "reply_group",
+    "reply_creative_private": "reply_private",
+    "reply_creative_private_followup": "reply_private_followup"
+})
 _PROMPT_CACHE_REVISION = 0
 
 extract_prompt_placeholders = extract_placeholders
@@ -65,6 +82,14 @@ def get_custom_prompts_root(
     return CUSTOM_PROMPTS_ROOT
 
 
+def get_builtin_prompt_name(name: str) -> str:
+    return _RENAMED_PROMPTS.get(name, name)
+
+
+def get_custom_prompt_storage_name(name: str) -> str:
+    return _CUSTOM_PROMPT_STORAGE_NAMES.get(name, name)
+
+
 def normalize_prompt_name(name: str) -> str:
     candidate_name = name.strip()
     for suffix in PROMPT_EXTENSIONS:
@@ -74,7 +99,7 @@ def normalize_prompt_name(name: str) -> str:
 
     if candidate_name in {".", ".."} or not candidate_name or not SAFE_SEGMENT_PATTERN.fullmatch(candidate_name):
         raise ValueError(t("prompt.invalid_name", name=name))
-    return candidate_name
+    return get_builtin_prompt_name(candidate_name)
 
 
 def normalize_prompt_category(category: str | None) -> str | None:
@@ -222,28 +247,6 @@ def _iter_locale_candidates(requested_locale: str) -> list[str]:
     return locale_candidates
 
 
-def _iter_prompt_path_candidates(base_dir: Path, name: str, category: str | None = None) -> list[Path]:
-    candidates: list[Path] = []
-    for suffix in PROMPT_EXTENSIONS:
-        if category is not None:
-            candidates.append((base_dir / category / f"{name}{suffix}").resolve())
-        candidates.append((base_dir / f"{name}{suffix}").resolve())
-    return candidates
-
-
-def _resolve_custom_prompt_path(
-    name: str,
-    locale: str,
-    category: str | None,
-    custom_prompts_root: Path,
-) -> Path | None:
-    custom_locale_dir = custom_prompts_root / locale
-    for candidate_path in _iter_prompt_path_candidates(custom_locale_dir, name, category):
-        if candidate_path.is_file():
-            return candidate_path
-    return None
-
-
 def _resolve_legacy_custom_prompt_path(name: str, custom_prompts_root: Path) -> Path | None:
     for suffix in PROMPT_EXTENSIONS:
         candidate_path = (custom_prompts_root / f"{name}{suffix}").resolve()
@@ -263,6 +266,24 @@ def list_prompt_templates(locale: str | None = None, prompts_root: Path | None =
     return prompt_paths
 
 
+@lru_cache(maxsize=None)
+def _prompt_paths_for_locale(root: Path, locale: str, revision: int) -> dict[str, PromptTemplateInfo]:
+    """运行时按缓存版本索引模板；管理页仍实时扫描元信息。"""
+    return _scan_prompt_directory(root / locale, root)
+
+
+def get_prompt_template_info(
+    name: str, locale: str, prompts_root: Path | None = None,
+) -> PromptTemplateInfo | None:
+    root = get_prompts_root(prompts_root)
+    normalized_name = normalize_prompt_name(name)
+    for candidate in _iter_locale_candidates(normalize_locale(locale)):
+        info = _prompt_paths_for_locale(root, candidate, _PROMPT_CACHE_REVISION).get(normalized_name)
+        if info is not None:
+            return info
+    return None
+
+
 def resolve_prompt_path(
     name: str,
     locale: str | None = None,
@@ -270,61 +291,32 @@ def resolve_prompt_path(
     prompts_root: Path | None = None,
     custom_prompts_root: Path | None = None,
     include_legacy_custom: bool = False,
+    include_custom: bool = True,
 ) -> Path:
     resolved_prompts_root = get_prompts_root(prompts_root)
     resolved_custom_prompts_root = get_custom_prompts_root(custom_prompts_root, prompts_root)
     normalized_name = normalize_prompt_name(name)
     normalized_category = normalize_prompt_category(category)
     requested_locale = normalize_locale(locale or get_locale())
-
-    if normalized_category is not None:
-        for locale_candidate in _iter_locale_candidates(requested_locale):
-            custom_path = _resolve_custom_prompt_path(
-                normalized_name,
-                locale_candidate,
-                normalized_category,
-                resolved_custom_prompts_root,
-            )
-            if custom_path is not None:
-                return custom_path
-
+    for locale_candidate in _iter_locale_candidates(requested_locale):
+        if include_custom:
+            storage_name = get_custom_prompt_storage_name(normalized_name)
+            custom_dir = resolved_custom_prompts_root / locale_candidate
+            custom_paths = [custom_dir / f"{storage_name}.prompt"]
+            if normalized_category is not None:
+                custom_paths.insert(0, custom_dir / normalized_category / f"{storage_name}.prompt")
+            for custom_path in custom_paths:
+                if custom_path.is_file():
+                    return custom_path.resolve()
             if include_legacy_custom:
-                legacy_custom_path = _resolve_legacy_custom_prompt_path(normalized_name, resolved_custom_prompts_root)
+                legacy_custom_path = _resolve_legacy_custom_prompt_path(storage_name, resolved_custom_prompts_root)
                 if legacy_custom_path is not None:
                     return legacy_custom_path
+        info = _prompt_paths_for_locale(resolved_prompts_root, locale_candidate, _PROMPT_CACHE_REVISION).get(normalized_name)
+        if info is not None:
+            return info.path
 
-            base_dir = resolved_prompts_root / locale_candidate
-            for suffix in PROMPT_EXTENSIONS:
-                candidate_path = (base_dir / normalized_category / f"{normalized_name}{suffix}").resolve()
-                if candidate_path.is_file():
-                    return candidate_path
-
-                # 允许带 category 的调用继续复用 locale 根目录下的平铺模板。
-                fallback_path = (base_dir / f"{normalized_name}{suffix}").resolve()
-                if fallback_path.is_file():
-                    return fallback_path
-    else:
-        for locale_candidate in _iter_locale_candidates(requested_locale):
-            custom_path = _resolve_custom_prompt_path(
-                normalized_name,
-                locale_candidate,
-                None,
-                resolved_custom_prompts_root,
-            )
-            if custom_path is not None:
-                return custom_path
-
-            if include_legacy_custom:
-                legacy_custom_path = _resolve_legacy_custom_prompt_path(normalized_name, resolved_custom_prompts_root)
-                if legacy_custom_path is not None:
-                    return legacy_custom_path
-
-            base_dir = resolved_prompts_root / locale_candidate
-            for candidate_path in _iter_prompt_path_candidates(base_dir, normalized_name):
-                if candidate_path.is_file():
-                    return candidate_path
-
-    raise FileNotFoundError(t("prompt.template_not_found", locale=requested_locale, name=normalized_name))
+    raise FileNotFoundError(t("prompt.template_not_found", prompt_locale=requested_locale, name=normalized_name))
 
 
 @lru_cache(maxsize=None)
@@ -348,6 +340,7 @@ def load_prompt_template(
     prompts_root: Path | None = None,
     custom_prompts_root: Path | None = None,
     include_legacy_custom: bool = False,
+    include_custom: bool = True,
 ) -> ResolvedPromptTemplate:
     resolved_prompts_root = get_prompts_root(prompts_root)
     resolved_custom_prompts_root = get_custom_prompts_root(custom_prompts_root, prompts_root)
@@ -359,6 +352,7 @@ def load_prompt_template(
         prompts_root=resolved_prompts_root,
         custom_prompts_root=resolved_custom_prompts_root,
         include_legacy_custom=include_legacy_custom,
+        include_custom=include_custom,
     )
     prompt_locale = _get_locale_from_prompt_path(prompt_path, resolved_prompts_root)
     customized = False
@@ -399,6 +393,7 @@ def load_prompt(
     category: str | None = None,
     prompts_root: Path | None = None,
     custom_prompts_root: Path | None = None,
+    transform_template: Callable[[str], str] | None = None,
     **kwargs: object,
 ) -> str:
     normalized_name = normalize_prompt_name(name)
@@ -409,13 +404,37 @@ def load_prompt(
         prompts_root=prompts_root,
         custom_prompts_root=custom_prompts_root,
     )
-    return _format_prompt_template(normalized_name, resolved_template.template, **kwargs)
+    # 固定文案转换先于材料填充；自定义模板与过期后的内置模板共用此阶段。
+    template = resolved_template.template
+    if transform_template is not None:
+        template = transform_template(template)
+    if resolved_template.customized and kwargs:
+        try:
+            return template.format(**kwargs)
+        except (KeyError, IndexError, ValueError, AttributeError):
+            # 旧自定义模板可能仍引用已移除的参数；保留原文件，改用当前内置模板。
+            default_template = load_prompt_template(
+                name=normalized_name,
+                locale=locale,
+                category=category,
+                prompts_root=prompts_root,
+                custom_prompts_root=custom_prompts_root,
+                include_custom=False,
+            )
+            template = default_template.template
+            if transform_template is not None:
+                template = transform_template(template)
+            rendered = _format_prompt_template(normalized_name, template, **kwargs)
+            logger.warning(t("prompt.template_outdated", name=normalized_name))
+            return rendered
+    return _format_prompt_template(normalized_name, template, **kwargs)
 
 
 def clear_prompt_cache() -> None:
     global _PROMPT_CACHE_REVISION
     _PROMPT_CACHE_REVISION += 1
     _read_prompt_template.cache_clear()
+    _prompt_paths_for_locale.cache_clear()
 
 
 def get_prompt_cache_revision() -> int:

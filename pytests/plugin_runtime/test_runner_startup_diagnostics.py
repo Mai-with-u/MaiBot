@@ -23,7 +23,7 @@ def test_handshake_timeout_keeps_failure_stage_and_exception(monkeypatch):
     with pytest.raises(TimeoutError) as caught:
         asyncio.run(client.connect_and_handshake())
     assert caught.value is error
-    assert "runner.wait_hello_response:timeout=10s" in warning.call_args.args[0]
+    assert "runner.wait_hello_response:timeout=30s" in warning.call_args.args[0]
     assert "secret-session-token" not in str(warning.call_args_list)
 
 
@@ -66,22 +66,23 @@ def test_exited_runner_stderr_is_drained_before_cleanup(monkeypatch):
 
 @pytest.mark.parametrize("on_load_succeeded", [True, False])
 def test_plugin_activation_records_separate_stages(monkeypatch, on_load_succeeded):
-    runner = runner_main.PluginRunner.__new__(runner_main.PluginRunner)
+    runner = runner_main.PluginRunner("unused", "test", [])
     runner._loader = SimpleNamespace(set_loaded_plugin=Mock(), purge_plugin_modules=Mock())
     runner._bootstrap_plugin = AsyncMock(return_value=True)
     runner._register_plugin = AsyncMock(return_value=True)
     runner._invoke_plugin_on_load = AsyncMock(return_value=on_load_succeeded)
+    runner._invoke_plugin_on_unload = AsyncMock()
     runner._unregister_plugin = AsyncMock()
     runner._deactivate_plugin = AsyncMock()
     meta = SimpleNamespace(plugin_id="example.slow-plugin", config_error="", plugin_dir="unused")
-    info = Mock()
-    monkeypatch.setattr(startup_diagnostics.logger, "info", info)
+    debug = Mock()
+    monkeypatch.setattr(startup_diagnostics.logger, "debug", debug)
 
     result = asyncio.run(runner._activate_plugin(meta))
     assert result == (
         runner_main.PluginActivationStatus.LOADED if on_load_succeeded else runner_main.PluginActivationStatus.FAILED
     )
-    messages = [call.args[0] for call in info.call_args_list]
+    messages = [call.args[0] for call in debug.call_args_list]
     for stage in ("bootstrap", "register", "on_load"):
         assert any(f"stage=runner.plugin_{stage}:example.slow-plugin" in message for message in messages)
     if on_load_succeeded:

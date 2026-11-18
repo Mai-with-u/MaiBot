@@ -1,13 +1,11 @@
 """Maisaka 消息触发调度。"""
 
+from abc import ABC, abstractmethod
 from typing import TYPE_CHECKING
 
 from src.common.logger import get_logger
-from src.config.config import global_config
-from src.maisaka.focus import focus_mode_manager
-from src.maisaka.mode_policy import is_dynamic_reply_trigger_enabled
 
-from .gates import DynamicReplyTurnGate, FrequencyThresholdTurnGate
+from .gates import TurnGateResult
 
 if TYPE_CHECKING:
     from src.maisaka.runtime import MaisakaHeartFlowChatting
@@ -15,48 +13,43 @@ if TYPE_CHECKING:
 logger = get_logger("maisaka_turn_scheduler")
 
 
-class MessageTurnScheduler:
-    """决定外部消息何时进入 Maisaka 内部循环。"""
+class MessageTurnScheduler(ABC):
+    """决定外部消息何时进入 Maisaka 内部循环。
+
+    共同检查依次经过：消息防抖 → 快速反应续接 wait → 静默消费 → 场景专属判定。
+    每一步只返回判定，由 ``schedule_message_turn`` 统一投递或延迟重查。
+    """
 
     def __init__(self, runtime: "MaisakaHeartFlowChatting") -> None:
         self._runtime = runtime
-        self._dynamic_reply_gate = DynamicReplyTurnGate(runtime)
-        self._frequency_threshold_gate = FrequencyThresholdTurnGate(runtime)
+        self.accepted_wait_started_at = None
 
-    def record_reply(self) -> None:
-        """记录 Planner 实际调用了一次 reply，供动态门控统计回复次数。"""
+    def observe_message(self) -> None:
+        """新消息登记后更新场景定时判定。"""
+        return None
 
-        self._dynamic_reply_gate.record_reply()
+    def start_planner_turn(self) -> None:
+        """任意来源开启 Planner 时更新场景状态。"""
+        return None
+
+    def record_planner_run(self) -> None:
+        """记录一次有效 Planner 运行，更新场景的查看频率。"""
+        return None
+
+    def finish_planner_turn(self) -> None:
+        """内部循环退出后安排场景检查。"""
+        return None
+
+    def consume_silence_trigger(self) -> bool:
+        """消费已通过概率门控的静默查看信号。"""
+        return False
+
+    def close(self) -> None:
+        """停止场景定时任务。"""
+        return None
 
     def schedule_message_turn(self) -> None:
         runtime = self._runtime
-        if not focus_mode_manager.can_decide(
-            runtime.session_id,
-            is_group_chat=runtime.chat_stream.is_group_session,
-        ):
-            logger.debug(f"{runtime.log_prefix} 当前不在 focus 状态，跳过 Maisaka 决策调度")
-            return
-
-        if runtime._agent_state == runtime._STATE_WAIT:
-            if not runtime._is_reply_frequency_silent():
-                if global_config.experimental.planner_message_steering:
-                    if runtime._get_pending_message_count() <= 0 or runtime._message_turn_scheduled:
-                        return
-                    # 快速反应时直接续接挂起的 wait，不再经过群聊频率与退避门控。
-                    runtime._cancel_wait_timeout_task()
-                    runtime._clear_message_debounce_required()
-                    # 保留挂起状态到消费触发时，避免原工具批次收尾清掉 wait 调用关联。
-                    runtime._update_stage_status("等待已打断", "收到新消息，准备继续思考")
-                    logger.info(f"{runtime.log_prefix} 快速反应模式收到新消息，提前结束 wait 并进入 Planner")
-                    runtime._enqueue_message_turn()
-                    return
-                if runtime.chat_stream.is_group_session:
-                    return
-                logger.info(f"{runtime.log_prefix} 私聊 wait 期间收到新消息，结束等待并进入 Planner")
-                runtime._enter_running_state()
-            else:
-                runtime._enter_stop_state()
-
         if runtime._message_turn_scheduled:
             return
 
@@ -64,50 +57,65 @@ class MessageTurnScheduler:
         if pending_count <= 0:
             return
 
-        effective_frequency = runtime._get_effective_reply_frequency()
-        formatted_frequency = f"{effective_frequency:.3f}"
+        result = self._evaluate(pending_count)
+        logger.debug(f"{runtime.log_prefix} 查看调度 待处理={pending_count} {result.detail}")
+        if result.decision == "delay":
+            runtime._defer_message_turn_check(result.delay_seconds)
+            return
+
+        if result.should_trigger:
+            if runtime._agent_state == runtime._STATE_WAIT:
+                runtime._cancel_wait_timeout_task()
+                # 保留挂起状态到消费触发时，避免原工具批次收尾清掉 wait 调用关联。
+                runtime._update_stage_status("等待已打断", "收到新消息，准备继续思考")
+            runtime._enqueue_message_turn()
+
+    def _evaluate(self, pending_count: int) -> TurnGateResult:
+        """按流水线顺序返回第一个给出结论的判定。"""
+
+        runtime = self._runtime
+        # 先收齐本批：后续门控按整批消息判断，防止只凭半批消息估计回复概率。
+        quiet_seconds = runtime._get_message_quiet_period_remaining_seconds()
+        if quiet_seconds > 0:
+            return TurnGateResult(
+                decision="delay",
+                detail=f"等待消息防抖收齐本批 剩余={quiet_seconds:.3f}s",
+                delay_seconds=quiet_seconds,
+            )
+
+        if runtime._agent_state == runtime._STATE_WAIT:
+            if runtime._is_reply_frequency_silent():
+                runtime._enter_stop_state()
+            elif not self._resume_wait_on_message():
+                # 本批已参与唤醒判断。保留消息缓存，后续新消息重新开防抖窗口。
+                runtime._fixed_message_debouncer.consume()
+                return TurnGateResult(decision="wait", detail="新消息未唤醒等待")
+            else:
+                self.accepted_wait_started_at = runtime._pending_wait_started_at
+                return TurnGateResult(decision="trigger", detail="新消息唤醒等待")
+
+        frequency = runtime._get_effective_reply_frequency()
         if runtime._is_reply_frequency_silent():
-            logger.info(
-                f"{runtime.log_prefix} 调度=静默消费 待处理={pending_count} 频率={formatted_frequency}"
-            )
-            runtime._enqueue_message_turn()
-            return
+            return TurnGateResult(decision="trigger", detail=f"调度=静默消费 频率={frequency:.3f}")
 
-        if runtime._has_forced_turn_trigger():
-            # @ 强制触发的回复同样占用动态门控的回复额度
-            self._dynamic_reply_gate.record_forced_turn(runtime.message_cache[runtime._last_processed_index :])
-            logger.info(
-                f"{runtime.log_prefix} 调度=强制触发 待处理={pending_count} 频率={formatted_frequency}"
-            )
-            runtime._enqueue_message_turn()
-            return
+        return self._evaluate_scene(pending_count, frequency)
 
-        if runtime._idle_backoff.should_delay(pending_count):
-            return
+    @abstractmethod
+    def _resume_wait_on_message(self) -> bool:
+        """处理非快速反应模式的 wait，返回是否继续调度。"""
 
-        trigger_threshold = runtime._get_message_trigger_threshold()
-        schedule_detail = f"待处理={pending_count} 阈值={trigger_threshold} 频率={formatted_frequency}"
-        if is_dynamic_reply_trigger_enabled():
-            dynamic_result = self._dynamic_reply_gate.evaluate(
-                pending_messages=runtime.message_cache[runtime._last_processed_index :],
-                frequency=effective_frequency,
-            )
-            logger.info(
-                f"{runtime.log_prefix} 回复调度 待处理={pending_count} 频率={formatted_frequency} "
-                f"{dynamic_result.detail}"
-            )
-            if dynamic_result.should_trigger:
-                runtime._enqueue_message_turn()
-            return
+    @abstractmethod
+    def _evaluate_scene(self, pending_count: int, frequency: float) -> TurnGateResult:
+        """执行场景专属的消息放行规则。"""
 
-        frequency_result = self._frequency_threshold_gate.evaluate(
-            pending_count=pending_count,
-            trigger_threshold=trigger_threshold,
-        )
-        logger.info(f"{runtime.log_prefix} 回复调度 {schedule_detail} {frequency_result.detail}")
-        if frequency_result.should_trigger:
-            runtime._enqueue_message_turn()
-            return
+    @abstractmethod
+    def record_reply(self) -> None:
+        """记录一次成功回复。"""
 
-        if frequency_result.decision == "delay" and frequency_result.delay_seconds is not None:
-            runtime._defer_message_turn_check(frequency_result.delay_seconds)
+    @abstractmethod
+    def record_cycle_result(self, cycle_end_reason: str) -> None:
+        """记录一轮推理结果。"""
+
+    @abstractmethod
+    def reset_backoff(self) -> None:
+        """强制触发时重置场景退避状态。"""

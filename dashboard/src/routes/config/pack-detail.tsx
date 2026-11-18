@@ -203,16 +203,6 @@ export default function PackDetailPage() {
   const executeApply = async () => {
     if (!pack) return
     
-    // 验证新提供商都有 API Key
-    if (applyOptions.apply_providers && conflicts) {
-      for (const p of conflicts.new_providers) {
-        if (!newProviderApiKeys[p.name]) {
-          toast({ title: `请填写提供商 "${p.name}" 的 API Key`, variant: 'destructive' })
-          return
-        }
-      }
-    }
-    
     setApplying(true)
     try {
       await applyPack(pack, applyOptions, providerMapping, newProviderApiKeys)
@@ -738,9 +728,9 @@ function ApplyDialog({
                   <div className="space-y-3">
                     <Alert variant="destructive">
                       <AlertTriangle className="h-4 w-4" />
-                      <AlertTitle>需要配置 API Key</AlertTitle>
+                      <AlertTitle>提供商 API Key</AlertTitle>
                       <AlertDescription>
-                        以下提供商在您的本地配置中不存在，需要填写 API Key：
+                        以下提供商尚未配置，请填写 API Key；无鉴权服务可留空：
                       </AlertDescription>
                     </Alert>
                     

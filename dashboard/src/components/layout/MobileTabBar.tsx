@@ -1,10 +1,11 @@
 import { Link, useNavigate, useRouterState } from '@tanstack/react-router'
 import { ChevronRight, House, LayoutGrid, MessageCircle, Search } from 'lucide-react'
-import { AnimatePresence, LayoutGroup, MotionConfig, motion } from 'motion/react'
+import { AnimatePresence, LayoutGroup, MotionConfig, motion, useReducedMotion } from 'motion/react'
 import { useEffect, useLayoutEffect, useRef, useState } from 'react'
 import { useTranslation } from 'react-i18next'
 import type { LucideIcon } from 'lucide-react'
 
+import { useAnimation } from '@/hooks/use-animation'
 import { useMediaQuery } from '@/hooks/use-media-query'
 import { cn } from '@/lib/utils'
 import { StageStatusLabel } from '@/routes/monitor/StageStatusLabel'
@@ -65,12 +66,13 @@ function useDockHeight(ref: React.RefObject<HTMLElement | null>) {
   useLayoutEffect(() => {
     const element = ref.current
     if (!element) return
+    let previousHeight: string | undefined
     const update = () => {
       const bottomGap = window.innerHeight - element.getBoundingClientRect().bottom
-      document.documentElement.style.setProperty(
-        DOCK_HEIGHT_CSS_VAR,
-        `${Math.ceil(element.offsetHeight + Math.max(0, bottomGap) + 16)}px`
-      )
+      const height = `${Math.ceil(element.offsetHeight + Math.max(0, bottomGap) + 16)}px`
+      if (height === previousHeight) return
+      previousHeight = height
+      document.documentElement.style.setProperty(DOCK_HEIGHT_CSS_VAR, height)
     }
     update()
     const observer = new ResizeObserver(update)
@@ -141,9 +143,14 @@ function pickLatestStageStatus(stageStatuses: Map<string, StageStatusInfo>) {
 
 function TabBarDock({ onSearch }: Pick<MobileTabBarProps, 'onSearch'>) {
   const { t } = useTranslation()
+  const { enableAnimations } = useAnimation()
+  const prefersReducedMotion = useReducedMotion()
+  const animate = enableAnimations && !prefersReducedMotion
+  const dockTransition = animate ? DOCK_SPRING : { duration: 0 }
   const navigate = useNavigate()
   const pathname = useRouterState({ select: (state) => state.location.pathname })
   const activeTab = resolveMobileTab(pathname)
+  const activeTabIndex = TABS.findIndex(({ tab }) => tab === activeTab)
   const dockRef = useRef<HTMLDivElement>(null)
   const [collapsed, setCollapsed] = useCollapseOnScroll(pathname)
   const { sessions, stageStatuses, setSelectedSession } = useMaisakaMonitorOverview()
@@ -164,11 +171,12 @@ function TabBarDock({ onSearch }: Pick<MobileTabBarProps, 'onSearch'>) {
     void navigate({ to: '/chat', search: { observe: latestStatus.sessionId } })
   }
 
-  // 麦麦实时条：展开时在标签栏上方，收起时移进同一行；两处共用 layoutId，位置与尺寸连续过渡
+  // 麦麦实时条：展开时在标签栏上方，收起时移进同一行；只在收起状态变化时测量布局。
   const liveStrip = latestStatus && (
     <motion.button
       layoutId="mobile-live-strip"
-      transition={DOCK_SPRING}
+      layoutDependency={collapsed}
+      transition={dockTransition}
       type="button"
       data-mobile-live-strip="true"
       onClick={openLive}
@@ -181,11 +189,16 @@ function TabBarDock({ onSearch }: Pick<MobileTabBarProps, 'onSearch'>) {
     >
       <motion.span
         layout="position"
+        layoutDependency={collapsed}
         className="bg-foreground text-background flex h-9 w-9 shrink-0 items-center justify-center rounded-full text-sm font-semibold"
       >
         {t('mobileNav.botInitial')}
       </motion.span>
-      <motion.span layout="position" className="flex min-w-0 flex-1 flex-col">
+      <motion.span
+        layout="position"
+        layoutDependency={collapsed}
+        className="flex min-w-0 flex-1 flex-col"
+      >
         <span className="truncate text-sm font-semibold">
           {liveSessionName} · <StageStatusLabel status={latestStatus} />
         </span>
@@ -202,7 +215,7 @@ function TabBarDock({ onSearch }: Pick<MobileTabBarProps, 'onSearch'>) {
   )
 
   return (
-    <MotionConfig reducedMotion="user">
+    <MotionConfig reducedMotion={animate ? 'user' : 'always'}>
       <LayoutGroup>
         <div
           ref={dockRef}
@@ -215,15 +228,30 @@ function TabBarDock({ onSearch }: Pick<MobileTabBarProps, 'onSearch'>) {
             {/* 收起时只留下当前标签，其余标签淡出，容器宽度随之收缩成圆键 */}
             <motion.div
               layout
-              transition={DOCK_SPRING}
+              layoutDependency={collapsed}
+              transition={dockTransition}
               data-mobile-tabbar-tabs="true"
               onClick={collapsed ? () => setCollapsed(false) : undefined}
               className={cn(
-                'flex rounded-full p-1',
+                'relative flex rounded-full p-1',
                 collapsed ? 'h-[52px] w-[52px] flex-none' : 'h-[62px] flex-1',
                 MOBILE_GLASS_CLASS
               )}
             >
+              {/* 底板常驻，用 transform 切换标签，避免导航时跨节点测量共享布局。 */}
+              {activeTabIndex >= 0 && (
+                <span className="pointer-events-none absolute inset-1" aria-hidden="true">
+                  <span
+                    data-mobile-tab-indicator="true"
+                    className="bg-foreground/[0.07] block h-full rounded-full transition-transform duration-200 ease-out motion-reduce:transition-none"
+                    style={{
+                      width: collapsed ? '100%' : `${100 / TABS.length}%`,
+                      transform: `translateX(${collapsed ? 0 : activeTabIndex * 100}%)`,
+                      transitionDuration: animate ? undefined : '0s',
+                    }}
+                  />
+                </span>
+              )}
               <AnimatePresence initial={false} mode="popLayout">
                 {TABS.filter(({ tab }) => !collapsed || tab === activeTab).map(
                   ({ tab, to, labelKey, icon: Icon }) => {
@@ -232,7 +260,8 @@ function TabBarDock({ onSearch }: Pick<MobileTabBarProps, 'onSearch'>) {
                       <motion.div
                         key={tab}
                         layout
-                        transition={DOCK_SPRING}
+                        layoutDependency={collapsed}
+                        transition={dockTransition}
                         initial={{ opacity: 0, scale: 0.8 }}
                         animate={{ opacity: 1, scale: 1 }}
                         exit={{ opacity: 0, scale: 0.8 }}
@@ -250,29 +279,13 @@ function TabBarDock({ onSearch }: Pick<MobileTabBarProps, 'onSearch'>) {
                             active ? 'text-primary' : 'text-foreground'
                           )}
                         >
-                          {/* 选中底板在标签之间滑动，切换标签时连续过渡 */}
-                          {active && (
-                            <motion.span
-                              layoutId="mobile-tab-indicator"
-                              transition={DOCK_SPRING}
-                              data-mobile-tab-indicator="true"
-                              aria-hidden="true"
-                              className="bg-foreground/[0.07] absolute inset-0 rounded-full"
-                            />
-                          )}
-                          <motion.span
-                            key={active ? 'active' : 'idle'}
-                            initial={active ? { scale: 0.82 } : false}
-                            animate={{ scale: 1 }}
-                            transition={{ type: 'spring', stiffness: 520, damping: 18 }}
-                            className="relative flex"
-                          >
+                          <span className="relative flex">
                             <Icon
                               className="h-[22px] w-[22px]"
                               strokeWidth={active ? 2 : 1.7}
                               aria-hidden="true"
                             />
-                          </motion.span>
+                          </span>
                           {!collapsed && (
                             <span className="relative truncate">{t(labelKey)}</span>
                           )}

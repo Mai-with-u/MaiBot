@@ -15,7 +15,7 @@ from src.core.tooling import (
 )
 from src.maisaka.tool_result_store import ToolResultStore, tool_result_store
 
-from .config import WebRuntimeConfig
+from .config import WebRuntimeConfig, WebSearchConfigError
 from .models import PageResult, WebSearchError
 from .service import WebSearchService
 
@@ -44,7 +44,10 @@ class WebSearchToolProvider:
         specs = []
         annotation = ToolAnnotation(read_only=True, destructive=False, open_world=True)
         if config.search:
-            limit = 128 if config.services[config.search].adapter == "deepseek" else 1000
+            service = config.services.get(config.search)
+            adapter = service.adapter if service is not None else ""
+            limit = {"deepseek": 128, "firecrawl": 500}.get(adapter, 1000)
+            max_results = 10 if adapter == "anysearch" else 20
             specs.append(
                 ToolSpec(
                     name="web_search",
@@ -59,7 +62,7 @@ class WebSearchToolProvider:
                         "type": "object",
                         "properties": {
                             "query": {"type": "string", "minLength": 1, "maxLength": limit},
-                            "max_results": {"type": "integer", "minimum": 1, "maximum": 20, "default": 5},
+                            "max_results": {"type": "integer", "minimum": 1, "maximum": max_results, "default": 5},
                         },
                         "required": ["query"],
                         "additionalProperties": False,
@@ -136,6 +139,13 @@ class WebSearchToolProvider:
                 content=f"{source_text}[外部网页资料]\n{preview}{footer}",
                 structured_content={**payload, **metadata},
                 metadata=metadata,
+            )
+        except WebSearchConfigError as exc:
+            return ToolExecutionResult(
+                tool_name=invocation.tool_name,
+                success=False,
+                error_message=str(exc),
+                structured_content={"error_code": exc.code, "message": str(exc)},
             )
         except WebSearchError as exc:
             return ToolExecutionResult(tool_name=invocation.tool_name, success=False, error_message=str(exc))

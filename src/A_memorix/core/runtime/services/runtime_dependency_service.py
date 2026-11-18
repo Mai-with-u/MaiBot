@@ -54,7 +54,7 @@ class MemoryRuntimeDependencyService(KernelServiceBase):
             segmentation_service=self.episode_segmentation_service,
         )
         self.summary_importer = kernel_module.SummaryImporter(
-            vector_store=self.vector_store,
+            vector_store=self._paragraph_store(),
             graph_store=self.graph_store,
             metadata_store=self.metadata_store,
             embedding_manager=self.embedding_manager,

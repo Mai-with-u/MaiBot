@@ -21,6 +21,7 @@ def _get_builtin_hook_spec_registrars() -> List[HookSpecRegistrar]:
     """
 
     from src.chat.message_receive.bot import register_chat_hook_specs
+    from src.desktop_pet.hooks import register_desktop_pet_hook_specs
     from src.emoji_system.emoji_manager import register_emoji_hook_specs
     from src.learners.expression_learner import register_expression_hook_specs
     from src.learners.jargon_miner import register_jargon_hook_specs
@@ -29,6 +30,7 @@ def _get_builtin_hook_spec_registrars() -> List[HookSpecRegistrar]:
 
     return [
         register_chat_hook_specs,
+        register_desktop_pet_hook_specs,
         register_emoji_hook_specs,
         register_jargon_hook_specs,
         register_expression_hook_specs,

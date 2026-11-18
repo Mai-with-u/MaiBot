@@ -38,7 +38,6 @@ class MCPClientRuntimeConfig:
     roots: list[MCPRootRuntimeConfig] = field(default_factory=list)
     enable_sampling: bool = False
     sampling_task_name: str = "planner"
-    sampling_include_context_support: bool = False
     sampling_tool_support: bool = False
     enable_elicitation: bool = False
     elicitation_allow_form: bool = True
@@ -115,8 +114,6 @@ def build_mcp_client_runtime_config(mcp_config: "MCPConfig") -> MCPClientRuntime
         roots=roots,
         enable_sampling=mcp_config.client.sampling.enable,
         sampling_task_name=mcp_config.client.sampling.task_name.strip() or "planner",
-        # 当前宿主桥接层尚未实现 includeContext 的上下文收集，不能向服务端声明虚假能力。
-        sampling_include_context_support=False,
         sampling_tool_support=mcp_config.client.sampling.tool_support,
         enable_elicitation=mcp_config.client.elicitation.enable,
         elicitation_allow_form=mcp_config.client.elicitation.allow_form,

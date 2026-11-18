@@ -60,6 +60,14 @@ export async function getInstalledPlugins(
   return installedPluginsRequest
 }
 
+/** 读取后端累计运行时长；此接口不重新扫描插件目录。 */
+export async function getPluginUsageSeconds(): Promise<Record<string, number>> {
+  const data = await backendApi.get<{ usage_seconds: Record<string, number> }>(
+    '/api/webui/plugins/usage', { errorMessage: '获取插件运行时长失败' }
+  )
+  return data.usage_seconds
+}
+
 /**
  * 检查插件是否已安装
  */

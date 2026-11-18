@@ -33,6 +33,7 @@ export interface JargonChatInfo {
   chat_name: string
   platform: string | null
   account_id?: string | null
+  target_id?: string | null
   is_group: boolean
   jargon_count?: number
 }
@@ -46,10 +47,13 @@ export interface JargonChatListResponse {
 }
 
 export interface JargonGroupInfo {
+  id: string
+  color: string
   index: number
   name: string
   session_ids: string[]
   members: JargonChatInfo[]
+  jargon_count: number
   is_global: boolean
 }
 
@@ -102,6 +106,7 @@ export interface JargonExportResponse {
  */
 export interface JargonImportRequest {
   target_session_ids: string[]
+  is_global?: boolean
   jargons: JargonExportItem[]
   conflict_strategy?: 'skip' | 'overwrite'
 }

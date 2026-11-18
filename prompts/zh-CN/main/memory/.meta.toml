@@ -1,0 +1,15 @@
+[a_memorix_chat_summary]
+display_name = "长期记忆聊天总结"
+advanced = false
+description = "从当前聊天窗口提取可写入长期记忆的增量信息与重要知识。"
+
+[memory_fuzzy_modify_plan]
+display_name = "长期记忆模糊修改"
+advanced = true
+description = "用于根据用户的自然语言修改描述和候选记忆，规划失效旧记忆与写入新记忆的操作。"
+
+[a_memorix_fact_deduplication]
+display_name = "长期记忆事实去重"
+advanced = true
+description = "判断新事实与已有记忆是否重复，保留独立事件、状态变化和矛盾信息。"
+

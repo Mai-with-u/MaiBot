@@ -1,0 +1,29 @@
+[agent_acp_environment]
+display_name = "外部 Agent 環境説明"
+advanced = true
+description = "外部 Agent 環境説明。"
+
+[agent_acp_failure]
+display_name = "外部 Agent 失敗報告"
+advanced = true
+description = "外部 Agent 失敗報告。"
+
+[agent_planner_resume]
+display_name = "外部 Planner 中断復帰"
+advanced = true
+description = "外部 Planner 中断復帰。"
+
+[agent_planner_continue]
+display_name = "外部 Planner 継続実行"
+advanced = true
+description = "外部 Planner 継続実行。"
+
+[subagent_final_round]
+display_name = "サブエージェントの最終ラウンド指示"
+advanced = false
+description = "場面に応じて読み込む指示テンプレート。主要な Prompt とは別に編集します。"
+
+[subagent_finished]
+display_name = "サブエージェントの完了通知"
+advanced = false
+description = "場面に応じて読み込む指示テンプレート。主要な Prompt とは別に編集します。"

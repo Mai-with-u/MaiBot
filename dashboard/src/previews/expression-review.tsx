@@ -1,17 +1,19 @@
 import { useState } from 'react'
-import { Download, Plus, Star } from 'lucide-react'
+import { Download, Plus } from 'lucide-react'
 
 import { ChatScopeFilterPanel } from '@/components/chat-scope-filter-panel'
 import { Button } from '@/components/ui/button'
 import { Checkbox } from '@/components/ui/checkbox'
+import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from '@/components/ui/select'
+import { SwitchField } from '@/components/ui/switch'
 import {
   DataBrowserHeader,
   DataBrowserLayout,
   DataToolbar,
   MetricStrip,
-  StatusIndicator,
 } from '@/components/ui/data-browser'
 import { ExpressionList } from '@/routes/resource/expression/ExpressionList'
+import { ExpressionScopeStatus } from '@/routes/resource/expression/ExpressionScopeStatus'
 import type { Expression } from '@/types/expression'
 
 import { LearningReviewTabs } from './learning-review-tabs'
@@ -58,6 +60,7 @@ export function ExpressionReview() {
   const [chat, setChat] = useState<string | number>('0')
   const [legacy, setLegacy] = useState(false)
   const [filter, setFilter] = useState<'all' | 'user_checked' | 'unchecked'>('all')
+  const [sortBy, setSortBy] = useState('time')
   const [selected, setSelected] = useState(new Set<number>())
   const [page, setPage] = useState(1)
   const [pageSize, setPageSize] = useState(20)
@@ -86,8 +89,6 @@ export function ExpressionReview() {
                 { label: '近7天新增', value: '+5,579', positive: true },
               ]}
             />
-            <StatusIndicator status="on">学习中</StatusIndicator>
-            <StatusIndicator status="on">使用中</StatusIndicator>
           </>
         }
       />
@@ -111,6 +112,7 @@ export function ExpressionReview() {
               label: name,
               description: '账号 2814567…',
               meta: (1204 - index * 121).toLocaleString(),
+              trailing: <ExpressionScopeStatus enableLearning="on" useExpression="on" />,
             }))}
             footer={
               <label className="flex items-center justify-between gap-2 text-xs">
@@ -148,15 +150,21 @@ export function ExpressionReview() {
               placeholder="搜索情境、风格或上下文..."
               actions={
                 <>
-                  <Button
-                    variant="outline"
-                    size="sm"
-                    aria-pressed={filter === 'user_checked'}
-                    onClick={() => changeFilter(filter === 'user_checked' ? 'all' : 'user_checked')}
-                  >
-                    <Star />
-                    仅精选
-                  </Button>
+                  <Select value={sortBy} onValueChange={setSortBy}>
+                    <SelectTrigger controlSize="sm" className="w-[130px]" aria-label="表达方式排序">
+                      <SelectValue />
+                    </SelectTrigger>
+                    <SelectContent>
+                      <SelectItem value="time">最近活跃</SelectItem>
+                      <SelectItem value="created">最新创建</SelectItem>
+                    </SelectContent>
+                  </Select>
+                  <SwitchField
+                    controlSize="sm"
+                    label="仅精选"
+                    checked={filter === 'user_checked'}
+                    onCheckedChange={(checked) => changeFilter(checked ? 'user_checked' : 'all')}
+                  />
                   <Button
                     variant="outline"
                     size="icon-sm"

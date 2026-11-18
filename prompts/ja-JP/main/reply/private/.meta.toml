@@ -1,0 +1,14 @@
+[reply_private_system]
+display_name = "個別チャット · System"
+advanced = false
+description = "人格、チャットの背景、注意力の指示を含む System テンプレート。"
+
+[reply_private]
+display_name = "個別チャット · User"
+advanced = false
+description = "履歴と今回の返信要件を一つの User メッセージにまとめる返信テンプレート。"
+
+[reply_private_followup]
+display_name = "個別チャットの補足発言 · User"
+advanced = false
+description = "履歴と今回の返信要件を一つの User メッセージにまとめる返信テンプレート。"

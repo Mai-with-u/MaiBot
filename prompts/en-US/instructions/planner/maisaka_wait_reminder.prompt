@@ -1,0 +1,1 @@
+You have used timed waits repeatedly. Consider a longer wait or ending this turn. Call wait without time arguments to end the turn; with reply, after_reply=wait without a waiting time ends the turn after sending. You may also finish without tools to remain silent.

@@ -3,7 +3,7 @@
 from contextlib import asynccontextmanager
 from datetime import datetime, timedelta
 from time import perf_counter
-from typing import Any, AsyncIterator, Dict
+from typing import Any, AsyncIterator, Dict, List
 
 import asyncio
 
@@ -16,6 +16,9 @@ from src.common.database.database_model import ModelTaskUsage
 from src.common.logger import get_logger
 
 logger = get_logger("model_task_usage")
+
+# 分钟汇总只保留最近七天，详细统计据此标注失败率的实际覆盖范围。
+MODEL_TASK_USAGE_RETENTION = timedelta(days=7)
 
 
 def record_model_task_usage(
@@ -49,7 +52,9 @@ def record_model_task_usage(
     )
     with get_db_session() as session:
         session.exec(statement)
-        session.exec(delete(ModelTaskUsage).where(col(ModelTaskUsage.bucket_time) < bucket_time - timedelta(days=7)))
+        session.exec(
+            delete(ModelTaskUsage).where(col(ModelTaskUsage.bucket_time) < bucket_time - MODEL_TASK_USAGE_RETENTION)
+        )
 
 
 @asynccontextmanager
@@ -116,3 +121,49 @@ def get_model_task_usage(task_name: str, hours: int = 24) -> Dict[str, Any]:
         "request_count": sum(model["request_count"] for model in models),
         "models": models,
     }
+
+
+def fetch_model_task_usage_groups(start: datetime, end: datetime) -> List[Dict[str, Any]]:
+    """按模型、供应商、任务聚合时间范围内的调用尝试，供详细统计计算失败率。"""
+    with get_db_session(auto_commit=False) as session:
+        rows = session.exec(
+            select(
+                ModelTaskUsage.model_name,
+                ModelTaskUsage.provider_name,
+                ModelTaskUsage.task_name,
+                func.sum(ModelTaskUsage.request_count),
+                func.sum(ModelTaskUsage.failure_count),
+                func.sum(ModelTaskUsage.success_duration),
+            )
+            .where(ModelTaskUsage.bucket_time >= start, ModelTaskUsage.bucket_time <= end)
+            .group_by(ModelTaskUsage.model_name, ModelTaskUsage.provider_name, ModelTaskUsage.task_name)
+        ).all()
+    return [
+        {
+            "model_name": model_name,
+            "provider_name": provider_name,
+            "task_name": task_name,
+            "attempt_count": int(attempts or 0),
+            "failure_count": int(failures or 0),
+            "success_duration": float(duration or 0.0),
+        }
+        for model_name, provider_name, task_name, attempts, failures, duration in rows
+    ]
+
+
+def fetch_model_task_usage_minutes(start: datetime, end: datetime) -> List[Dict[str, Any]]:
+    """按分钟桶汇总调用尝试与失败次数，供详细统计绘制失败时间线。"""
+    with get_db_session(auto_commit=False) as session:
+        rows = session.exec(
+            select(
+                ModelTaskUsage.bucket_time,
+                func.sum(ModelTaskUsage.request_count),
+                func.sum(ModelTaskUsage.failure_count),
+            )
+            .where(ModelTaskUsage.bucket_time >= start, ModelTaskUsage.bucket_time <= end)
+            .group_by(ModelTaskUsage.bucket_time)
+        ).all()
+    return [
+        {"bucket_time": bucket_time, "attempt_count": int(attempts or 0), "failure_count": int(failures or 0)}
+        for bucket_time, attempts, failures in rows
+    ]

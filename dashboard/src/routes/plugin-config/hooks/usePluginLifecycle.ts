@@ -53,7 +53,7 @@ export function usePluginLifecycle(options: UsePluginLifecycleOptions) {
     }
   }, [])
 
-  // WS 实时进度订阅：仅在订阅时对应当前正在更新/卸载的插件才写入进度
+  // WS 订阅会回放上次进度；只有本次操作已开始时才接收，避免覆盖新打开的确认弹窗。
   useEffect(() => {
     let unsubscribe: (() => Promise<void>) | null = null
     let disposed = false
@@ -68,7 +68,7 @@ export function usePluginLifecycle(options: UsePluginLifecycleOptions) {
           deletingPlugin &&
           progress.plugin_id === deletingPlugin.id
         ) {
-          setDeleteProgress(progress)
+          setDeleteProgress((current) => current?.stage === 'loading' ? progress : current)
         }
         if (
           progress.operation === 'update' &&
@@ -76,7 +76,7 @@ export function usePluginLifecycle(options: UsePluginLifecycleOptions) {
           !updateController.current?.signal.aborted &&
           progress.plugin_id === updatingPlugin.id
         ) {
-          setUpdateProgress(progress)
+          setUpdateProgress((current) => current?.stage === 'loading' ? progress : current)
         }
       })
       .then((cleanup) => {

@@ -1,0 +1,23 @@
+MaiBot built-in typo dictionary
+
+This file is a derived list of correct-word and typo pairs.
+
+Reviewed entries come from pycorrector's tests/custom_confusion.txt.
+Source revision: fc8aa56c336276fbd8cdd3a49eef505dc67b8a6e
+https://github.com/shibing624/pycorrector/blob/fc8aa56c336276fbd8cdd3a49eef505dc67b8a6e/tests/custom_confusion.txt
+
+The remaining entries come from shibing624/CSC (SIGHAN and Wang271K),
+published under Apache License 2.0.
+https://huggingface.co/datasets/shibing624/CSC
+Training revision: 40f6a4b1a42c0bcb74aaf1ea3c8bba5ce140b021
+train.json SHA-256: 4d947b7c6de671783c9809e90ceeca5142dc716914b06d2f31d0ba3f1eef0dd4
+
+MaiBot extracted 2–4-character word pairs with a single same-pronunciation
+substitution from aligned training samples. Extraction filters proper names,
+number words, low-frequency characters, known meaning-changing pairs and
+variants that occur as complete words or phrases in multiple corrected texts.
+Repeated observations are preferred. Single observations supplement common
+words with no stronger candidate. Reviewed pycorrector entries take priority
+for the words they cover. Original training sentences are not distributed.
+
+See typo_words.LICENSE for the Apache License 2.0.

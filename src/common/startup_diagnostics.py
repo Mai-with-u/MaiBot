@@ -81,7 +81,7 @@ def monitor_startup_loop(
             if stopped.is_set():
                 return
             last_reported_at = now
-            logger.warning(
+            logger.debug(
                 f"启动主循环卡顿现场: loop=main pid={os.getpid()} "
                 f"无心跳={lag:.2f}s thread_id={loop_thread_id}\n{stack}"
             )

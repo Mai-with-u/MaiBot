@@ -4,6 +4,7 @@ import { defaultRangeExtractor, useVirtualizer, type Range } from '@tanstack/rea
 import { Bot, Sparkles, User } from 'lucide-react'
 import {
   type ReactNode,
+  memo,
   useCallback,
   useEffect,
   useLayoutEffect,
@@ -20,6 +21,7 @@ import { ImageGalleryProvider, type GalleryImage } from '@/components/image-gall
 import { useVirtualizerUnmountGuard } from '@/lib/use-virtualizer-unmount-guard'
 import { cn } from '@/lib/utils'
 
+import { useLocalBotAvatarUrl } from './local-bot-avatar'
 import { ChatScrollContext, type ChatScrollContextValue } from './ChatScrollContext'
 import { RenderMessageContent } from './MessageRenderer'
 import type { ChatMessage, ChatRuntimeStatus } from './types'
@@ -30,6 +32,7 @@ interface MessageListProps {
   botDisplayName: string
   /** 机器人 QQ 号；存在时通过 WebUI 头像缓存接口加载 bot 头像。 */
   botQq?: string
+  localBotAvatar?: boolean
   userName: string
   userAvatarPlatform?: string
   userAvatarId?: string
@@ -159,11 +162,12 @@ function RuntimeStatusIndicator({
 /**
  * 聊天消息列表：支持连续同发送者消息分组、富文本与系统/错误信息样式。
  */
-export function MessageList({
-  messages,
+export const MessageList = memo(function MessageList({
+  messages: incomingMessages,
   isLoadingHistory,
   botDisplayName,
   botQq,
+  localBotAvatar = false,
   userName,
   userAvatarPlatform,
   userAvatarId,
@@ -172,6 +176,12 @@ export function MessageList({
   runtimeStatus,
 }: MessageListProps) {
   const { t } = useTranslation()
+  // 历史数据可能包含同一消息的重复存储记录。按消息身份合并后再进行分组、
+  // 定位和测量，避免不同高度的行共用虚拟列表缓存而持续触发更新。
+  const messages = useMemo(
+    () => Array.from(new Map(incomingMessages.map((message) => [message.id, message])).values()),
+    [incomingMessages]
+  )
   // 当前会话里的图片与表情，按出现顺序排列，供大图预览切换上一张/下一张。
   const galleryImages = useMemo(() => {
     const images = new Map<string, GalleryImage>()
@@ -390,7 +400,7 @@ export function MessageList({
   )
   const formatTime = (timestamp: number) => timeFormatter.format(new Date(timestamp * 1000))
 
-  const botAvatarUrl = useResolvedAvatarUrl('qq', botQq)
+  const botAvatarUrl = useLocalBotAvatarUrl(botQq, localBotAvatar)
   const userAvatarUrl = useResolvedAvatarUrl(
     userAvatarPlatform,
     userAvatarId,
@@ -525,4 +535,4 @@ export function MessageList({
     </DataPanel>
     </ImageGalleryProvider>
   )
-}
+})

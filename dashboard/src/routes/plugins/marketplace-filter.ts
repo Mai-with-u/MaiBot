@@ -19,7 +19,7 @@ export function filterMarketplacePlugins(
     if (!manifest || plugin.source === 'local') return false
     if (pluginTypeFilter !== 'all' && getPluginType(plugin) !== pluginTypeFilter) return false
     if (showCompatibleOnly && !checkPluginCompatibility(plugin)) return false
-    return query === '' || [manifest.name, manifest.author?.name, manifest.description, ...manifest.keywords]
+    return query === '' || [plugin.id, manifest.id, manifest.name, manifest.author?.name, manifest.description, ...manifest.keywords]
       .some((value) => value?.toLowerCase().includes(query))
   })
 }

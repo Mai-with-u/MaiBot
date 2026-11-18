@@ -17,7 +17,7 @@ MaiBot 当前最合适的 TLS/SSL 方案是让反向代理终止 HTTPS，然后�
 
 当前仓库里，WebUI 的前后端是同源部署思路：
 
-1. 后端是独立的 FastAPI WebUI 服务，直接部署默认监听 127.0.0.1:8001；Docker Compose 会通过 WEBUI_HOST=0.0.0.0 让容器内 WebUI 可被宿主机端口映射访问
+1. 后端是独立的 FastAPI WebUI 服务，直接部署默认监听 127.0.0.1:8001；Docker Compose 会通过 HTTP_HOST=0.0.0.0 让容器内 WebUI 可被宿主机端口映射访问
 2. 前端构建产物由这个 FastAPI 服务直接托管
 3. 浏览器生产模式下默认按同源访问 API
 4. 页面如果通过 HTTPS 打开，前端会自动把 WebSocket 协议切到 WSS
@@ -58,7 +58,6 @@ allowed_ips = "127.0.0.1"
 trusted_proxies = "127.0.0.1"
 trust_xff = true
 secure_cookie = true
-enable_paragraph_content = false
 ```
 
 各项的意义：
@@ -275,7 +274,7 @@ sudo journalctl -u caddy -f
 2. 打开反向代理。
 3. 新增反向代理。
 4. 目标 URL 填写 http://127.0.0.1:8001。
-5. 发送域名通常保持目标域或原域名即可。
+5. 将发送给 MaiBot 的 `Host` 设为 `$http_host`，保留浏览器访问的主机名和端口，供桌宠连接页设置 WebSocket 的访问策略。
 
 如果使用的是宝塔站点配置文件，也可以手动补这一段：
 
@@ -283,7 +282,7 @@ sudo journalctl -u caddy -f
 location / {
     proxy_pass http://127.0.0.1:8001;
     proxy_http_version 1.1;
-    proxy_set_header Host $host;
+    proxy_set_header Host $http_host;
     proxy_set_header X-Real-IP $remote_addr;
     proxy_set_header X-Forwarded-For $proxy_add_x_forwarded_for;
     proxy_set_header X-Forwarded-Proto $scheme;

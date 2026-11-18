@@ -2,34 +2,35 @@ from collections import OrderedDict
 from datetime import datetime
 from typing import Any, Callable, Dict, List, Optional, Set, Tuple, TypedDict
 
-from json_repair import repair_json
 from sqlmodel import col, select
 
 import asyncio
 import json
-import re
 
 from src.common.data_models.jargon_data_model import MaiJargon
 from src.common.data_models.llm_service_data_models import LLMResponseResult
 from src.common.database.database import get_db_session
 from src.common.database.database_model import Jargon, JargonCreatedBy, Messages
+from src.common.llm_json import parse_llm_json
 from src.common.logger import get_logger
 from src.common.utils.utils_config import JargonConfigUtils
+from src.common.utils.utils_message import MessageUtils
 from src.config.config import global_config
 from src.llm_models.payload_content.context_item import ContextItemBuilder, RoleType
 from src.maisaka.display.prompt_cli_renderer import PromptCLIVisualizer
 from src.plugin_runtime.hook_schema_utils import build_object_schema
+from src.plugin_runtime.host.hook_dispatcher import HookAbortedError
 from src.plugin_runtime.host.hook_spec_registry import HookSpec, HookSpecRegistry
 from src.prompt.prompt_manager import prompt_manager
 from src.services.llm_service import LLMServiceClient
 
 from .expression_utils import is_single_char_jargon
+from .learning_text import extract_learning_text
 
 logger = get_logger("jargon")
 
 llm_inference = LLMServiceClient(task_name="learner", request_type="jargon.inference")
 JARGON_INFERENCE_THRESHOLDS = [4, 8, 25, 100]
-EMOJI_ONLY_MESSAGE_PATTERN = re.compile(r"^(?:\s*\[表情包(?:\d+)?(?:[:：][^\]]*)?\]\s*)+$")
 
 
 class JargonEvidenceMessageRef(TypedDict):
@@ -265,16 +266,6 @@ class JargonMiner:
         return list(self.cache.keys())
 
     @staticmethod
-    def _is_emoji_only_message(message: Messages) -> bool:
-        """判断证据消息是否为单独表情包，避免送入含义推断上下文。"""
-
-        if message.is_emoji:
-            return True
-
-        text = (message.processed_plain_text or "").strip()
-        return bool(text and EMOJI_ONLY_MESSAGE_PATTERN.fullmatch(text))
-
-    @staticmethod
     def _format_evidence_context_segments(context_texts: List[str]) -> str:
         """把多个证据上下文组格式化为明确分隔的对话片段。"""
 
@@ -283,7 +274,7 @@ class JargonMiner:
         )
 
     def _load_evidence_contexts(self, jargon_obj: MaiJargon) -> Tuple[List[str], Optional[str], bool]:
-        """从证据消息引用还原上下文，并剔除包含缺失消息的证据组。"""
+        """从证据消息还原本次文字正文，剔除无文字消息和包含缺失消息的证据组。"""
 
         evidence_groups = self._normalize_evidence_message_groups(
             self._load_json_list(jargon_obj.evidence_messages, "evidence_messages")
@@ -318,9 +309,9 @@ class JargonMiner:
                 context_lines: List[str] = []
                 valid_group: JargonEvidenceMessageGroup = []
                 for ref, message in zip(group, messages, strict=True):
-                    if self._is_emoji_only_message(message):
-                        continue
-                    message_text = (message.processed_plain_text or "").strip()
+                    # 与候选提取共用文字白名单，避免完整渲染文本重新带入引用或媒体描述。
+                    sequence = MessageUtils.from_db_record_msg_to_MaiSeq(message.raw_content)
+                    message_text = extract_learning_text(sequence)
                     if message_text:
                         context_lines.append(f"[{len(context_lines) + 1}] {message_text}")
                         valid_group.append(ref)
@@ -417,12 +408,14 @@ class JargonMiner:
             logger.debug(f"jargon {content} 是手动记录，跳过含义推断")
             return
 
-        raw_content_list, cleaned_evidence_messages, evidence_changed = self._load_evidence_contexts(jargon_obj)
+        raw_content_list, cleaned_evidence_messages, evidence_changed = await asyncio.to_thread(
+            self._load_evidence_contexts, jargon_obj
+        )
         used_evidence_messages = bool(raw_content_list)
         if used_evidence_messages:
-            self._cleanup_jargon_evidence_messages(jargon_obj, None)
+            await asyncio.to_thread(self._cleanup_jargon_evidence_messages, jargon_obj, None)
         elif evidence_changed:
-            self._cleanup_jargon_evidence_messages(jargon_obj, cleaned_evidence_messages)
+            await asyncio.to_thread(self._cleanup_jargon_evidence_messages, jargon_obj, cleaned_evidence_messages)
 
         if not raw_content_list:
             logger.warning(f"jargon {content} 没有可用证据上下文，跳过推断")
@@ -549,7 +542,7 @@ class JargonMiner:
             last_inference_count=last_inference_count,
         )
         if finalize_result.aborted:
-            logger.info(f"jargon {content} 的推断结果被 Hook 中止写回")
+            logger.info(f"jargon {content} 的推断结果中止写回：{HookAbortedError(finalize_result)}")
             return
 
         finalize_kwargs = finalize_result.kwargs
@@ -633,7 +626,7 @@ class JargonMiner:
             entries=self._serialize_jargon_entries(uniq_entries),
         )
         if before_persist_result.aborted:
-            logger.info(f"[{self.session_name}] 黑话提取结果被 Hook 中止，不写入数据库")
+            logger.info(f"[{self.session_name}] 黑话提取中止写入：{HookAbortedError(before_persist_result)}")
             return 0, 0
 
         raw_hook_entries = before_persist_result.kwargs.get("entries")
@@ -808,11 +801,10 @@ class JargonMiner:
 
     def _parse_result(self, response: str) -> Optional[Dict[str, str]]:
         try:
-            result = json.loads(response.strip())
+            result = parse_llm_json(response)
         except Exception:
             try:
-                repaired = repair_json(response.strip())
-                result = json.loads(repaired)
+                result = parse_llm_json(response, repair=True)
             except Exception as e2:
                 logger.error(f"推断结果解析失败: {e2}")
                 return None

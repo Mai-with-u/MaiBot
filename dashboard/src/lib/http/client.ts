@@ -117,7 +117,8 @@ export function createApiClient(clientOptions: ApiClientOptions): ApiClient {
 
     // 构建请求体与请求头：FormData 交给浏览器设置 multipart 边界，其余 JSON 序列化
     const isFormData = body instanceof FormData
-    const requestHeaders: HeadersInit = isFormData
+    const isBlob = body instanceof Blob
+    const requestHeaders: HeadersInit = isFormData || isBlob
       ? { ...headers }
       : { 'Content-Type': 'application/json', ...headers }
 
@@ -126,7 +127,7 @@ export function createApiClient(clientOptions: ApiClientOptions): ApiClient {
       response = await fetch(url, {
         method,
         headers: requestHeaders,
-        body: isFormData ? body : body === undefined ? undefined : JSON.stringify(body),
+        body: isFormData || isBlob ? body : body === undefined ? undefined : JSON.stringify(body),
         credentials: auth === 'cookie' ? 'include' : undefined,
         signal,
         cache,

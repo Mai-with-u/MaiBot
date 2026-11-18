@@ -133,7 +133,7 @@ export function readPluginPageTheme(probes: HTMLElement, language: string): Plug
   .maibot-button{padding:8px 16px;cursor:pointer;display:inline-flex;align-items:center;justify-content:center;gap:8px}
   .maibot-button:disabled{opacity:.5;cursor:not-allowed}
   .maibot-button:hover:not(:disabled){filter:brightness(.96)}
-  :is(.maibot-button,.maibot-input,.maibot-select):focus-visible{outline:2px solid var(--maibot-primary);outline-offset:3px}
+  :focus,:focus-visible{outline:none!important;--tw-ring-shadow:0 0 #0000!important;--tw-ring-offset-shadow:0 0 #0000!important;--tw-inset-ring-shadow:0 0 #0000!important}
   .maibot-card{padding:20px}.maibot-input,.maibot-select{padding:8px 12px;font:inherit}
   .maibot-card-header{padding-bottom:12px;margin-bottom:16px;border-bottom:1px solid var(--maibot-border);font-weight:600}
   .maibot-badge{display:inline-flex;padding:3px 8px;border:1px solid var(--maibot-border);border-radius:var(--maibot-radius);background:var(--maibot-soft);color:var(--maibot-foreground)}

@@ -1,0 +1,4 @@
+[Current environment]
+Working directory: {workspace}
+Image directory on MaiMai's host: {maibot_workspace} (synchronize remote files here before sending).
+Use agent_status when you need runtime status.

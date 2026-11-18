@@ -60,7 +60,7 @@ class APIProvider(ConfigBase):
             "x-widget": "input",
         },
     )
-    """API密钥。对于不需要鉴权的兼容端点，可将 `auth_type` 设为 `none`。"""
+    """API密钥。留空时使用无鉴权模式，也可显式将 `auth_type` 设为 `none`。"""
 
     client_type: str = Field(
         default="openai",
@@ -187,26 +187,30 @@ class APIProvider(ConfigBase):
     )
     """重试间隔 (如果API调用失败, 重试的间隔时间, 单位: 秒)"""
 
-    def model_post_init(self, context: Any = None) -> None:
-        """执行 API 提供商配置的后置校验。
 
-        Args:
-            context: Pydantic 传入的上下文对象。
+def provider_configuration_errors(provider: APIProvider) -> List[str]:
+    """收集调用所需的供应商配置问题，供启动诊断、WebUI 和请求入口共用。"""
+    errors: List[str] = []
+    if not provider.base_url.strip() and provider.client_type != "gemini":
+        errors.append(t("config.api_base_url_empty"))
+    if not provider.name.strip():
+        errors.append(t("config.api_provider_name_empty"))
+    if not provider.client_type.strip():
+        errors.append("client_type 不能为空")
+    if provider.auth_type == OpenAICompatibleAuthType.HEADER and not provider.auth_header_name.strip():
+        errors.append("当 auth_type=header 时，auth_header_name 不能为空")
+    if provider.auth_type == OpenAICompatibleAuthType.QUERY and not provider.auth_query_name.strip():
+        errors.append("当 auth_type=query 时，auth_query_name 不能为空")
+    if provider.auth_type not in {auth.value for auth in OpenAICompatibleAuthType}:
+        errors.append(f"不支持的 auth_type：{provider.auth_type}")
+    return errors
 
-        Raises:
-            ValueError: 当配置项缺失或组合不合法时抛出。
-        """
-        if self.auth_type != OpenAICompatibleAuthType.NONE and not self.api_key:
-            raise ValueError(t("config.api_key_empty"))
-        if not self.base_url and self.client_type != "gemini":  # TODO: 允许gemini使用base_url
-            raise ValueError(t("config.api_base_url_empty"))
-        if not self.name:
-            raise ValueError(t("config.api_provider_name_empty"))
-        if self.auth_type == OpenAICompatibleAuthType.HEADER and not self.auth_header_name.strip():
-            raise ValueError("当 auth_type=header 时，auth_header_name 不能为空")
-        if self.auth_type == OpenAICompatibleAuthType.QUERY and not self.auth_query_name.strip():
-            raise ValueError("当 auth_type=query 时，auth_query_name 不能为空")
-        super().model_post_init(context)
+
+def validate_provider_for_request(provider: APIProvider) -> None:
+    """创建客户端前拒绝不完整的配置。"""
+    errors = provider_configuration_errors(provider)
+    if errors:
+        raise ValueError(f"供应商 {provider.name} 配置无效：" + "；".join(errors))
 
 
 class ModelPricePeriod(ConfigBase):
@@ -278,11 +282,6 @@ class ModelInfo(ConfigBase):
     )
     """输入价格 (用于API调用统计, 单位：元/ M token) (可选, 若无该字段, 默认值为0)"""
 
-    cache: bool = Field(
-        default=False,
-    )
-    """遗留兼容字段，不参与任何逻辑：是否按缓存价计费由 cache_price_in 决定，统计页是否展示缓存用量由服务商是否在响应中返回缓存字段自动探测。"""
-
     cache_price_in: float = Field(
         default=0.0,
         ge=0,
@@ -351,6 +350,27 @@ class ModelInfo(ConfigBase):
     )
     """是否为多模态模型。开启后表示该模型支持视觉输入。"""
 
+    max_images: int = Field(
+        default=0,
+        ge=0,
+        json_schema_extra={"label": {"zh_CN": "最大图片数量"}, "x-widget": "input", "advanced": True},
+    )
+    """单次请求的最大图片数量（包含长图切片），0 表示不限制。超限时保留最近的图片。"""
+
+    image_max_side: int = Field(
+        default=8000,
+        ge=1,
+        json_schema_extra={"label": {"zh_CN": "图片最大边长（像素）"}, "x-widget": "input", "advanced": True},
+    )
+    """图片长边上限，超限图片按比例缩小或分段。"""
+
+    image_min_side: int = Field(
+        default=1,
+        ge=1,
+        json_schema_extra={"label": {"zh_CN": "图片最小边长（像素）"}, "x-widget": "input", "advanced": True},
+    )
+    """图片短边下限，小图按比例放大；若受长边上限约束，则补边。不得超过最大边长。"""
+
     extra_params: dict[str, Any] = Field(
         default_factory=dict,
         json_schema_extra={
@@ -365,14 +385,13 @@ class ModelInfo(ConfigBase):
     Gemini 客户端会按自身支持的字段筛选并映射到 GenerateContentConfig、EmbedContentConfig 或音频请求配置中。"""
 
     def model_post_init(self, context: Any = None):
+        if self.image_min_side > self.image_max_side:
+            raise ValueError("图片最小边长不得超过最大边长")
         self.model_identifier = self.model_identifier.strip()
         if not self.model_identifier:
             raise ValueError(t("config.model_identifier_empty_generic"))
         if not self.name:
             raise ValueError(t("config.model_name_empty"))
-        if not self.api_provider:
-            raise ValueError(t("config.model_api_provider_empty"))
-
         # 将跨午夜的时段拆开，统一检查半开区间是否重叠。
         intervals: List[Tuple[str, str, int]] = []
         for index, period in enumerate(self.price_periods, start=1):
@@ -476,15 +495,6 @@ class ModelTaskConfig(ConfigBase):
     )
     """记忆模型配置，用于长期记忆总结、抽取、写回等高记忆任务；留空时由调用方按需回退"""
 
-    mid_memory: TaskConfig = Field(
-        default_factory=TaskConfig,
-        json_schema_extra={
-            "x-widget": "custom",
-            "advanced": True,
-        },
-    )
-    """聊天回想模型配置；留空时自动继用 fast_model 模型，fast_model 留空时使用 utils 模型"""
-
     utils: TaskConfig = Field(
         default_factory=TaskConfig,
         json_schema_extra={
@@ -510,15 +520,6 @@ class ModelTaskConfig(ConfigBase):
         },
     )
     """快速模型配置，用于表达方式选择、回复断句等需要快速完成的小任务，建议选择响应快的模型；留空时用 utils 模型"""
-
-    emoji: TaskConfig = Field(
-        default_factory=TaskConfig,
-        json_schema_extra={
-            "x-widget": "custom",
-            "advanced": True,
-        },
-    )
-    """表情包发送模型配置；留空时保持原有 planner/vlm 选择逻辑"""
 
     vlm: TaskConfig = Field(
         default_factory=TaskConfig,

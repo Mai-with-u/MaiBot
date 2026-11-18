@@ -3,13 +3,16 @@
 from pathlib import Path
 from typing import Any, Dict, List, Optional
 from urllib.parse import urlparse
+from uuid import uuid4
 
 import asyncio
+import json
 import os
 import shutil
 import subprocess
 
 from src.common.git_source import GitSource
+from src.common.code_update import backup_code, git, replace_code, restore_code, update_conflict
 from src.common.logger import get_logger
 from src.common.network_security import validate_public_url
 
@@ -53,13 +56,6 @@ async def _run_git_process(cmd: List[str], cwd: Optional[Path] = None) -> subpro
         if isinstance(exc, asyncio.TimeoutError):
             raise subprocess.TimeoutExpired(cmd, 300) from exc
         raise
-
-
-def _validate_custom_outbound_url(url: str) -> str:
-    try:
-        return validate_public_url(url, allow_fake_ip=True)
-    except ValueError as e:
-        raise ValueError(f"目标 URL 非法: {e}") from e
 
 
 def set_update_progress_callback(callback):
@@ -121,6 +117,8 @@ class GitMirrorService:
         branch: Optional[str] = None,
         remote_url: Optional[str] = None,
         mirror_id: Optional[str] = None,
+        force: bool = False,
+        expected_commit: Optional[str] = None,
     ) -> Dict[str, Any]:
         """
         在已安装插件目录内执行 Git 更新。
@@ -150,22 +148,17 @@ class GitMirrorService:
                 return {"success": False, "error": "仓库 URL 不允许包含查询参数或片段", "status_code": 400}
             parts = parsed.path.strip("/").removesuffix(".git").split("/")
             if parsed.scheme == "https" and parsed.netloc.lower() == "github.com" and len(parts) == 2:
-                return await self._pull_github_repository(repository_path, branch, parts[0], parts[1], mirror_id)
+                return await self._pull_github_repository(repository_path, branch, parts[0], parts[1], mirror_id, force, expected_commit)
 
         commands: List[List[str]] = []
         if remote_url:
             try:
-                remote_url = _validate_custom_outbound_url(remote_url)
+                remote_url = validate_public_url(remote_url, require_public_network=False)
             except ValueError as e:
                 return {"success": False, "error": str(e), "status_code": 400}
             commands.append(["git", "remote", "set-url", "origin", remote_url])
 
         commands.append(["git", "fetch", "origin", "--prune"])
-        if branch:
-            commands.append(["git", "checkout", branch])
-            commands.append(["git", "pull", "--ff-only", "origin", branch])
-        else:
-            commands.append(["git", "pull", "--ff-only"])
 
         executed: List[str] = []
 
@@ -188,10 +181,46 @@ class GitMirrorService:
                     "status_code": 500,
                 }
 
-        return {"success": True, "path": str(repository_path), "branch": branch or "current", "commands": executed}
+        target = f"origin/{branch}" if branch else "@{upstream}"
+        return await self._apply_plugin_code(repository_path, target, force, expected_commit)
+
+    async def _apply_plugin_code(
+        self, repository_path: Path, target: str, force: bool, expected_commit: Optional[str] = None,
+    ) -> Dict[str, Any]:
+        def apply() -> Dict[str, Any]:
+            commit = git(repository_path, "rev-parse", target).strip()
+            if force and commit != expected_commit:
+                return {"success": False, "status_code": 409, "error": "目标版本已变化，请重新发起更新并确认"}
+            # 后续始终使用固定提交，其他 fetch 不能改变本次目标。
+            selected = commit
+            installed = json.loads((repository_path / "_manifest.json").read_text(encoding="utf-8"))
+            manifest = json.loads(git(repository_path, "show", f"{selected}:_manifest.json"))
+            if manifest["id"] != installed["id"]:
+                return {"success": False, "status_code": 400, "error": "新版本插件 ID 与已安装插件不一致"}
+            conflict = update_conflict(repository_path, repository_path, selected)
+            if conflict and not force:
+                return {"success": False, "status_code": 409, "error": conflict["message"], "conflict": conflict}
+            backup = repository_path.parent / ".update_backups" / f"{repository_path.name}.{uuid4().hex}"
+            backup_code(repository_path, backup, selected)
+            try:
+                replace_code(repository_path, selected)
+            except Exception:
+                restore_code(repository_path, backup)
+                raise
+            return {"success": True, "path": str(repository_path), "backup_path": str(backup)}
+
+        # 一旦开始写文件，即使 HTTP 请求取消也要等待替换或恢复完成。
+        task = asyncio.create_task(asyncio.to_thread(apply))
+        try:
+            return await asyncio.shield(task)
+        except asyncio.CancelledError:
+            await task
+            raise
 
     async def _pull_github_repository(
-        self, repository_path: Path, branch: Optional[str], owner: str, repo: str, mirror_id: Optional[str]
+        self, repository_path: Path, branch: Optional[str], owner: str, repo: str, mirror_id: Optional[str],
+        force: bool = False,
+        expected_commit: Optional[str] = None,
     ) -> Dict[str, Any]:
         executed: List[str] = []
         try:
@@ -207,10 +236,7 @@ class GitMirrorService:
             from src.plugin_market.sources import download_source
 
             source = await asyncio.to_thread(download_source)
-            try:
-                url = await asyncio.to_thread(_validate_custom_outbound_url, source.clone_url(owner, repo))
-            except ValueError as exc:
-                return {"success": False, "error": str(exc), "mirror_used": source.id, "status_code": 400}
+            url = source.clone_url(owner, repo)
             cmd = ["git", "fetch", "--no-tags", url, f"refs/heads/{branch}"]
             executed.append(" ".join(cmd))
             fetched = await _run_git_process(cmd, cwd=repository_path)
@@ -218,14 +244,7 @@ class GitMirrorService:
                 return {"success": False, "error": f"Git fetch 失败: {fetched.stderr.strip() or fetched.stdout.strip()}",
                         "commands": executed, "mirror_used": source.id, "status_code": 502}
             # FETCH_HEAD 是本次实际下载的分支；不改变 origin 身份或触碰用户配置文件。
-            for cmd in (["git", "checkout", branch], ["git", "merge", "--ff-only", "FETCH_HEAD"]):
-                executed.append(" ".join(cmd))
-                result = await _run_git_process(cmd, cwd=repository_path)
-                if result.returncode:
-                    return {"success": False, "error": f"Git 更新失败: {result.stderr.strip() or result.stdout.strip()}",
-                            "commands": executed, "mirror_used": source.id, "status_code": 409}
-            return {"success": True, "path": str(repository_path), "branch": branch,
-                    "commands": executed, "mirror_used": source.id}
+            return await self._apply_plugin_code(repository_path, "FETCH_HEAD", force, expected_commit)
         except (FileNotFoundError, subprocess.TimeoutExpired) as exc:
             return {"success": False, "error": str(exc), "commands": executed}
 
@@ -267,7 +286,7 @@ class GitMirrorService:
 
         if custom_url:
             try:
-                custom_url = _validate_custom_outbound_url(custom_url)
+                custom_url = validate_public_url(custom_url, require_public_network=False)
             except ValueError as e:
                 return {
                     "success": False,
@@ -314,19 +333,8 @@ class GitMirrorService:
         total_mirrors: Optional[int] = None,
     ) -> Dict[str, Any]:
         """从指定镜像源克隆仓库"""
-        try:
-            url = await asyncio.to_thread(_validate_custom_outbound_url, source.clone_url(owner, repo))
-        except ValueError as e:
-            return {
-                "success": False,
-                "error": str(e),
-                "mirror_used": source.id,
-                "attempts": 0,
-                "status_code": 400,
-            }
-
         return await self._clone_with_url(
-            url,
+            source.clone_url(owner, repo),
             target_path,
             branch,
             depth,

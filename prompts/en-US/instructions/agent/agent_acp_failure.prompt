@@ -1,0 +1,5 @@
+[Agent task failure notification]
+Agent: {agent_name}
+Tasks: {task_ids}
+Error: {error}
+This turn has ended. Existing output and actions are preserved; the original task was not automatically resubmitted. Tell the user about the failure. After fixing the model or configuration, the user can send “continue” or a new request. Do not automatically retry or relay messages back and forth in response to this notification.

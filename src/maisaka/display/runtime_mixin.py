@@ -13,6 +13,7 @@ from rich.text import Text
 from src.chat.heart_flow.heartFC_utils import CycleDetail
 from src.cli.console import console
 from src.common.logger import get_logger
+from src.common.runtime_context import runtime_context
 from src.config.config import global_config
 from src.llm_models.payload_content.context_item import AssistantMessageItem, ContextItemMeta, ContextTextPart
 
@@ -46,15 +47,16 @@ class MaisakaRuntimeDisplayMixin:
         planner_prompt_section: Optional[RenderableType] = None,
         planner_extra_lines: Optional[list[str]] = None,
         tool_prompt_panels: Optional[Dict[str, List[RenderableType]]] = None,
+        scope_lines: Optional[List[str]] = None,
     ) -> None:
         """在终端展示当前聊天流本轮 cycle 的最终结果。"""
         if not global_config.debug.show_maisaka_thinking:
             return
 
-        body_lines = [
+        body_lines = scope_lines if scope_lines is not None else [
             f"聊天流名称：{getattr(self, 'session_name', self.session_id)}",
             f"聊天流ID：{self.session_id}",
-            f"当前回复频率：{self._format_reply_frequency_for_display(self._get_effective_reply_frequency())}",
+            f"外部查看频率：{self._format_reply_frequency_for_display(self._get_effective_reply_frequency())}",
         ]
 
         panel_title = "MaiSaka 循环"
@@ -478,6 +480,8 @@ class MaisakaRuntimeDisplayMixin:
         prompt_border_style = "bright_yellow"
         metrics = detail.get("metrics")
         preview_metadata = self._build_prompt_preview_metadata_from_tool_metrics(metrics)
+        if isinstance(detail.get("source_planner_uri"), str):
+            preview_metadata["source_planner_uri"] = detail["source_planner_uri"]
         output_text = str(detail.get("output_text") or "").strip()
         output_items = detail.get("output_items") if isinstance(detail.get("output_items"), list) else None
         generation_attempts = (
@@ -485,7 +489,17 @@ class MaisakaRuntimeDisplayMixin:
         )
         prompt_text = str(detail.get("prompt_text") or "").strip()
         request_messages = detail.get("request_messages") if isinstance(detail.get("request_messages"), list) else None
-        if prompt_text or request_messages:
+        saved_preview_uri = detail.get("prompt_html_uri")
+        if isinstance(saved_preview_uri, str) and saved_preview_uri:
+            if saved_preview_uri.startswith("/"):
+                saved_preview_uri = runtime_context().public_base_url + saved_preview_uri
+            parts.append(Panel(
+                Text("查看已保存的推理记录", style=f"link {saved_preview_uri}"),
+                title=self._get_tool_detail_labels(tool_name)["prompt_title"],
+                border_style=prompt_border_style,
+                padding=(0, 1),
+            ))
+        elif prompt_text or request_messages:
             prompt_access_panel = self._build_tool_prompt_access_panel(
                 tool_name=tool_name,
                 prompt_text=prompt_text,
@@ -744,4 +758,4 @@ class MaisakaRuntimeDisplayMixin:
         )
 
     def _log_internal_loop_cancelled(self) -> None:
-        logger.info(f"{self.log_prefix} Maisaka 内部循环已取消")
+        logger.debug(f"{self.log_prefix} Maisaka 内部循环已取消")

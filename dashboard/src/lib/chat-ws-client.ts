@@ -23,6 +23,7 @@ export interface ChatImagePayload {
 }
 
 interface ChatSendOptions {
+  files?: Array<{ file_ref: string; name: string }>
   images?: ChatImagePayload[]
   emojis?: ChatImagePayload[]
 }
@@ -230,6 +231,7 @@ class ChatWsClient {
         content,
         images: options.images ?? [],
         emojis: options.emojis ?? [],
+        files: options.files ?? [],
         user_name: userName,
       },
     })

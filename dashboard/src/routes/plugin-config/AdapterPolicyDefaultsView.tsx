@@ -27,10 +27,7 @@ export function AdapterPolicyDefaultsView({
         className="flex flex-wrap items-center justify-between gap-4 p-4"
       >
         <div className="min-w-0">
-          <h2 className="text-base font-medium">全局默认规则</h2>
-          <p className="text-muted-foreground mt-1 text-xs">
-            所有适配器默认遵循；单个适配器可在详情里覆盖
-          </p>
+          <h2 className="text-base font-medium">黑白名单设置</h2>
         </div>
         <div className="flex flex-wrap items-center gap-4 sm:gap-5">
           {error ? (

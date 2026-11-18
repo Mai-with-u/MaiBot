@@ -20,6 +20,7 @@ export interface ChatScopeItem {
   descriptionTitle?: string
   disabled?: boolean
   meta?: ReactNode
+  trailing?: ReactNode
 }
 
 interface ChatScopeFilterPanelProps<TMode extends string> {
@@ -30,6 +31,7 @@ interface ChatScopeFilterPanelProps<TMode extends string> {
   selectedItemId?: string | number | null
   onItemSelect?: (id: string | number) => void
   title?: string
+  titleActions?: ReactNode
   titleMeta?: ReactNode
   density?: 'default' | 'compact'
   emptyContent?: ReactNode
@@ -52,6 +54,7 @@ export function ChatScopeFilterPanel<TMode extends string>({
   onItemSelect,
   title,
   titleMeta,
+  titleActions,
   density = 'default',
   emptyContent,
   footer,
@@ -90,6 +93,7 @@ export function ChatScopeFilterPanel<TMode extends string>({
                       {titleMeta}
                     </span>
                   )}
+                  {titleActions}
                 </>
               )}
               {onCollapsedChange && (
@@ -160,10 +164,15 @@ export function ChatScopeFilterPanel<TMode extends string>({
                         density={density}
                         disabled={item.disabled}
                         title={item.title}
+                        className={
+                          item.trailing
+                            ? 'grid grid-cols-[minmax(0,1fr)_auto] items-center gap-x-2'
+                            : undefined
+                        }
                       >
-                        <span className="flex min-w-0 items-center gap-2">
+                        <span className="col-start-1 flex min-w-0 items-center gap-2">
                           <span className="min-w-0 flex-1 truncate font-medium">{item.label}</span>
-                          {item.meta != null && (
+                          {item.meta != null && !item.trailing && (
                             <span className="shrink-0 text-xs tabular-nums opacity-75">
                               {item.meta}
                             </span>
@@ -172,12 +181,22 @@ export function ChatScopeFilterPanel<TMode extends string>({
                         {item.description && (
                           <span
                             className={cn(
-                              'block truncate text-xs',
+                              'col-start-1 block truncate text-xs',
                               active ? 'text-current opacity-75' : 'text-muted-foreground'
                             )}
                             title={item.descriptionTitle}
                           >
                             {item.description}
+                          </span>
+                        )}
+                        {item.trailing && (
+                          <span className="col-start-2 row-span-2 row-start-1 flex flex-col items-end gap-0.5">
+                            {item.meta != null && (
+                              <span className="text-xs leading-3 tabular-nums opacity-75">
+                                {item.meta}
+                              </span>
+                            )}
+                            {item.trailing}
                           </span>
                         )}
                       </SelectionListItem>

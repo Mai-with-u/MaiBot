@@ -140,12 +140,10 @@ export const extensionIcons = {
 }
 export const extensionPath = (pluginId: string, pageId: string) =>
   `/extensions/${encodeURIComponent(pluginId)}/${encodeURIComponent(pageId)}`
-export const extensionWorkspace = (pluginId: string) => `plugin:${pluginId}` as const
 
 interface Preferences {
   hidden: string[]
   order: string[]
-  workspaceOrder?: string[]
 }
 interface RegistryState {
   extensions: WebUIExtension[]
@@ -180,12 +178,9 @@ function readPreferences(): Preferences {
       Array.isArray(parsed.hidden) &&
       parsed.hidden.every((item: unknown) => typeof item === 'string') &&
       Array.isArray(parsed.order) &&
-      parsed.order.every((item: unknown) => typeof item === 'string') &&
-      (parsed.workspaceOrder === undefined ||
-        (Array.isArray(parsed.workspaceOrder) &&
-          parsed.workspaceOrder.every((item: unknown) => typeof item === 'string')))
+      parsed.order.every((item: unknown) => typeof item === 'string')
     )
-      return parsed
+      return { hidden: parsed.hidden, order: parsed.order }
   } catch {
     /* 损坏的本地显示偏好不影响插件注册和后端权限。 */
   }
@@ -283,25 +278,14 @@ export function usePluginWebUI(enabled = false): RegistryState {
 
 export function visibleExtensions(registry: RegistryState): WebUIExtension[] {
   const { hidden, order } = registry.preferences
-  return registry.extensions
-    .filter((extension) => !hidden.includes(extension.plugin_id))
-    .sort((a, b) => {
-      const rank = (id: string) => {
-        const index = order.indexOf(id)
-        return index === -1 ? order.length : index
-      }
-      return rank(a.plugin_id) - rank(b.plugin_id) || a.plugin_id.localeCompare(b.plugin_id)
-    })
+  return orderExtensions(
+    registry.extensions.filter((extension) => !hidden.includes(extension.plugin_id)),
+    order
+  )
 }
 
-/** 顶部工作区独立排序；未设置时沿用原有页面顺序。 */
-export function orderedWorkspaceExtensions(
-  extensions: WebUIExtension[],
-  order: string[]
-): WebUIExtension[] {
-  return extensions
-    .filter((extension) => extension.pages.some((page) => page.placement === 'workspace'))
-    .sort((a, b) => {
+export function orderExtensions(extensions: WebUIExtension[], order: string[]): WebUIExtension[] {
+  return [...extensions].sort((a, b) => {
       const rank = (id: string) => {
         const index = order.indexOf(id)
         return index === -1 ? order.length : index

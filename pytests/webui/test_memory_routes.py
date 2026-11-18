@@ -9,7 +9,6 @@ import pytest
 
 from src.services.memory_service import MemorySearchResult
 from src.A_memorix.core.storage.metadata_store import MetadataStore
-from src.webui.dependencies import require_auth
 from src.webui.routers import memory as memory_router_module
 from src.webui.routers.memory import compat_router
 from src.webui.routes import router as main_router
@@ -208,7 +207,6 @@ class _CountingTimelineMetadataStore(_FakeMemoryMetadataStore):
 @pytest.fixture
 def client() -> TestClient:
     app = FastAPI()
-    app.dependency_overrides[require_auth] = lambda: "ok"
     app.include_router(main_router)
     app.include_router(compat_router)
     return TestClient(app)

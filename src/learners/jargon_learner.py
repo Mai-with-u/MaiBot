@@ -1,5 +1,6 @@
 from collections import Counter
 from dataclasses import dataclass
+from html import escape
 from typing import TYPE_CHECKING, List, Optional, Sequence, Tuple
 
 import asyncio
@@ -7,7 +8,6 @@ import re
 
 from src.chat.utils.utils import is_bot_self
 from src.common.data_models.llm_service_data_models import LLMResponseResult
-from src.common.data_models.message_component_data_model import EmojiComponent, MessageSequence, ReplyComponent
 from src.common.logger import get_logger
 from src.config.config import global_config
 from src.llm_models.payload_content.context_item import ContextItem, ContextItemBuilder, RoleType
@@ -17,6 +17,7 @@ from src.prompt.prompt_manager import prompt_manager
 from src.services.llm_service import LLMServiceClient
 
 from .expression_utils import parse_jargon_response
+from .learning_text import extract_learning_text
 from .pending_learning_buffer import PendingLearningBuffer
 from .jargon_miner import JargonEntry, JargonEvidenceMessageGroup, JargonMiner
 
@@ -29,8 +30,6 @@ logger = get_logger("jargon_learner")
 
 jargon_learn_model = LLMServiceClient(task_name="learner", request_type="jargon.learner")
 MESSAGE_OPEN_TAG_PATTERN = re.compile(r"^<message\b(?P<attrs>[^>]*)>", re.IGNORECASE | re.DOTALL)
-GROUP_CARD_ATTR_PATTERN = re.compile(r'\s+group_card\s*=\s*"[^"]*"', re.IGNORECASE)
-EMOJI_TEXT_PATTERN = re.compile(r"\[(?:消息类型\]表情包|表情包[^\]]*\])")
 
 
 def _is_learnable_session_message(message: "SessionMessage") -> bool:
@@ -158,7 +157,7 @@ class JargonLearner:
     def _extract_learning_sources_from_context(
         context_messages: Sequence["LLMContextMessage"],
     ) -> List[JargonLearningSourceItem]:
-        """提取学习素材，直接过滤模型输出、机器人发言和表情包消息。"""
+        """提取用户本次文字正文，过滤模型输出、机器人发言和无文字消息。"""
 
         from src.maisaka.context.messages import SessionBackedMessage
 
@@ -181,43 +180,16 @@ class JargonLearner:
         return source_items
 
     @staticmethod
-    def _clean_learning_content(content: str) -> str:
-        """清理已渲染的用户消息；去掉表情包后正文为空则丢弃。"""
-
-        content = content.strip()
-        header = MESSAGE_OPEN_TAG_PATTERN.match(content)
-        if header and re.search(r'\bis_self_message="true"', header.group("attrs"), re.IGNORECASE):
-            return ""
-        body = content[header.end():] if header else content
-        body = EMOJI_TEXT_PATTERN.sub("", body).strip()
-        if not body:
-            return ""
-        if header:
-            attrs = GROUP_CARD_ATTR_PATTERN.sub("", header.group("attrs"))
-            return f"<message{attrs}>\n{body}"
-        return body
-
-    @staticmethod
     def _build_session_message_learning_content(message: "SessionMessage") -> str:
-        """只渲染用户消息，过滤表情包组件并省略群名片。"""
+        """只读取用户本次顶层文字并省略群名片，不触发或等待媒体解析。"""
 
-        from src.maisaka.context.message_adapter import build_visible_text_from_sequence
-        from src.maisaka.context.planner_messages import build_planner_prefix
-
-        sequence = MessageSequence([
-            component for component in message.raw_message.components
-            if not isinstance(component, (EmojiComponent, ReplyComponent))
-        ])
-        body = build_visible_text_from_sequence(sequence).strip()
+        body = extract_learning_text(message.raw_message)
         if not body:
             return ""
         user_info = message.message_info.user_info
-        prefix = build_planner_prefix(
-            timestamp=message.timestamp,
-            user_name=user_info.user_nickname or user_info.user_id,
-            include_message_id=False,
-        )
-        return JargonLearner._clean_learning_content(prefix + body)
+        user_name = escape(user_info.user_nickname or user_info.user_id, quote=True)
+        prefix = f'<message user="{user_name}">\n'
+        return prefix + body
 
     async def _learn_from_sources(
         self,
@@ -293,7 +265,7 @@ class JargonLearner:
             self.learning_status, self.learning_detail = "skipped", "没有可用于黑话学习的消息素材"
             return False
 
-        readable_message = "聊天上下文将在后续多条 user message 中给出；请以每条消息中的 source_id 作为来源行编号。"
+        readable_message = "聊天上下文将在后续多条 user message 中给出；请以每条消息中的 id 作为来源行编号。"
         prompt_template = prompt_manager.get_prompt("learn_jargon")
         prompt_template.add_context("bot_name", global_config.bot.nickname)
         prompt_template.add_context("chat_str", readable_message)
@@ -387,16 +359,12 @@ class JargonLearner:
     @staticmethod
     def _build_learning_source_content(source_id: int, source_item: JargonLearningSourceItem) -> str:
         """来源元信息只从真实消息生成，不接受素材文本声明的身份与会话。"""
-        from src.maisaka.context.planner_messages import build_planner_prefix
-
         original = source_item.original_message
         user_info = original.message_info.user_info
-        prefix = build_planner_prefix(
-            timestamp=original.timestamp, user_name=user_info.user_nickname or user_info.user_id,
-            include_message_id=False,
-        )
+        user_name = escape(user_info.user_nickname or user_info.user_id, quote=True)
+        prefix = f'<message id="{source_id}" user="{user_name}">\n'
         body = MESSAGE_OPEN_TAG_PATTERN.sub("", source_item.content.strip(), count=1).strip()
-        return prefix.replace("<message", f'<message source_id="{source_id}"', 1) + body
+        return prefix + body
 
     @staticmethod
     def _build_source_item_from_session_message(message: "SessionMessage") -> JargonLearningSourceItem:
@@ -417,7 +385,7 @@ class JargonLearner:
             .add_text_content(
                 f"{system_prompt}\n\n"
                 "注意：聊天上下文会在后续多条 user message 中给出。真实聊天消息会带有 "
-                '<message source_id="..."> 属性，source_id 是本轮学习的来源编号。'
+                '<message id="..."> 属性，id 是本轮学习的来源编号。'
             )
             .build()
         ]
@@ -585,6 +553,16 @@ class JargonLearner:
             if line_index < 0 or line_index >= len(messages):
                 logger.warning(f"黑话条目 source_id 超出范围：content={content}, source_id={source_id}")
                 skipped_entries.append({"content": content, "source_id": source_id, "reason": "source_id_out_of_range"})
+                continue
+
+            # 在候选和缓存命中汇合处校验真实来源，配置变更也能作用于待处理批次。
+            original_message = messages[line_index].original_message
+            if not _is_learnable_session_message(original_message) or any(
+                user.platform == original_message.platform
+                and user.user_id == original_message.message_info.user_info.user_id
+                for user in global_config.jargon.learning_blacklist
+            ):
+                skipped_entries.append({"content": content, "source_id": source_id, "reason": "excluded_source"})
                 continue
 
             start_idx = max(0, line_index - 3)

@@ -9,7 +9,7 @@ from datetime import datetime, timedelta
 from pathlib import Path
 from typing import Annotated, List, Literal
 
-from fastapi import APIRouter, Depends, HTTPException, Query
+from fastapi import APIRouter, HTTPException, Query
 from fastapi.responses import FileResponse
 from pydantic import BaseModel, Field
 from sqlalchemy import func, inspect, text
@@ -38,9 +38,8 @@ from src.common.utils.image_path import (
 )
 from src.config.config import MMC_VERSION
 from src.plugin_runtime.update_compatibility_notice import collect_update_incompatible_plugins
-from src.webui.dependencies import require_auth
 
-router = APIRouter(prefix="/system", tags=["system"], dependencies=[Depends(require_auth)])
+router = APIRouter(prefix="/system", tags=["system"])
 logger = get_logger("webui_system")
 
 _start_time = time.time()
@@ -416,8 +415,10 @@ def _get_path_summary(path: Path) -> tuple[int, int, float]:
     if path.is_file():
         try:
             file_stat = path.stat()
-        except OSError:
-            logger.warning(f"读取文件信息失败: {path}")
+        except FileNotFoundError:
+            return 0, 0, 0.0
+        except OSError as exc:
+            logger.warning(f"读取文件信息失败: {path}, error={exc}")
             return 0, 0, 0.0
         return 1, file_stat.st_size, file_stat.st_mtime
 
@@ -427,8 +428,11 @@ def _get_path_summary(path: Path) -> tuple[int, int, float]:
     for file_path in _iter_files(path):
         try:
             file_stat = file_path.stat()
-        except OSError:
-            logger.warning(f"读取目录文件信息失败: {file_path}")
+        except FileNotFoundError:
+            # 目录扫描后文件可能被缓存清理任务删除，正常跳过。
+            continue
+        except OSError as exc:
+            logger.warning(f"读取目录文件信息失败: {file_path}, error={exc}")
             continue
         file_count += 1
         total_size += file_stat.st_size
@@ -610,6 +614,8 @@ def _build_cache_image_items(target: CacheImageTarget) -> list[LocalCacheImageIt
             file_stat = file_path.stat()
             resolved_path = file_path.resolve()
             relative_path = resolved_path.relative_to(root_path).as_posix()
+        except FileNotFoundError:
+            continue
         except (OSError, RuntimeError, ValueError) as exc:
             logger.warning(f"读取缓存图片信息失败: {file_path}, error={exc}")
             continue
@@ -686,8 +692,10 @@ def _get_files_stats(files: list[Path]) -> tuple[int, int, float]:
     for file_path in files:
         try:
             file_stat = file_path.stat()
-        except OSError:
-            logger.warning(f"读取缓存文件信息失败: {file_path}")
+        except FileNotFoundError:
+            continue
+        except OSError as exc:
+            logger.warning(f"读取缓存文件信息失败: {file_path}, error={exc}")
             continue
 
         file_count += 1
@@ -803,8 +811,10 @@ def _get_database_files() -> list[DatabaseFileStats]:
         if exists:
             try:
                 size = db_path.stat().st_size
-            except OSError:
-                logger.warning(f"读取数据库文件大小失败: {db_path}")
+            except FileNotFoundError:
+                exists = False
+            except OSError as exc:
+                logger.warning(f"读取数据库文件大小失败: {db_path}, error={exc}")
         result.append(DatabaseFileStats(path=str(db_path), exists=exists, size=size))
     return result
 
@@ -1427,7 +1437,11 @@ def _delete_database_records(
 
 
 async def _stop_runtime_before_restart() -> None:
-    """WebUI 重启前主动停止插件运行时，避免遗留 runner 子进程。"""
+    """WebUI 重启前停止外接 Agent 和插件 runner。"""
+    from src.agent.service import agent_service
+
+    # 后续 os._exit 不执行 finally，先保存 Agent 状态并断开连接。
+    await agent_service.stop()
     try:
         from src.core.event_bus import event_bus
         from src.core.types import EventType

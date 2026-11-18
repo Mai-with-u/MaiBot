@@ -119,7 +119,7 @@ def measure_request_sections(
         _accumulate(sections, SECTION_SYSTEM_PROMPT, measure_item_chars(item), 1)
 
     # 历史条数以构建时的边界为准；hook 改写 items 后按实际长度收敛，避免越界分类
-    available_history_count = max(len(items) - system_item_count, 0)
+    available_history_count = len(items) - system_item_count
     resolved_history_count = min(max(history_item_count, 0), available_history_count)
     history_items = items[system_item_count : system_item_count + resolved_history_count]
     for item in history_items:

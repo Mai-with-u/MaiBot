@@ -27,6 +27,8 @@ async def resolve_context_image(
         if isinstance(message, ContentContextMessage)
     )
     source_id = alias_map.get(source_id, source_id)
+    reference = (f"media_index={source_id}" if source_id.startswith("tool_result:")
+                 else f"msg_id={to_display_message_id(source_id)}")
 
     # 真实 IM、插件插入和工具返回的图文统一通过内容类型读取。
     context_message = next(
@@ -37,7 +39,9 @@ async def resolve_context_image(
         None,
     )
     if context_message is None:
-        raise ValueError(f"没有找到消息：msg_id={to_display_message_id(source_id)}")
+        if source_id.startswith("tool_result:"):
+            raise ValueError(f"没有找到工具媒体：{reference}。请使用上下文实际提供的图片索引；文本或 SVG 源码不是图片附件。")
+        raise ValueError(f"没有找到消息：{reference}")
 
     # 保留原始图片序号；不能过滤加载失败的图片，否则会发送另一张图。
     images = [component for component in context_message.raw_message.components if isinstance(component, ImageComponent)]
@@ -47,5 +51,5 @@ async def resolve_context_image(
     if not image.binary_data:
         await image.load_image_binary()
     if not image.binary_data:
-        raise ValueError(f"目标图片数据不可读取：msg_id={to_display_message_id(source_id)}，index={image_index}")
+        raise ValueError(f"目标图片数据不可读取：{reference}，index={image_index}")
     return ImageComponent(binary_hash=image.binary_hash, content=image.content, binary_data=image.binary_data)

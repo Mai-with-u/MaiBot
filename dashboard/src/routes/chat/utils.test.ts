@@ -3,18 +3,16 @@ import { beforeEach, describe, expect, it, vi } from 'vitest'
 import { VIRTUAL_TABS_STORAGE_KEY } from './types'
 import type { ChatTab, SavedVirtualTab } from './types'
 import {
-  generateUserId,
   getChatTabDisplayName,
-  getOrCreateUserId,
   getSavedVirtualTabs,
   getStoredUserAvatarVersion,
   getStoredUserName,
+  isChatRuntimeEventCurrent,
   saveUserAvatarVersion,
   saveUserName,
   saveVirtualTabs,
 } from './utils'
 
-const USER_ID_STORAGE_KEY = 'maibot_webui_user_id'
 const USER_NAME_STORAGE_KEY = 'maibot_webui_user_name'
 const USER_AVATAR_VERSION_STORAGE_KEY = 'maibot_webui_user_avatar_version'
 
@@ -65,34 +63,15 @@ beforeEach(() => {
   localStorage.clear()
 })
 
-describe('generateUserId', () => {
-  it('生成 webui_ 前缀、随机段和时间戳段组成的 ID', () => {
-    const id = generateUserId()
-    expect(id).toMatch(/^webui_[0-9a-z]+_[0-9a-z]+$/)
-  })
+it('历史回放和早于聊天消息的模型状态不会成为当前状态', () => {
+  const messages: ChatTab['messages'] = [
+    { id: 'reply', type: 'bot', content: '回复', timestamp: 20 },
+    { id: 'reconnect', type: 'system', content: '已连接', timestamp: 30 },
+  ]
 
-  it('随机数不同则生成的 ID 不同', () => {
-    vi.spyOn(Math, 'random').mockReturnValueOnce(0.111111111).mockReturnValueOnce(0.999999999)
-    const first = generateUserId()
-    const second = generateUserId()
-    expect(first).not.toBe(second)
-  })
-})
-
-describe('getOrCreateUserId', () => {
-  it('无存储时生成新 ID 并写入 localStorage，重复调用返回同一 ID', () => {
-    const id = getOrCreateUserId()
-    expect(id).toMatch(/^webui_/)
-    expect(localStorage.getItem(USER_ID_STORAGE_KEY)).toBe(id)
-    // 第二次调用直接命中存储，不会再生成
-    expect(getOrCreateUserId()).toBe(id)
-  })
-
-  it('已有存储时直接返回存储值，不覆盖', () => {
-    localStorage.setItem(USER_ID_STORAGE_KEY, 'webui_existing_abc')
-    expect(getOrCreateUserId()).toBe('webui_existing_abc')
-    expect(localStorage.getItem(USER_ID_STORAGE_KEY)).toBe('webui_existing_abc')
-  })
+  expect(isChatRuntimeEventCurrent([], 10, true)).toBe(false)
+  expect(isChatRuntimeEventCurrent(messages, 10)).toBe(false)
+  expect(isChatRuntimeEventCurrent(messages, 25)).toBe(true)
 })
 
 describe('用户昵称存取', () => {

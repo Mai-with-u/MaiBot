@@ -565,7 +565,6 @@ describe('PluginDetailPage 配置信息卡与交互', () => {
     vi.mocked(pluginApi.getInstalledPlugins).mockResolvedValue([
       {
         ...makeInstalledPlugin(),
-        changelog: '- 本地条目',
         manifest: {
           ...makeInstalledPlugin().manifest,
           homepage_url: undefined,

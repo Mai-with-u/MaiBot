@@ -28,7 +28,7 @@ class OpenAICompatibleRequestOverrides:
 def normalize_openai_base_url(base_url: str) -> str:
     """规范化 OpenAI 兼容接口的基础地址。
 
-    去掉尾部斜杠，且如果缺少协议前缀则自动补全 http://。
+    去掉尾部斜杠和完整聊天接口的 /chat/completions 后缀，缺少协议前缀时自动补全 http://。
 
     Args:
         base_url: 原始基础地址。
@@ -39,6 +39,11 @@ def normalize_openai_base_url(base_url: str) -> str:
     base_url = base_url.strip()
     if base_url and "://" not in base_url:
         base_url = "http://" + base_url
+    parsed_url = urlsplit(base_url)
+    path = parsed_url.path.rstrip("/")
+    if path.endswith("/chat/completions"):
+        # SDK 会追加接口路径，填写完整聊天接口地址时先还原为基础地址。
+        return parsed_url._replace(path=path.removesuffix("/chat/completions")).geturl()
     return base_url.rstrip("/")
 
 
@@ -89,7 +94,9 @@ def build_openai_compatible_client_config(api_provider: APIProvider) -> OpenAICo
     default_query: dict[str, object] = dict(api_provider.default_query)
     client_api_key = api_provider.api_key
 
-    if api_provider.auth_type == OpenAICompatibleAuthType.BEARER:
+    if not api_provider.api_key.strip():
+        client_api_key = ""
+    elif api_provider.auth_type == OpenAICompatibleAuthType.BEARER:
         if (
             api_provider.auth_header_name != "Authorization"
             or api_provider.auth_header_prefix.strip() != "Bearer"

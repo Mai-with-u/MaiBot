@@ -335,14 +335,9 @@ export async function applyPack(
       }
 
       // 添加新提供商
-      const apiKey = newProviderApiKeys[packProvider.name]
-      if (!apiKey) {
-        throw new Error(`提供商 "${packProvider.name}" 缺少 API Key`)
-      }
-
       const newProvider = {
         ...packProvider,
-        api_key: apiKey,
+        api_key: newProviderApiKeys[packProvider.name] ?? '',
       }
 
       // 检查是否已存在同名提供商

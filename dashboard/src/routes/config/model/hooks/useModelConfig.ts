@@ -26,8 +26,8 @@ import {
   switchModelConfigVersion,
   testModelCapability,
   testProviderConnection,
-  updateModelConfig,
-  updateModelConfigSection,
+  updateModelConfig as saveModelConfig,
+  updateModelConfigSection as saveModelSection,
 } from '@/lib/config-api'
 import type {
   ModelConfigVersionInfo,
@@ -41,11 +41,12 @@ import type { ModelInfo, ModelPricePeriod, ModelTaskConfig, ProviderConfig, Task
 import { serializeModel } from '../serializeModel'
 import type { APIProvider, DeleteConfirmState } from '../../modelProvider/types'
 import { cleanProviderData } from '../../modelProvider/utils'
+import { findTemplateByBaseUrl, PROVIDER_TEMPLATES } from '../../providerTemplates'
 import { useModelAutoSave } from './useModelAutoSave'
 import { useEmbeddingWarning, type PendingEmbeddingUpdate } from './useEmbeddingWarning'
 import { readWebSearchConfig, type WebSearchConfig } from '../../webSearch/types'
 
-const ADVANCED_MODEL_TASK_NAMES = new Set(['memory', 'learner', 'emoji', 'voice'])
+const ADVANCED_MODEL_TASK_NAMES = new Set(['memory', 'learner', 'voice'])
 
 /** Unwrap backend `{ success, config }` envelope to get the actual config */
 function unwrapModelConfig(data: unknown): Record<string, unknown> {
@@ -141,6 +142,20 @@ interface ConfigDraftPersistResult {
 
 export function useModelConfig() {
   const { toast } = useToast()
+  const [configWarnings, setConfigWarnings] = useState<string[]>([])
+  const sharedRevision = useRef<string | undefined>(undefined)
+  const updateModelConfig = useCallback(async (data: Record<string, unknown>) => {
+    const result = await (sharedRevision.current === undefined ? saveModelConfig(data) : saveModelConfig(data, sharedRevision.current))
+    if (typeof result.catalog_revision === 'string') sharedRevision.current = result.catalog_revision
+    setConfigWarnings((result.warnings as string[] | undefined) ?? [])
+    return result
+  }, [])
+  const updateModelConfigSection = useCallback(async (section: string, data: unknown) => {
+    const result = await (sharedRevision.current === undefined ? saveModelSection(section, data) : saveModelSection(section, data, sharedRevision.current))
+    if (typeof result.catalog_revision === 'string') sharedRevision.current = result.catalog_revision
+    setConfigWarnings((result.warnings as string[] | undefined) ?? [])
+    return result
+  }, [])
 
   // ---- 三份可编辑草稿 + 派生态 ----
   const [models, setModels] = useState<ModelInfo[]>([])
@@ -275,6 +290,7 @@ export function useModelConfig() {
     models,
     taskConfig,
     enqueueWrite: enqueueConfigWrite,
+    saveSection: updateModelConfigSection,
     onSavingChange: setModelAutoSaving,
     onUnsavedChange: setModelHasUnsavedChanges,
     onSaveError: handleAutoSaveError,
@@ -417,6 +433,9 @@ export function useModelConfig() {
         return
       }
       const config = unwrapModelConfig(result.value)
+      const shared = config._shared_catalog as { revision: string } | undefined
+      sharedRevision.current = shared?.revision
+      setConfigWarnings((config._warnings as string[] | undefined) ?? [])
       setWebConfig(readWebSearchConfig(config.web))
       const modelList = (config.models as ModelInfo[]) || []
       for (const model of modelList) {
@@ -506,7 +525,7 @@ export function useModelConfig() {
     )
   }, [])
 
-  const removeModelsForProviders = useCallback(
+  const removeModelsAndTaskReferences = useCallback(
     (
       sourceModels: ModelInfo[],
       sourceTaskConfig: ModelTaskConfig | null,
@@ -630,7 +649,7 @@ export function useModelConfig() {
       }
 
       // 级联删除涉及模型和任务引用，必须整份写入，避免产生不一致的中间状态。
-      const { models: nextModels, taskConfig: nextTaskConfig } = removeModelsForProviders(
+      const { models: nextModels, taskConfig: nextTaskConfig } = removeModelsAndTaskReferences(
         models,
         taskConfig,
         affectedModels
@@ -662,7 +681,7 @@ export function useModelConfig() {
       models,
       persistModelConfigDraft,
       prepareProviderSaveBarrier,
-      removeModelsForProviders,
+      removeModelsAndTaskReferences,
       syncProviderState,
       taskConfig,
     ]
@@ -951,6 +970,9 @@ export function useModelConfig() {
           send_temperature: true,
           max_tokens: null,
           visual: false,
+          max_images: 0,
+          image_max_side: 8000,
+          image_min_side: 1,
           force_stream_mode: false,
           extra_params: {},
         }
@@ -976,7 +998,7 @@ export function useModelConfig() {
   }, [])
 
   const handleSaveProviderEdit = useCallback(
-    async (provider: APIProvider, index: number | null) => {
+    async (provider: APIProvider, index: number | null, templateId?: string) => {
       const providerToSave = cleanProviderData(provider)
       const nextProviders = [...apiProviders]
       if (index !== null) {
@@ -992,13 +1014,30 @@ export function useModelConfig() {
 
       try {
         setSaving(true)
-        if (hasLinkedModels) {
-          // 改名只迁移供应商引用；与供应商一起写入，避免触发级联删除或留下无效引用。
+        const template = PROVIDER_TEMPLATES.find((item) => item.id === templateId)
+        const presetModels = template?.base_url === providerToSave.base_url ? template.models : undefined
+        if (hasLinkedModels || presetModels?.length) {
+          // 改名迁移供应商引用；预设模型与供应商一起写入，避免留下无效引用。
           const nextModels = models.map((model) =>
-            model.api_provider === oldProviderName
+            providerRenamed && model.api_provider === oldProviderName
               ? { ...model, api_provider: providerToSave.name }
               : model
           )
+          // 重复保存只补齐缺失项，保留已有模型参数；全局重名时加供应商后缀。
+          const usedNames = new Set(nextModels.map((model) => model.name.toLowerCase()))
+          for (const preset of presetModels ?? []) {
+            if (nextModels.some((model) =>
+              model.api_provider === providerToSave.name && model.model_identifier === preset.model_identifier
+            )) continue
+            let name = preset.name
+            let suffix = 2
+            while (usedNames.has(name.toLowerCase())) {
+              name = `${preset.name} (${providerToSave.name}${suffix === 2 ? '' : ` ${suffix}`})`
+              suffix += 1
+            }
+            usedNames.add(name.toLowerCase())
+            nextModels.push({ ...preset, name, api_provider: providerToSave.name })
+          }
           const persistResult = await persistModelConfigDraft(nextModels, taskConfig, nextProviders)
           if (persistResult.applyProviders) {
             syncProviderState(nextProviders)
@@ -1026,10 +1065,13 @@ export function useModelConfig() {
         setEditingProviderIndex(null)
         toast({
           title: index !== null ? '提供商已更新' : '提供商已添加',
-          description: hasLinkedModels
+          description: presetModels?.length
+            ? '提供商及全部预设模型已保存，请在回复模型中选择使用'
+            : hasLinkedModels
             ? '供应商名称及关联模型已同步保存，任务分配已保留'
             : '模型配置已保存',
         })
+        return providerToSave
       } catch (error) {
         toast({
           title: '保存失败',
@@ -1050,6 +1092,77 @@ export function useModelConfig() {
       taskConfig,
       toast,
     ]
+  )
+
+  const handleConfigureMaiReplier = useCallback(
+    async (modelIdentifier: 'mai_replier' | 'mai_replier_today'): Promise<boolean> => {
+      try {
+        setSaving(true)
+        const template = PROVIDER_TEMPLATES.find((item) => item.id === 'mai_replier')
+        const preset = template?.models?.find((model) => model.model_identifier === modelIdentifier)
+        if (!template || !preset || !template.defaultApiKey) {
+          throw new Error('麦麦特调回复模板不完整')
+        }
+        if (!taskConfig) throw new Error('任务配置尚未加载')
+
+        // 按服务地址识别已改名的提供商，保留用户的密钥和连接参数。
+        let provider = apiProviders.find((item) => findTemplateByBaseUrl(item.base_url)?.id === template.id)
+        const nextProviders = [...apiProviders]
+        if (!provider) {
+          let name = template.name
+          let suffix = 2
+          const usedNames = new Set(apiProviders.map((item) => item.name.trim().toLowerCase()))
+          while (usedNames.has(name.toLowerCase())) name = `${template.name} (${suffix++})`
+          provider = {
+            name,
+            base_url: template.base_url,
+            api_key: template.defaultApiKey,
+            client_type: template.client_type,
+            ...template.providerDefaults,
+          }
+          nextProviders.push(provider)
+        }
+
+        const providerName = provider.name
+        const nextModels = [...models]
+        let model = models.find((item) =>
+          item.api_provider === providerName && item.model_identifier === modelIdentifier
+        )
+        if (!model) {
+          let name = preset.name
+          let suffix = 2
+          const usedNames = new Set(models.map((item) => item.name.trim().toLowerCase()))
+          while (usedNames.has(name.toLowerCase())) name = `${preset.name} (${suffix++})`
+          model = { ...preset, name, api_provider: providerName }
+          nextModels.push(model)
+        }
+        const nextTaskConfig = {
+          ...taskConfig,
+          replyer: { ...taskConfig.replyer, model_list: [model.name] },
+        }
+        const result = await persistModelConfigDraft(nextModels, nextTaskConfig, nextProviders)
+        if (result.applyProviders) syncProviderState(nextProviders)
+        if (result.applyModels) {
+          setModels(nextModels)
+          setModelNames(nextModels.map((item) => item.name))
+        }
+        if (result.applyTaskConfig) setTaskConfig(nextTaskConfig)
+        if (result.applyModels && result.applyTaskConfig) {
+          checkTaskConfigIssues(nextTaskConfig, nextModels)
+        }
+        toast({
+          title: '麦麦特调回复已配置',
+          description: `已选择「${model.name}」用于回复，配置已保存`,
+        })
+        return true
+      } catch (error) {
+        toast({ title: '配置失败', description: (error as Error).message, variant: 'destructive' })
+        return false
+      } finally {
+        setSaving(false)
+      }
+    },
+    [apiProviders, checkTaskConfigIssues, models, persistModelConfigDraft, syncProviderState, taskConfig, toast]
   )
 
   // 保存模型编辑
@@ -1186,11 +1299,16 @@ export function useModelConfig() {
   // 确认删除模型
   const handleConfirmDelete = useCallback(() => {
     if (deletingIndex !== null) {
-      const newModels = models.filter((_, i) => i !== deletingIndex)
+      const { models: newModels, taskConfig: nextTaskConfig } = removeModelsAndTaskReferences(
+        models,
+        taskConfig,
+        models.filter((_, i) => i === deletingIndex)
+      )
       setModels(newModels)
       setModelNames(newModels.map((m) => m.name))
+      setTaskConfig(nextTaskConfig)
       // 重新检查任务配置问题
-      checkTaskConfigIssues(taskConfig, newModels)
+      checkTaskConfigIssues(nextTaskConfig, newModels)
       toast({
         title: '删除成功',
         description: '配置将在 2 秒后自动保存',
@@ -1198,7 +1316,7 @@ export function useModelConfig() {
     }
     setDeleteDialogOpen(false)
     setDeletingIndex(null)
-  }, [checkTaskConfigIssues, deletingIndex, models, taskConfig, toast])
+  }, [checkTaskConfigIssues, deletingIndex, models, removeModelsAndTaskReferences, taskConfig, toast])
 
   const openProviderDeleteDialog = useCallback((index: number) => {
     setDeletingProviderIndex(index)
@@ -1335,13 +1453,13 @@ export function useModelConfig() {
         if (testResult.success) {
           toast({
             title: '模型测试通过',
-            description: `${modelName} 已完成文本${testResult.visual_tested ? '、视觉' : ''}与工具调用测试 (${testResult.latency_ms != null ? `${(testResult.latency_ms / 1000).toFixed(2)}s` : '-'})`,
+            description: `${modelName} ${testResult.test_kind === 'replyer' ? '已完成模拟 replyer 回复测试' : `已完成文本${testResult.visual_tested ? '、视觉' : ''}与工具调用测试`} (${testResult.latency_ms != null ? `${(testResult.latency_ms / 1000).toFixed(2)}s` : '-'})`,
             duration: 8000,
             action: buildModelTestDetailAction(testResult),
           })
         } else {
           toast({
-            title: testResult.tool_call_ok ? '模型响应异常' : '工具调用未通过',
+            title: testResult.test_kind === 'replyer' ? '回复测试未通过' : testResult.tool_call_ok ? '模型响应异常' : '工具调用未通过',
             description: `${modelName} 未通过模型能力测试，请点击“详情”查看完整错误信息`,
             variant: 'destructive',
             duration: 10000,
@@ -1427,18 +1545,23 @@ export function useModelConfig() {
   // 确认批量删除
   const handleConfirmBatchDelete = useCallback(() => {
     const deletedCount = selectedModels.size
-    const newModels = models.filter((_, index) => !selectedModels.has(index))
+    const { models: newModels, taskConfig: nextTaskConfig } = removeModelsAndTaskReferences(
+      models,
+      taskConfig,
+      models.filter((_, index) => selectedModels.has(index))
+    )
     setModels(newModels)
     setModelNames(newModels.map((m) => m.name))
+    setTaskConfig(nextTaskConfig)
     // 重新检查任务配置问题
-    checkTaskConfigIssues(taskConfig, newModels)
+    checkTaskConfigIssues(nextTaskConfig, newModels)
     setSelectedModels(new Set())
     setBatchDeleteDialogOpen(false)
     toast({
       title: '批量删除成功',
       description: `已删除 ${deletedCount} 个模型，配置将在 2 秒后自动保存`,
     })
-  }, [checkTaskConfigIssues, models, selectedModels, taskConfig, toast])
+  }, [checkTaskConfigIssues, models, removeModelsAndTaskReferences, selectedModels, taskConfig, toast])
 
   // ---- 任务配置更新（与 embedding 警告协调）----
   const updateTaskConfig = useCallback(
@@ -1534,6 +1657,7 @@ export function useModelConfig() {
     handleSwitchConfigVersion,
     handleDeleteConfigVersion,
     // 任务配置问题
+    configWarnings,
     invalidModelRefs,
     emptyTasks,
     handleRemoveInvalidRefs,
@@ -1561,6 +1685,7 @@ export function useModelConfig() {
     editingProviderIndex,
     openProviderDialog,
     handleSaveProviderEdit,
+    handleConfigureMaiReplier,
     providerDeleteDialogOpen,
     setProviderDeleteDialogOpen,
     deletingProviderIndex,

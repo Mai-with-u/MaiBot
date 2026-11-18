@@ -1,0 +1,4 @@
+[Wait finished]
+Wait state: {wait_state}
+elapsed_seconds is the actual duration, requested_seconds is the planned duration (null if unspecified), and has_new_messages indicates whether new input arrived.
+Reconsider with the new messages if present; otherwise continue thinking from the existing context.

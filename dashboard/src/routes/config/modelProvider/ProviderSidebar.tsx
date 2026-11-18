@@ -1,14 +1,11 @@
 import { Globe, Plus } from 'lucide-react'
 
 import type { TestConnectionResult } from '@/lib/config-api'
-import { Button } from '@/components/ui/button'
-import {
-  DropdownMenu,
-  DropdownMenuContent,
-  DropdownMenuItem,
-  DropdownMenuTrigger,
-} from '@/components/ui/dropdown-menu'
+import { DashedButton } from '@/components/ui/dashed-button'
+import { StatusLight } from '@/components/ui/status-light'
+import { DataPanel } from '@/components/ui/surface'
 import { cn } from '@/lib/utils'
+import '@/styles/model-library.css'
 import type { WebSearchConfig } from '../webSearch/types'
 
 import { getProviderTestStatus } from './providerStatus'
@@ -53,37 +50,16 @@ export function ProviderSidebar({
 
   return (
     <aside
-      className="bg-card/30 flex min-h-0 min-w-0 flex-col overflow-hidden rounded-lg border lg:h-full"
+      data-provider-sidebar="true"
+      className="flex min-h-0 min-w-0 flex-col gap-2 lg:h-full"
       data-config-field-path="api_providers"
     >
-      <div className="flex items-center justify-between gap-2 border-b px-3 py-2.5">
-        <h2 className="text-sm font-semibold">模型厂商</h2>
-        <div className="flex shrink-0 gap-1">
-          <DropdownMenu>
-            <DropdownMenuTrigger asChild>
-              <Button
-                type="button"
-                variant="outline"
-                size="icon"
-                className="h-8 w-8"
-                title="添加厂商"
-                aria-label="添加厂商"
-                data-tour="add-provider-button"
-              >
-                <Plus className="h-4 w-4" />
-              </Button>
-            </DropdownMenuTrigger>
-            <DropdownMenuContent align="end">
-              <DropdownMenuItem onSelect={onAdd} data-tour="add-llm-provider-item">
-                添加 LLM 模型提供商
-              </DropdownMenuItem>
-              <DropdownMenuItem onSelect={onAddWebSearch}>添加联网搜索</DropdownMenuItem>
-            </DropdownMenuContent>
-          </DropdownMenu>
-        </div>
+      <div data-library-label="true">
+        <b>VENDORS</b>
+        <h2>模型厂商</h2>
       </div>
 
-      <div className="min-w-0 p-2 lg:hidden">
+      <div className="min-w-0 lg:hidden">
         <select
           className="border-input bg-background h-9 w-full min-w-0 rounded-md border px-3 text-sm"
           aria-label="模型厂商"
@@ -111,26 +87,22 @@ export function ProviderSidebar({
         </select>
       </div>
 
-      <div className="hidden min-h-0 flex-1 space-y-1 overflow-y-auto overscroll-contain p-2 lg:block lg:h-0">
+      <DataPanel
+        padding="none"
+        data-library-list="true"
+        className="hidden min-h-0 flex-1 overflow-y-auto overscroll-contain lg:block lg:h-0"
+      >
         <button
           type="button"
-          className={cn(
-            'flex w-full items-center justify-between rounded-md px-3 py-2 text-left text-sm transition-colors',
-            selectedProvider === '' ? 'bg-primary text-primary-foreground' : 'hover:bg-muted'
-          )}
+          data-library-row="true"
+          data-selected={selectedProvider === '' || undefined}
           onClick={() => onSelectProvider('')}
           aria-pressed={selectedProvider === ''}
           aria-label="全部"
         >
-          <span className="font-medium">全部</span>
-          <span
-            className={cn(
-              'text-xs',
-              selectedProvider === '' ? 'text-primary-foreground/75' : 'text-muted-foreground'
-            )}
-          >
-            {totalModels}
-          </span>
+          <StatusLight status={totalModels > 0 ? 'on' : 'off'} glow={false} decorative />
+          <span data-library-row-name="true">全部厂商</span>
+          <span data-library-row-count="true">{totalModels}</span>
         </button>
 
         {sortedProviders.map(({ provider }) => {
@@ -139,69 +111,74 @@ export function ProviderSidebar({
             testingProviders.has(provider.name)
           )
           const isSelected = selectedProvider === provider.name
+          const count = modelCounts.get(provider.name) ?? 0
 
           return (
-            <div
+            <button
               key={provider.name}
-              className={cn(
-                'group flex min-w-0 items-center gap-1 rounded-md px-3 py-2 text-sm transition-colors',
-                isSelected ? 'bg-primary text-primary-foreground' : 'hover:bg-muted'
-              )}
+              type="button"
+              data-library-row="true"
+              data-selected={isSelected || undefined}
+              onClick={() => onSelectProvider(provider.name)}
+              aria-pressed={isSelected}
+              aria-label={`筛选厂商 ${provider.name}`}
+              title={`${provider.name} · ${provider.base_url}\n${testStatus.description}`}
             >
-              <button
-                type="button"
-                className="min-w-0 flex-1 text-left"
-                onClick={() => onSelectProvider(provider.name)}
-                aria-pressed={isSelected}
-                aria-label={`筛选厂商 ${provider.name}`}
-                title={`${provider.name} · ${provider.base_url}\n${testStatus.description}`}
-              >
-                <span
-                  className={cn(
-                    'inline-block max-w-full truncate border-b-2 pb-0.5 text-sm font-medium',
-                    testStatus.className
-                  )}
-                >
-                  {provider.name}
-                </span>
-                <span
-                  className={cn(
-                    'mt-0.5 hidden truncate text-[11px] xl:block',
-                    isSelected ? 'text-primary-foreground/70' : 'text-muted-foreground'
-                  )}
-                >
-                  {provider.base_url}
-                </span>
-              </button>
+              <StatusLight status={count > 0 ? 'on' : 'off'} glow={false} decorative />
               <span
-                className={cn(
-                  'w-5 shrink-0 text-right text-xs',
-                  isSelected ? 'text-primary-foreground/75' : 'text-muted-foreground'
-                )}
+                data-library-row-name="true"
+                className={cn('max-w-full justify-self-start border-b-2', testStatus.className)}
               >
-                {modelCounts.get(provider.name) ?? 0}
+                {provider.name}
               </span>
-            </div>
+              <span data-library-row-count="true">{count}</span>
+              <span data-library-row-sub="true">{provider.base_url}</span>
+            </button>
           )
         })}
-        {webServiceNames.map((name) => (
-          <button
-            key={`web:${name}`}
-            data-web-service-row="true"
-            type="button"
-            className="hover:bg-muted flex w-full min-w-0 items-center gap-2 rounded-md px-3 py-2 text-left text-sm transition-colors"
-            onClick={() => onEditWebSearch?.(name)}
-          >
-            <span className="min-w-0 flex-1">
-              <span className="block truncate font-medium">{name}</span>
-              <span className="text-muted-foreground block text-xs">
-                联网搜索 · {assignedWebService === name ? '已分配' : '未分配'}
-              </span>
-            </span>
-            <Globe className="text-muted-foreground h-4 w-5 shrink-0" />
-          </button>
-        ))}
+      </DataPanel>
+      <DashedButton className="w-full flex-none" data-tour="add-provider-button" onClick={onAdd}>
+        <Plus className="size-3.5" aria-hidden="true" />
+        添加厂商
+      </DashedButton>
+
+      <div data-library-label="true" className="mt-3 max-lg:hidden">
+        <b>WEB</b>
+        <h2>联网服务</h2>
       </div>
+      {/* 联网服务最多露出两行，多了在框里滚动，不挤占厂商列表 */}
+      <DataPanel
+        padding="none"
+        data-library-list="true"
+        className="hidden max-h-[7.625rem] flex-none overflow-y-auto overscroll-contain lg:block"
+      >
+        {webServiceNames.length === 0 && (
+          <p className="text-muted-foreground px-3 py-3 text-xs">还没有联网服务</p>
+        )}
+        {webServiceNames.map((name) => {
+          const assigned = assignedWebService === name
+          return (
+            <button
+              key={`web:${name}`}
+              data-web-service-row="true"
+              data-library-row="true"
+              type="button"
+              onClick={() => onEditWebSearch?.(name)}
+            >
+              <StatusLight status={assigned ? 'on' : 'off'} glow={false} decorative />
+              <span data-library-row-name="true">{name}</span>
+              <Globe className="text-muted-foreground h-3.5 w-3.5 justify-self-end" aria-hidden="true" />
+              <span data-library-row-sub="true">联网搜索 · {assigned ? '已分配' : '未分配'}</span>
+            </button>
+          )
+        })}
+      </DataPanel>
+      {onAddWebSearch && (
+        <DashedButton className="w-full flex-none max-lg:hidden" onClick={onAddWebSearch}>
+          <Plus className="size-3.5" aria-hidden="true" />
+          添加联网服务
+        </DashedButton>
+      )}
     </aside>
   )
 }

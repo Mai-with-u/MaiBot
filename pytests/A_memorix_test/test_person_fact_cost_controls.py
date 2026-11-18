@@ -1,3 +1,4 @@
+from pathlib import Path
 from typing import Any, Dict, List, Optional
 
 import pytest
@@ -7,6 +8,9 @@ from src.A_memorix.core.storage.metadata_store import MetadataStore
 
 
 class _FakeMetadataStore:
+    def get_db_path(self) -> Path:
+        return Path(f"person-cost-test-{id(self)}.db")
+
     def __init__(self) -> None:
         self.episode_sources: List[str] = []
         self.profile_refreshes: List[Dict[str, str]] = []

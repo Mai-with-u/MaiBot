@@ -30,9 +30,11 @@ function readThinkingState(extraParams: Record<string, unknown> | undefined): Th
   if (typeof params.thinking_budget === 'number') {
     return params.thinking_budget === 0 ? 'off' : 'on'
   }
-  const effort = isRecord(params.reasoning) ? params.reasoning.effort : params.reasoning_effort
+  const effort = isRecord(params.reasoning) && typeof params.reasoning.effort === 'string'
+    ? params.reasoning.effort
+    : params.reasoning_effort
   if (typeof effort === 'string') {
-    return effort === 'none' ? 'off' : 'on'
+    return effort === 'none' || effort === 'off' ? 'off' : 'on'
   }
   return 'unset'
 }

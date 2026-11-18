@@ -1,0 +1,14 @@
+[reply_private_system]
+display_name = "Private chat · System"
+advanced = false
+description = "System template for persona, chat background, and attention guidance."
+
+[reply_private]
+display_name = "Private chat · User"
+advanced = false
+description = "Reply template combining chat history and turn requirements in one user message."
+
+[reply_private_followup]
+display_name = "Private chat follow-up · User"
+advanced = false
+description = "Reply template combining chat history and turn requirements in one user message."

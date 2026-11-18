@@ -1,0 +1,5 @@
+Use for first-time setup, platform integration, model configuration, or switching a feature.
+1. Identify the feature, platform, and deployment method. Use lookup_help with the feature and deployment terms to locate the UI and read matching official documentation in one call.
+2. Use read_official_docs only when more context is needed. For this instance, use read_local_config for the minimum relevant fields with exact paths from the index. Skip local reads for general usage.
+3. Distinguish the current value, intended value, prerequisites, and verification. Give restart steps, ports, environment variables, and commands only when supported. Put the matched index IDs in results for direct navigation.
+4. Finish with one clear entry point, the shortest steps in dependency order, and an observable check. If the platform or deployment changes the procedure, present the verified branches and ask for the missing detail.

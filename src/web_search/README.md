@@ -3,6 +3,11 @@
 通过 `WebSearchToolProvider` 注册 `web_search(query, max_results=5)` 和 `web_fetch(url)`。
 服务选择、协议转换和工具实现均独立于 WebUI。默认未分配，不开放统一联网工具。
 
+插件可声明 `web.search` / `web.fetch` 能力，通过 SDK 的 `ctx.web.search(query, max_results=5)`
+和 `ctx.web.fetch(url)` 复用已分配服务。插件接口直接返回完整结构化结果，无需聊天 ID，
+不写入工具结果缓存；序列化结果超过 500000 字符时明确报错。SDK 调用示例与返回字段见
+[插件联网接口文档](https://github.com/Mai-with-u/maibot-plugin-sdk/blob/main/docs/web.md)。
+
 ## 配置
 
 在 `model_config.toml` 的独立 `web` 节配置服务实例，无需声明模型。
@@ -33,19 +38,35 @@ adapter = "stepsearch_mcp"
 server_ref = "stepsearch"
 category = ""
 timeout = 60.0
+
+[web.services.anysearch]
+adapter = "anysearch"
+api_key = "YOUR_ANYSEARCH_API_KEY"
+
+[web.services.exa]
+adapter = "exa"
+api_key = "YOUR_EXA_API_KEY"
+
+[web.services.firecrawl]
+adapter = "firecrawl"
+api_key = "YOUR_FIRECRAWL_API_KEY"
 ```
 
 HTTP 服务省略 `base_url` 时使用官方地址；DeepSeek 同时接受根地址和 `/v1` 地址。
 StepSearch 的 `server_ref` 指向 `bot_config.toml` 中已有且已启用的 `mcp.servers` 名称，
 地址和鉴权只在 MCP 配置维护。不会自动启动第二套 MCP 连接。
 
-三种适配器均支持搜索和读取。在 `model_task_config.web_search.model_list` 中选择一个服务名称，
+六种适配器均支持搜索和读取。在 `model_task_config.web_search.model_list` 中选择一个服务名称，
 搜索和网页读取统一使用该服务。留空时不注册工具，残留的直接调用也会被拒绝。
 仅添加服务或填写旧的 `web.enabled` / `search` / `fetch` 字段不会启用联网功能。
 不支持的过滤参数会报错，不会将日期过滤悄悄转换成搜索关键词，也不自动切换服务或重试。
 Tavily 的搜索深度、提取深度和 StepSearch 的类别在服务实例中配置，不由模型选择。
+AnySearch 使用 v1 Search / Extract，单次搜索最多 10 条；需要填写 API Key。
+Exa 使用 Search 返回 highlights 搜索片段，Contents 返回完整正文。
+Firecrawl 使用 v2 Search / Scrape，搜索词最多 500 字符，网页读取返回 Markdown。
+AnySearch 和 Firecrawl 的自定义地址可填写根地址或分别带 `/v1`、`/v2` 的 API 地址。
 
-默认模板由 `src/config/default_model_config.py` 与配置类生成，版本为 `1.17.19`。
+默认模板由 `src/config/default_model_config.py` 与配置类生成，版本为 `1.17.24`。
 读取配置通过稳定配置代理完成；每次调用使用配置快照，下一次调用生效于新配置。
 WebUI 在模型设置左侧加号菜单中提供“添加联网搜索”，支持添加、编辑和删除服务。
 在“功能分配 → 联网搜索 (web_search)”选定服务后才启用搜索和读取。已分配的服务需先取消分配才能改名或删除。
@@ -83,6 +104,9 @@ DeepSeek 可选择检测到的模型提供商组，复制当前地址和密钥�
 - [DeepSeek Search / Fetch](https://api-docs.deepseek.com/zh-cn/guides/search/)
 - [Tavily Search](https://docs.tavily.com/documentation/api-reference/endpoint/search)
 - [Tavily Extract](https://docs.tavily.com/documentation/api-reference/endpoint/extract)
+- [AnySearch Search](https://www.anysearch.com/docs/api-endpoints/v1-search) / [Extract](https://www.anysearch.com/docs/api-endpoints/v1-extract)
+- [Exa Search](https://exa.ai/docs/reference/search) / [Contents](https://exa.ai/docs/reference/get-contents)
+- [Firecrawl Search](https://docs.firecrawl.dev/api-reference/endpoint/search) / [Scrape](https://docs.firecrawl.dev/api-reference/endpoint/scrape)
 - StepSearch 使用其 MCP 声明及结构化响应：搜索 `query/n/category`，读取 `url`；
   搜索结果为 `results`，网页结果为 `page.markdown`。
 

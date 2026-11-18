@@ -308,6 +308,7 @@ class PlatformIOManager:
         }
         # WebUI 不依赖外部适配器配置，但仍通过 legacy driver 进入其 WebSocket 广播链路。
         desired_accounts["webui"] = WEBUI_BOT_USER_ID
+        desired_accounts["internal"] = WEBUI_BOT_USER_ID
         desired_platforms = set(desired_accounts.keys())
         current_platforms = set(self._legacy_send_drivers.keys())
 

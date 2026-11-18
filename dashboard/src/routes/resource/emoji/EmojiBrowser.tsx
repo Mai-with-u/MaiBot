@@ -1,3 +1,4 @@
+import type { LearningBrowserTabs } from '../learning'
 import type { ComponentProps, ReactNode } from 'react'
 import { ArrowUpDown, MoreHorizontal, Plus } from 'lucide-react'
 
@@ -37,6 +38,7 @@ export interface EmojiFilters {
 }
 
 interface EmojiBrowserProps extends ComponentProps<typeof EmojiList> {
+  browserTabs?: LearningBrowserTabs
   stats: EmojiStats | null
   filters: EmojiFilters
   onFilterChange: <K extends keyof EmojiFilters>(key: K, value: EmojiFilters[K]) => void
@@ -57,8 +59,9 @@ interface EmojiBrowserProps extends ComponentProps<typeof EmojiList> {
   onRetry: () => void
 }
 
-/** 表情包独立入口，沿用学习页的数据浏览框架；不在这里拼接学习页签。 */
+/** 表情包浏览框架，学习页负责注入导航页签。 */
 export function EmojiBrowser({
+  browserTabs,
   stats,
   filters,
   onFilterChange,
@@ -101,43 +104,42 @@ export function EmojiBrowser({
     },
     { value: 'all' as const, label: '全部', count: stats?.total, color: 'bg-muted-foreground' },
   ]
+  const summary = (
+    <>
+      <MetricStrip
+        items={[
+          { label: '总数量', value: stats?.total.toLocaleString() ?? '—' },
+          {
+            label: '近 7 天新增',
+            value:
+              stats?.recent_count == null ? '—' : `+${stats.recent_count.toLocaleString()}`,
+            positive: true,
+          },
+        ]}
+      />
+      {stats?.collecting_enabled != null && (
+        <StatusIndicator
+          status={stats.collecting_enabled ? 'on' : 'off'}
+          title="是否自动将候选表情注册为可发送的表情。关闭后，聊天表情仍会为识别而缓存。"
+        >
+          {stats.collecting_enabled ? '自动注册已开启' : '自动注册已关闭'}
+        </StatusIndicator>
+      )}
+      {stats && (
+        <StatusIndicator
+          status={stats.adopted > 0 ? 'on' : 'off'}
+          title="已注册表情可供麦麦选用"
+        >
+          {stats.adopted > 0 ? '有可用表情' : '暂无可用表情'}
+        </StatusIndicator>
+      )}
+    </>
+  )
   return (
     <div className="flex h-full min-h-0 flex-col gap-4">
-      <DataBrowserHeader
-        title="表情包"
-        summary={
-          <>
-            <MetricStrip
-              items={[
-                { label: '总数量', value: stats?.total.toLocaleString() ?? '—' },
-                {
-                  label: '近 7 天新增',
-                  value:
-                    stats?.recent_count == null ? '—' : `+${stats.recent_count.toLocaleString()}`,
-                  positive: true,
-                },
-              ]}
-            />
-            {stats?.collecting_enabled != null && (
-              <StatusIndicator
-                status={stats.collecting_enabled ? 'on' : 'off'}
-                title="是否自动收集聊天中的表情包"
-              >
-                {stats.collecting_enabled ? '收集中' : '收集已关闭'}
-              </StatusIndicator>
-            )}
-            {stats && (
-              <StatusIndicator
-                status={stats.adopted > 0 ? 'on' : 'off'}
-                title="已注册表情可供麦麦选用"
-              >
-                {stats.adopted > 0 ? '有可用表情' : '暂无可用表情'}
-              </StatusIndicator>
-            )}
-          </>
-        }
-      />
+      {!browserTabs && <DataBrowserHeader title="学习" summary={summary} />}
       <DataBrowserLayout
+        tabs={browserTabs?.(summary)}
         sidebar={
           <SectionPanel
             title="筛选"

@@ -1,0 +1,4 @@
+[当前环境]
+工作目录：{workspace}
+麦麦主机的附图目录：{maibot_workspace}（远端文件须先同步到此目录）。
+运行状态按需通过 agent_status 查询。

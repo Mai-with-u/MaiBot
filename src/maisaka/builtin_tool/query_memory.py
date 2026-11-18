@@ -13,6 +13,7 @@ from src.person_info.person_info import resolve_person_id_for_memory
 from src.services.memory_service import MemorySearchResult, memory_service
 
 from .context import BuiltinToolRuntimeContext
+from .memory_result_preview import build_memory_result_preview
 
 logger = get_logger("maisaka_builtin_query_memory")
 
@@ -26,7 +27,7 @@ def get_tool_spec(*, enabled: bool = True) -> ToolSpec:
 
     return ToolSpec(
         name="query_memory",
-        description="检索长期记忆。",
+        description="检索长期记忆。涉及回忆、过往经历时可以检索。",
         parameters_schema={
             "type": "object",
             "properties": {
@@ -94,24 +95,24 @@ def _normalize_optional_time(raw_value: Any) -> str | float | None:
     return time_text
 
 
-def _resolve_person_id(
+async def _resolve_person_id(
     *,
     person_name: str,
     platform: str,
     user_id: str,
     group_id: str,
 ) -> Tuple[str, str]:
-    """按约定顺序解析长期记忆检索使用的 person_id。"""
+    """显式人物称呼按持久映射解析；当前私聊 ID 只用于未指定人物的查询。"""
 
     clean_person_name = str(person_name or "").strip()
     if clean_person_name:
-        person_id = resolve_person_id_for_memory(
-            person_name=clean_person_name,
-            platform=platform,
-            user_id=user_id,
+        result = await memory_service.profile_admin(
+            action="resolve_identity",
+            identifier=clean_person_name,
         )
-        if person_id:
-            return person_id, clean_person_name
+        if not result.get("success"):
+            raise RuntimeError(f"人物身份解析失败: {result.get('error', '')}")
+        return str(result["person_id"]), clean_person_name
 
     if not group_id and platform and user_id:
         person_id = resolve_person_id_for_memory(
@@ -221,12 +222,20 @@ async def handle_tool(
     platform = str(chat_stream.platform or "").strip()
     user_id = str(chat_stream.user_id or "").strip()
     group_id = str(chat_stream.group_id or "").strip()
-    person_id, person_name = _resolve_person_id(
-        person_name=str(invocation.arguments.get("person_name") or ""),
-        platform=platform,
-        user_id=user_id,
-        group_id=group_id,
-    )
+    try:
+        person_id, person_name = await _resolve_person_id(
+            person_name=str(invocation.arguments.get("person_name") or ""),
+            platform=platform,
+            user_id=user_id,
+            group_id=group_id,
+        )
+    except RuntimeError as exc:
+        return tool_ctx.build_failure_result(invocation.tool_name, str(exc))
+    if person_name and not person_id:
+        return tool_ctx.build_failure_result(
+            invocation.tool_name,
+            f"无法唯一确认人物 {person_name}，请使用明确的人物 ID 或不重名的称呼。",
+        )
     respect_filter = bool(invocation.arguments.get("respect_filter", True))
     fallback_applied = False
     fallback_reason = ""
@@ -320,9 +329,9 @@ async def handle_tool(
         )
 
     content = _build_success_content(result, limit=limit)
-    if fallback_applied:
-        content = f"提示：人物定向检索未命中，已自动降级为关键词检索。\n{content}"
+    notice = "提示：人物定向检索未命中，已自动降级为关键词检索。" if fallback_applied else ""
     metadata: Dict[str, Any] = with_memory_feedback_task()
+    content = build_memory_result_preview(result, content, session_id=session_id, limit=limit, notice=notice)
     replyer_memory_reference = _build_replyer_memory_reference(structured_content)
     if replyer_memory_reference:
         metadata["replyer_memory_reference"] = replyer_memory_reference

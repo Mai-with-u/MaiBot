@@ -68,7 +68,7 @@ export function useAuthGuard() {
           navigate({ to: '/setup' })
         }
       } catch {
-        // 发生错误时也跳转到登录页
+        // 连接失败交给认证页显示等待状态并自动重试，不缓存为未登录。
         if (!cancelled) {
           navigate({ to: '/auth' })
         }

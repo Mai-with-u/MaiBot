@@ -29,7 +29,7 @@ export function ChatUserIdentity({
   const { t } = useTranslation()
   const avatarInputRef = useRef<HTMLInputElement>(null)
   const userAvatarUrl = useResolvedAvatarUrl(
-    userAvatarVersion ? 'webui' : undefined,
+    userAvatarVersion ? 'internal' : undefined,
     userId,
     'user',
     userAvatarVersion

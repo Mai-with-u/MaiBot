@@ -9,10 +9,11 @@ import { Input } from '@/components/ui/input'
 import { Label } from '@/components/ui/label'
 import { Dialog, DialogBody, DialogContent, DialogDescription, DialogFooter, DialogHeader, DialogTitle } from '@/components/ui/dialog'
 import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from '@/components/ui/select'
+import { PluginDependenciesSection } from '@/host/PluginDependenciesSection'
 import { useToast } from '@/hooks/use-toast'
 
 interface SourceSettings {
-  information_source: 'official' | 'cnb' | 'github'
+  information_source: 'cnb' | 'github'
   download_source: 'cnb' | 'github' | 'custom'
   custom_download_prefix: string | null
 }
@@ -20,10 +21,12 @@ interface SourceSettings {
 interface PluginSettingsDialogProps {
   onClose: () => void
   onSaved: () => void
+  onDependenciesChanged: () => void
 }
 
-export function PluginSettingsDialog({ onClose, onSaved }: PluginSettingsDialogProps) {
+export function PluginSettingsDialog({ onClose, onSaved, onDependenciesChanged }: PluginSettingsDialogProps) {
   const queryClient = useQueryClient()
+  const [dependenciesBusy, setDependenciesBusy] = useState(false)
   const { toast } = useToast()
   const [draft, setDraft] = useState<SourceSettings | null>(null)
   const sourceQuery = useQuery({
@@ -54,14 +57,14 @@ export function PluginSettingsDialog({ onClose, onSaved }: PluginSettingsDialogP
     },
   })
   const dirty = draft && JSON.stringify(draft) !== JSON.stringify(sourceQuery.data)
-  const disabled = sourceMutation.isPending
+  const disabled = sourceMutation.isPending || dependenciesBusy
 
   return (
     <Dialog open onOpenChange={(open) => { if (!open && !disabled) onClose() }}>
       <DialogContent className="[--dialog-width:40rem]" preventOutsideClose={disabled}>
         <DialogHeader>
           <DialogTitle>插件商店设置</DialogTitle>
-          <DialogDescription>分别选择插件信息和插件下载的来源</DialogDescription>
+          <DialogDescription>管理插件信息源、下载源和插件依赖</DialogDescription>
         </DialogHeader>
         <DialogBody>
           <div className="space-y-4">
@@ -82,7 +85,6 @@ export function PluginSettingsDialog({ onClose, onSaved }: PluginSettingsDialogP
                   onValueChange={(value: SourceSettings['information_source']) => setDraft({ ...draft, information_source: value })}>
                   <SelectTrigger id="plugin-information-source"><SelectValue /></SelectTrigger>
                   <SelectContent>
-                    <SelectItem value="official">麦麦官方</SelectItem>
                     <SelectItem value="cnb">CNB镜像</SelectItem>
                     <SelectItem value="github">Github源</SelectItem>
                   </SelectContent>
@@ -92,7 +94,7 @@ export function PluginSettingsDialog({ onClose, onSaved }: PluginSettingsDialogP
               <Card className="p-6 space-y-4">
                 <div className="space-y-1">
                   <Label htmlFor="plugin-download-source" className="text-base font-semibold">插件下载源</Label>
-                  <p className="text-sm text-muted-foreground">安装和更新插件只使用一个下载源，失败时不自动切换。</p>
+                  <p className="text-sm text-muted-foreground">安装、更新插件和加载市场仓库图标使用所选下载源，失败时不自动切换。</p>
                 </div>
                 <Select value={draft.download_source} disabled={disabled}
                   onValueChange={(value: SourceSettings['download_source']) => setDraft({ ...draft, download_source: value })}>
@@ -113,6 +115,7 @@ export function PluginSettingsDialog({ onClose, onSaved }: PluginSettingsDialogP
                 </div>}
               </Card>
             </>}
+            <PluginDependenciesSection onChanged={onDependenciesChanged} onBusyChange={setDependenciesBusy} />
           </div>
         </DialogBody>
         <DialogFooter>

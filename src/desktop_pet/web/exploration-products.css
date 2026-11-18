@@ -1,0 +1,18 @@
+.exploration-products { overflow-wrap: anywhere; user-select: text; }
+.product-overview { white-space: pre-wrap; }
+.product-section > h3 { font-size: 1.1em; margin: 18px 0 9px; }
+.product-card { border: 1.5px solid var(--ink); border-radius: 12px; background: var(--paper); padding: 12px; margin-bottom: 10px; }
+.product-card h4 { margin: 5px 0 8px; font-size: 1em; }
+.product-card p { margin: 6px 0; white-space: pre-wrap; }
+.product-label, .product-empty { color: #716858; font-size: .88em; }
+.product-content { white-space: pre-wrap; background: var(--paper-2); border-radius: 8px; padding: 9px; margin: 8px 0; }
+.product-reference { font-size: .9em; margin: 5px 0; }
+.product-reference a { color: #375b26; }
+.product-card dl { margin: 0; }
+.product-card dt { font-weight: 700; margin-top: 9px; }
+.product-card dd { margin: 3px 0 0; white-space: pre-wrap; }
+.product-card ol { margin: 0; padding-left: 22px; }
+.product-card li { padding: 2px 0; }
+.product-card img, .product-card video, .product-card audio { display: block; max-width: 100%; max-height: 360px; margin-top: 10px; }
+.product-card details { margin-top: 8px; padding-top: 6px; }
+.reuse-attempt { margin-top: 10px; padding: 10px; border-left: 3px solid var(--orange); background: var(--paper-2); border-radius: 6px; }

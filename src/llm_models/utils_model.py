@@ -11,11 +11,13 @@ import random
 import re
 import time
 import traceback
+import uuid
 
 from openai import APITimeoutError
 from rich.traceback import install
 
 from src.common.logger import get_logger
+from src.common.exceptions import OperationAbortedError
 from src.common.data_models.llm_service_data_models import (
     LLMAudioTranscriptionResult,
     LLMEmbeddingResult,
@@ -66,6 +68,8 @@ from src.llm_models.payload_content.tool_option import (
 from src.llm_models.utils import compress_messages, llm_usage_recorder
 from src.services.model_task_usage_service import track_model_task_usage
 
+from .text_tool_call import normalize_text_tool_response
+
 install(extra_lines=3)
 
 logger = get_logger("llm_models")
@@ -79,7 +83,6 @@ MIN_COMPRESSED_IMAGE_TARGET_SIZE_BYTES = 512 * 1024
 EMPTY_TASK_FALLBACKS = {
     "fast_model": "utils",
     "learner": "utils",
-    "mid_memory": "fast_model",
 }
 EMBEDDING_TASK_NAMES = {"embedding", "image_embedding"}
 """嵌入类任务：向量空间必须保持一致，因此忽略配置里的选择策略，始终按配置顺序取第一个可用模型"""
@@ -147,7 +150,7 @@ class LLMOrchestrator:
         if not isinstance(task_config, TaskConfig):
             raise ValueError(f"未找到名为 '{self.task_name}' 的任务配置")
         effective_task_name = self.task_name
-        # 按任务继用链解析，确保 mid_memory 留空时也遵循 fast_model -> utils。
+        # 按任务继用链解析，快速模型和学习模型留空时继用 utils。
         while not any(str(model_name).strip() for model_name in task_config.model_list):
             fallback_task_name = EMPTY_TASK_FALLBACKS.get(effective_task_name, "")
             if fallback_task_name:
@@ -322,9 +325,11 @@ class LLMOrchestrator:
             total_tokens=response.usage.total_tokens if response.usage is not None else 0,
             prompt_cache_hit_tokens=response.usage.prompt_cache_hit_tokens if response.usage is not None else 0,
             prompt_cache_miss_tokens=response.usage.prompt_cache_miss_tokens if response.usage is not None else 0,
+            prompt_cache_reported=response.usage.prompt_cache_reported if response.usage is not None else False,
             provider_response=response.provider_response,
             wire_protocol=response.wire_protocol,
             request_wire_payload=response.request_wire_payload,
+            request_snapshot=response.request_snapshot,
         )
 
     async def generate_response_for_image(
@@ -552,6 +557,29 @@ class LLMOrchestrator:
             response,
             model_info.name,
         )
+
+    async def generate_response_from_snapshot_async(self, snapshot: ResponseRequest) -> LLMResponseResult:
+        """固定实际模型与输入执行派生请求，保留统一重试、超时和用量统计。"""
+        self._refresh_task_config()
+        request = await asyncio.to_thread(snapshot.detached_snapshot)
+        request.trace_context = RequestTraceContext(
+            task_name=self.task_name, request_type=self.request_type, session_id=self.session_id,
+        )
+        request.logical_turn_id = uuid.uuid4().hex
+        model_info = request.model_info
+        api_provider = TempMethodsLLMUtils.get_provider_by_name(model_info.api_provider)
+        client = await client_registry.get_client_class_instance_async(api_provider)
+        started = time.time()
+        response = await self._attempt_request_on_model_with_timeout(api_provider, client, request, model_info.name)
+        if response.usage is not None:
+            await asyncio.to_thread(
+                llm_usage_recorder.record_usage_to_database,
+                request_started_at=datetime.fromtimestamp(request.trace_context.current_attempt_started_at),
+                model_info=model_info, model_usage=response.usage, user_id="system",
+                request_type=self.request_type, task_name=self.task_name, session_id=self.session_id,
+                time_cost=time.time() - started,
+            )
+        return self._build_generation_result(response, model_info.name)
 
     async def get_embedding(self, embedding_input: str, *, session_id: str = "") -> LLMEmbeddingResult:
         """获取嵌入向量。
@@ -1066,6 +1094,7 @@ class LLMOrchestrator:
                 ):
                     if isinstance(active_request, ResponseRequest):
                         response = await client.get_response(active_request)
+                        await asyncio.to_thread(normalize_text_tool_response, response, active_request)
                     elif isinstance(active_request, EmbeddingRequest):
                         response = await client.get_embedding(active_request)
                     elif isinstance(active_request, ImageEmbeddingRequest):
@@ -1078,6 +1107,11 @@ class LLMOrchestrator:
                     response=response,
                 )
                 await asyncio.to_thread(mark_request_succeeded, active_request, response)
+                if isinstance(active_request, ResponseRequest) and self.request_type in {
+                    "maisaka.planner", "maisaka.context_compaction",
+                }:
+                    # 包括图片重试后的实际输入；禁止用初始请求冒充最终成功请求。
+                    response.request_snapshot = await asyncio.to_thread(active_request.detached_snapshot)
                 return response
             except EmptyResponseException as e:
                 await ensure_attempt_snapshot(e)
@@ -1376,7 +1410,13 @@ class LLMOrchestrator:
                         context_items = context_result
                 if request_type == RequestType.RESPONSE and context_items:
                     # 图片解码、缩放及切图在线程池执行，避免阻塞 Bot 或 WebUI 事件循环。
-                    context_items = await asyncio.to_thread(normalize_context_images, context_items)
+                    context_items = await asyncio.to_thread(
+                        normalize_context_images,
+                        context_items,
+                        max_images=model_info.max_images,
+                        max_side=model_info.image_max_side,
+                        min_side=model_info.image_min_side,
+                    )
                 request = self._build_client_request(
                     request_type=request_type,
                     model_info=model_info,
@@ -1416,7 +1456,7 @@ class LLMOrchestrator:
                     request_started_at=datetime.fromtimestamp(trace_context.current_attempt_started_at),
                 )
 
-            except (ReqAbortException, asyncio.CancelledError) as e:
+            except (OperationAbortedError, asyncio.CancelledError) as e:
                 self._adjust_model_usage(model_info.name, usage_penalty_delta=-1)
                 if self.request_type.startswith("maisaka."):
                     logger.debug(

@@ -19,10 +19,14 @@ import {
 } from 'lucide-react'
 
 import { cn } from '@/lib/utils'
+import { scopeBotResourcePath, useHostRuntime } from '@/host/state'
 import type { PluginDisplayIcon, PluginType } from '@/types/plugin'
+
+import { getPluginType } from './types'
 
 interface PluginIconManifest {
   id?: string
+  version?: string
   plugin_type?: PluginType | string
   display?: {
     icon?: PluginDisplayIcon
@@ -33,6 +37,7 @@ interface PluginIconProps {
   pluginId: string
   manifest?: PluginIconManifest
   installed?: boolean
+  installedVersion?: string
   marketplaceIconUrl?: string
   className?: string
   iconClassName?: string
@@ -61,27 +66,9 @@ const LUCIDE_ICONS: Record<string, LucideIcon> = {
 }
 
 const DEFAULT_TYPE_ICONS: Record<PluginType, LucideIcon> = {
-  adapter: Plug,
-  chat: Bot,
-  creative: ImageIcon,
-  provider: Cloud,
-  management: Shield,
-  search: Search,
-  knowledge: BookOpen,
-  media: ImageIcon,
-  game: Gamepad2,
-  security: Shield,
-  automation: Settings,
-  extension: Puzzle,
-  other: Package,
-}
-
-function normalizePluginType(value: PluginType | string | undefined): PluginType {
-  if (!value?.trim()) {
-    return 'extension'
-  }
-
-  return value in DEFAULT_TYPE_ICONS ? (value as PluginType) : 'other'
+  adapter: Plug, tool: Wrench, provider: Cloud, management: Shield,
+  data: Database, media: ImageIcon, game: Gamepad2, integration: Plug,
+  other: Package, chat: Bot, creative: ImageIcon, automation: Settings, deskpet: Bot,
 }
 
 function resolveLucideIcon(name: string | undefined): LucideIcon | undefined {
@@ -93,40 +80,51 @@ function resolveLucideIcon(name: string | undefined): LucideIcon | undefined {
 }
 
 function getFallbackIcon(manifest?: PluginIconManifest, icon?: PluginDisplayIcon): LucideIcon {
-  return resolveLucideIcon(icon?.fallback) ?? DEFAULT_TYPE_ICONS[normalizePluginType(manifest?.plugin_type)]
+  const type = getPluginType({ manifest })
+  return resolveLucideIcon(icon?.fallback) ?? (type ? DEFAULT_TYPE_ICONS[type] : Puzzle)
 }
 
 function getImageSource(
   pluginId: string,
   icon: PluginDisplayIcon,
   installed?: boolean,
-  marketplaceIconUrl?: string
+  marketplaceIconUrl?: string,
+  version?: string
 ): string | null {
   if (icon.type !== 'local') {
     return null
   }
 
   if (installed) {
-    return `/api/webui/plugins/icon/${encodeURIComponent(pluginId)}`
+    const cacheKey = new URLSearchParams({ version: version ?? '', icon: icon.value })
+    return `/api/webui/plugins/icon/${encodeURIComponent(pluginId)}?${cacheKey}`
   }
 
-  return marketplaceIconUrl?.trim() || null
+  const url = marketplaceIconUrl?.trim()
+  // CNB Raw 禁止跨站嵌图，由 WebUI 同源端点读取。
+  if (url?.startsWith('https://cnb.cool/Mai-with-u/plugin-repo/-/git/raw/')) {
+    return `/api/webui/plugins/market-icon?url=${encodeURIComponent(url)}`
+  }
+  return url || null
 }
 
 export function PluginIcon({
   pluginId,
   manifest,
   installed,
+  installedVersion,
   marketplaceIconUrl,
   className,
   iconClassName
 }: PluginIconProps) {
+  useHostRuntime()
   const icon = manifest?.display?.icon
   const [failedImageSource, setFailedImageSource] = useState<string | null>(null)
-  const imageSource = useMemo(
-    () => icon ? getImageSource(pluginId, icon, installed, marketplaceIconUrl) : null,
-    [icon, installed, marketplaceIconUrl, pluginId]
+  const unscopedImageSource = useMemo(
+    () => icon ? getImageSource(pluginId, icon, installed, marketplaceIconUrl, installedVersion ?? manifest?.version) : null,
+    [icon, installed, installedVersion, manifest?.version, marketplaceIconUrl, pluginId]
   )
+  const imageSource = unscopedImageSource ? scopeBotResourcePath(unscopedImageSource) : null
 
   const style: CSSProperties | undefined = icon?.background ? { backgroundColor: icon.background } : undefined
   const baseClassName = cn(
@@ -137,7 +135,7 @@ export function PluginIcon({
   if (icon?.type === 'emoji') {
     return (
       <div className={baseClassName} style={style}>
-        <span className={cn('text-xl leading-none', iconClassName)} aria-hidden="true">
+        <span className={cn('flex items-center justify-center text-xl leading-none', iconClassName)} aria-hidden="true">
           {icon.value}
         </span>
       </div>

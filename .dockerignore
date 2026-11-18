@@ -10,6 +10,7 @@ docs/
 # test
 .env
 .venv/
+uv.lock
 .pytest_cache/
 .ruff_cache/
 .tmp_*/

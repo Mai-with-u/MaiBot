@@ -24,9 +24,10 @@ from src.common.data_models.llm_service_data_models import (
     PromptInput,
     PromptMessage,
 )
+from src.common.llm_json import parse_llm_json
 from src.common.logger import get_logger
 from src.common.utils.utils_image import ImageUtils
-from src.llm_models.model_client.base_client import BaseClient
+from src.llm_models.model_client.base_client import BaseClient, ResponseRequest
 from src.llm_models.payload_content.context_item import (
     AssistantMessageItem,
     ContextImagePart,
@@ -301,6 +302,12 @@ class LLMServiceClient:
             session_id=self._resolve_effective_session_id(session_id),
         )
         self._record_cache_stats(result, prompt_text=prompt_text, session_id=session_id)
+        return result
+
+    async def generate_response_from_snapshot(self, snapshot: ResponseRequest) -> LLMResponseResult:
+        """复用已发送的模型、参数和工具定义，不重新选择任务默认模型。"""
+        result = await self._orchestrator.generate_response_from_snapshot_async(snapshot)
+        self._record_cache_stats(result, prompt_text=None, session_id=self.session_id)
         return result
 
     async def generate_response_with_context(
@@ -596,7 +603,7 @@ def _normalize_tool_arguments(arguments: Any) -> Dict[str, Any] | None:
         if not stripped_arguments:
             return {}
         try:
-            parsed_arguments = json.loads(stripped_arguments)
+            parsed_arguments = parse_llm_json(stripped_arguments)
         except json.JSONDecodeError:
             return {"raw_arguments": arguments}
         if isinstance(parsed_arguments, dict):

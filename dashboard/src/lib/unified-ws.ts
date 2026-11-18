@@ -1,5 +1,4 @@
 import { getWsBaseUrl } from '@/lib/api-base'
-import { backendApi } from '@/lib/http'
 
 import { getSetting } from './settings-manager'
 
@@ -57,19 +56,6 @@ function isResponseEnvelope(message: WsServerEnvelope): message is WsResponseEnv
 
 function isEventEnvelope(message: WsServerEnvelope): message is WsEventEnvelope {
   return message.op === 'event'
-}
-
-async function getWsToken(): Promise<string | null> {
-  try {
-    const data = await backendApi.get<{ success?: boolean; token?: string }>('/api/webui/ws-token')
-    if (data.success && data.token) {
-      return data.token
-    }
-    return null
-  } catch (error) {
-    console.error('获取统一 WebSocket token 失败:', error)
-    return null
-  }
 }
 
 class UnifiedWebSocketClient {
@@ -228,11 +214,10 @@ class UnifiedWebSocketClient {
   private async createWebSocketUrl(): Promise<string | null> {
     try {
       const wsBaseUrl = await getWsBaseUrl()
-      const wsToken = await getWsToken()
-      if (!wsBaseUrl || !wsToken) {
+      if (!wsBaseUrl) {
         return null
       }
-      return `${wsBaseUrl}/api/webui/ws?token=${encodeURIComponent(wsToken)}`
+      return `${wsBaseUrl}/api/webui/ws`
     } catch (error) {
       console.error('构建统一 WebSocket 地址失败:', error)
       return null

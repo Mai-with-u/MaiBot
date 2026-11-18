@@ -1,3 +1,4 @@
+import { USER_DATA_MIGRATION_ENABLED } from '@/lib/release-features'
 import { useCallback, useEffect, useRef, useState } from 'react'
 import { useTranslation } from 'react-i18next'
 
@@ -29,10 +30,15 @@ import {
 import type { CustomPage, WebUIPage } from '@/lib/plugin-webui'
 import { prepareUploadImage } from '@/lib/upload-image'
 
+const REQUESTS_PER_SECOND = 60
+const REQUEST_BURST = 600
+
 interface CustomPageProps {
   pluginId: string
   page: CustomPage
   pages: WebUIPage[]
+  embedded?: boolean
+  initialState?: Record<string, string>
 }
 
 export function PluginCustomPage(props: CustomPageProps) {
@@ -50,6 +56,8 @@ function CustomPageSession({
   pluginId,
   page,
   pages,
+  embedded = false,
+  initialState,
   onReload,
 }: CustomPageProps & { onReload: () => void }) {
   const { t, i18n } = useTranslation()
@@ -58,7 +66,7 @@ function CustomPageSession({
   const controller = useRef<AbortController | null>(null)
   const loaded = useRef(false)
   const connected = useRef(false)
-  const [pageState] = useState(readPluginPageState)
+  const [pageState] = useState(() => initialState ?? readPluginPageState())
   // getRandomValues also works on public HTTP deployments where randomUUID is unavailable.
   const [nonce] = useState(() =>
     Array.from(crypto.getRandomValues(new Uint32Array(4)), (value) =>
@@ -211,7 +219,7 @@ function CustomPageSession({
     port.current = channel.port1
     const signal = controller.current.signal
     let inflight = 0
-    let tokens = 200
+    let tokens = REQUEST_BURST
     let refill = performance.now()
     let layoutTokens = 100
     let layoutRefill = refill
@@ -237,12 +245,16 @@ function CustomPageSession({
         }
         return
       }
-      tokens = Math.min(200, tokens + (now - refill) / 50)
+      tokens = Math.min(REQUEST_BURST, tokens + ((now - refill) * REQUESTS_PER_SECOND) / 1000)
       refill = now
-      // Allow bursts of 200 messages and sustain 20 per second for batch uploads.
       // Flooding closes this page's bridge instead of growing a queue in the host.
       if (tokens < 1) {
-        stop(t('pluginWebUI.customStopRequestRate'))
+        stop(
+          t('pluginWebUI.customStopRequestRate', {
+            rate: REQUESTS_PER_SECOND,
+            burst: REQUEST_BURST,
+          })
+        )
         return
       }
       tokens -= 1
@@ -271,6 +283,20 @@ function CustomPageSession({
           if (request.kind === 'navigate') {
             if (!pages.some((target) => target.id === request.name))
               throw new Error('Page is not declared by this plugin')
+            if (
+              USER_DATA_MIGRATION_ENABLED &&
+              pluginId === 'Mai-with-u.qq-adapter' &&
+              request.name === 'group-mappings' &&
+              request.args.view === 'injection'
+            ) {
+              const search = new URLSearchParams({ tab: 'user-migration' })
+              if (typeof request.args.source === 'string') search.set('source', request.args.source)
+              if (typeof request.args.target === 'string') search.set('target', request.args.target)
+              if (request.args.fromMapping === true) search.set('fromMapping', 'true')
+              channel.port1.postMessage({ id, result: null })
+              window.location.assign(`/data-transfer?${search}`)
+              return
+            }
             const state = new URLSearchParams({ state: JSON.stringify(request.args) })
             channel.port1.postMessage({ id, result: null })
             window.location.assign(`${extensionPath(pluginId, request.name)}?${state}`)
@@ -408,25 +434,36 @@ function CustomPageSession({
         <div data-theme-probe="background" className="bg-background" />
         <div data-theme-probe="soft" className="bg-muted" />
       </div>
-      <div className="flex items-center justify-between gap-3">
-        <h1 className="text-lg font-semibold">{page.title}</h1>
-        <div className="flex gap-2">
-          <Button
-            variant="outline"
-            onClick={() => stop(t('pluginWebUI.customStopManual'))}
-            disabled={stopped}
-          >
-            {t('pluginWebUI.customStop')}
-          </Button>
-          <Button variant="outline" onClick={() => void reload()} disabled={reloading}>
-            {t('pluginWebUI.customReload')}
-          </Button>
+      {!embedded && (
+        <div className="flex items-center justify-between gap-3">
+          <h1 className="text-lg font-semibold">{page.title}</h1>
+          <div className="flex gap-2">
+            <Button
+              variant="outline"
+              onClick={() => stop(t('pluginWebUI.customStopManual'))}
+              disabled={stopped}
+            >
+              {t('pluginWebUI.customStop')}
+            </Button>
+            <Button variant="outline" onClick={() => void reload()} disabled={reloading}>
+              {t('pluginWebUI.customReload')}
+            </Button>
+          </div>
         </div>
-      </div>
-      {page.description && <p className="text-muted-foreground text-sm">{page.description}</p>}
+      )}
+      {!embedded && page.description && (
+        <p className="text-muted-foreground text-sm">{page.description}</p>
+      )}
       {error && (
         <Alert variant="destructive">
-          <AlertDescription>{error}</AlertDescription>
+          <AlertDescription>
+            {error}
+            {embedded && (
+              <Button variant="outline" onClick={() => void reload()} disabled={reloading}>
+                重试
+              </Button>
+            )}
+          </AlertDescription>
         </Alert>
       )}
       {!source && !error && !stopped && <p>{t('pluginWebUI.loading')}</p>}
@@ -437,7 +474,7 @@ function CustomPageSession({
           <iframe
             ref={frame}
             title={page.title}
-            sandbox="allow-scripts"
+            sandbox="allow-scripts allow-forms"
             referrerPolicy="no-referrer"
             allow="camera 'none'; microphone 'none'; geolocation 'none'; clipboard-read 'none'; clipboard-write 'none'"
             srcDoc={source}

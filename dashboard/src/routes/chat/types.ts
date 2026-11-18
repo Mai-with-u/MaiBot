@@ -160,6 +160,8 @@ export interface WsMessage {
   bot_qq?: string
   platform?: string
   virtual_mode?: boolean
+  // user_message 的发送端：网页聊天室为其逻辑会话 ID，插件界面为 plugin:<插件ID>
+  origin?: string
   sender?: {
     name: string
     user_id?: string
@@ -167,6 +169,7 @@ export interface WsMessage {
   }
   images?: ChatIncomingImage[]
   emojis?: ChatIncomingImage[]
+  files?: Array<{ file_ref: string; name: string; size: number }>
   // 历史消息列表（用于 type: 'history'）
   messages?: Array<{
     id?: string

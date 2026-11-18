@@ -1,7 +1,7 @@
 """统一工具抽象。
 
 该模块定义主程序内部统一使用的工具声明、调用与执行结果模型，
-用于收敛插件 Tool、兼容旧 Action、MaiSaka 内置 Tool 与 MCP Tool。
+用于收敛插件 Tool、MaiSaka 内置 Tool 与 MCP Tool。
 """
 
 from __future__ import annotations
@@ -17,6 +17,48 @@ from src.common.logger import get_logger
 from src.llm_models.payload_content.tool_option import ToolDefinitionInput
 
 logger = get_logger("core.tooling")
+
+
+def filter_tool_arguments(arguments: Dict[str, Any], schema: Dict[str, Any] | None) -> Dict[str, Any]:
+    """只保留工具声明的参数；参数值本身（正文、字典等）保持原样。"""
+
+    root = schema or {}
+
+    def declares(name: str, node: Dict[str, Any]) -> bool:
+        reference = node.get("$ref")
+        if isinstance(reference, str) and reference.startswith("#/"):
+            target = root
+            for part in reference[2:].split("/"):
+                target = target[part.replace("~1", "/").replace("~0", "~")]
+            if declares(name, target):
+                return True
+        if name in node.get("properties", {}):
+            return True
+        if any(re.search(pattern, name) for pattern in node.get("patternProperties", {})):
+            return True
+        additional = node.get("additionalProperties", False)
+        if additional is True or isinstance(additional, dict):
+            return True
+        return any(
+            declares(name, branch)
+            for keyword in ("allOf", "anyOf", "oneOf")
+            for branch in node.get(keyword, [])
+            if isinstance(branch, dict)
+        )
+
+    return {name: value for name, value in arguments.items() if declares(name, root)}
+
+
+def normalize_tool_description(metadata: Dict[str, Any]) -> Dict[str, Any]:
+    """在工具输入边界统一描述字段，后续链路只使用 description。"""
+    normalized = dict(metadata)
+    descriptions = [
+        normalized.get("description"),
+        normalized.pop("brief_description", None),
+        normalized.pop("detailed_description", None),
+    ]
+    normalized["description"] = next((value.strip() for value in descriptions if value and value.strip()), "")
+    return normalized
 
 
 @dataclass(slots=True)
@@ -115,15 +157,14 @@ class ToolSpec:
         brief_description: str = "",
         detailed_description: str = "",
     ) -> None:
-        """初始化工具声明。
-
-        brief_description/detailed_description 为旧字段兼容入口：
-        - description 为空时使用 brief_description。
-        - detailed_description 被弃用，不参与描述构建。
-        """
+        """初始化工具声明，并在输入边界统一描述字段。"""
 
         self.name = name
-        self.description = str(description or brief_description or "").strip()
+        self.description = normalize_tool_description({
+            "description": description,
+            "brief_description": brief_description,
+            "detailed_description": detailed_description,
+        })["description"]
         self.title = title
         self.parameters_schema = parameters_schema
         self.output_schema = output_schema
@@ -184,6 +225,7 @@ class ToolExecutionContext:
     user_id: str = ""
     platform: str = ""
     metadata: Dict[str, Any] = field(default_factory=dict)
+    is_focus: bool = False
 
 
 @dataclass(slots=True)
@@ -196,6 +238,7 @@ class ToolAvailabilityContext:
     group_id: str = ""
     user_id: str = ""
     platform: str = ""
+    is_focus: bool = False
 
 
 @dataclass(slots=True)
@@ -401,11 +444,13 @@ class ToolRegistry:
                 group_id=context.group_id,
                 user_id=context.user_id,
                 platform=context.platform,
+                is_focus=context.is_focus,
             )
 
         route = (await self._list_routes(availability_context)).get(invocation.tool_name)
         if route is not None:
             provider, spec = route
+            invocation.arguments = filter_tool_arguments(invocation.arguments, spec.parameters_schema)
             metadata = dict(invocation.metadata)
             if provider.provider_type == "mcp":
                 # 服务器选择来自注册表，不接受调用方伪造的路由元数据。

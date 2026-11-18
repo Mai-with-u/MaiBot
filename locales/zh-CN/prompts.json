@@ -4,5 +4,6 @@
   "prompt.invalid_category": "Prompt 分类 '{category}' 非法",
   "prompt.invalid_name": "Prompt 名称 '{name}' 非法",
   "prompt.missing_placeholder": "Prompt 模板 '{name}' 缺少占位符 '{placeholder}'",
-  "prompt.template_not_found": "未找到 locale '{locale}' 下的 Prompt 模板 '{name}'"
+  "prompt.template_not_found": "未找到 locale '{prompt_locale}' 下的 Prompt 模板 '{name}'",
+  "prompt.template_outdated": "Prompt 模板 '{name}' 已过期，使用默认模板"
 }

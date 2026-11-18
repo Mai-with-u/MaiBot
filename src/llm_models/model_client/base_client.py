@@ -1,8 +1,9 @@
 from abc import ABC, abstractmethod
 from dataclasses import dataclass, field
-from typing import Any, Callable, Coroutine, Dict, List, Set, Tuple, Type
+from typing import Any, Callable, Coroutine, Dict, List, Literal, Set, Tuple, Type
 
 import asyncio
+import copy
 import dataclasses
 import time
 import uuid
@@ -10,7 +11,7 @@ import uuid
 from src.common.logger import get_logger
 from src.common.startup_diagnostics import diagnostic_stage
 from src.config.config import config_manager
-from src.config.model_configs import APIProvider, ModelInfo
+from src.config.model_configs import APIProvider, ModelInfo, validate_provider_for_request
 from src.llm_models.payload_content.context_item import (
     ContextItem,
     ModelOutputItem,
@@ -133,6 +134,9 @@ class APIResponse:
 
     request_wire_payload: Any = field(default=None, repr=False)
     """本次成功请求的最终 wire 载荷，仅用于缓存诊断和可观测性。"""
+
+    request_snapshot: "ResponseRequest | None" = field(default=None, repr=False)
+    """实际成功请求的独立快照，不包含认证信息或运行中的回调。"""
 
     request_protocol_hash: str | None = None
     """图片嵌入客户端计算的协议指纹；自动适配图片嵌入协议时填充，
@@ -275,6 +279,7 @@ class ResponseRequest:
     extra_params: Dict[str, Any] = field(default_factory=dict)
     trace_context: RequestTraceContext | None = None
     logical_turn_id: str = field(default_factory=lambda: uuid.uuid4().hex)
+    tool_choice: Literal["none"] | None = None
 
     def copy_with(self, **changes: Any) -> "ResponseRequest":
         """基于当前请求创建一个带局部变更的新请求。
@@ -289,6 +294,7 @@ class ResponseRequest:
             "model_info": self.model_info,
             "context_items": list(self.context_items),
             "tool_options": None if self.tool_options is None else list(self.tool_options),
+            "tool_choice": self.tool_choice,
             "max_tokens": self.max_tokens,
             "temperature": self.temperature,
             "response_format": self.response_format,
@@ -301,6 +307,13 @@ class ResponseRequest:
         }
         payload.update(changes)
         return ResponseRequest(**payload)
+
+    def detached_snapshot(self) -> "ResponseRequest":
+        """冻结输入和模型设置，解除中断、回调及诊断上下文的生命周期。"""
+        return copy.deepcopy(self.copy_with(
+            stream_response_handler=None, async_response_parser=None,
+            interrupt_flag=None, trace_context=None,
+        ))
 
 
 @dataclass(slots=True)
@@ -666,6 +679,7 @@ class ClientRegistry:
         """
         from . import ensure_client_type_loaded
 
+        validate_provider_for_request(api_provider)
         ensure_client_type_loaded(api_provider.client_type)
 
         # 如果强制创建新实例，直接创建不使用缓存
@@ -702,6 +716,7 @@ class ClientRegistry:
         """异步获取客户端：重初始化在线程中执行，缓存仍按调用方事件循环隔离。"""
         from . import ensure_client_type_loaded
 
+        validate_provider_for_request(api_provider)
         loop = asyncio.get_running_loop()
         cache_key = (loop, api_provider.name)
         if cached := self.client_instance_cache.get(cache_key):

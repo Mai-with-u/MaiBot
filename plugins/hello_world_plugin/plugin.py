@@ -9,8 +9,8 @@ from typing import Any, Dict, List
 import random
 import re
 
-from maibot_sdk import API, Action, Command, EventHandler, Field, HomeCard, MaiBotPlugin, PluginConfigBase, Tool
-from maibot_sdk.types import ActivationType, EventType, ToolParameterInfo, ToolParamType
+from maibot_sdk import API, Command, EventHandler, Field, HomeCard, MaiBotPlugin, PluginConfigBase, Tool
+from maibot_sdk.types import EventType, ToolParameterInfo, ToolParamType
 
 
 class PluginSectionConfig(PluginConfigBase):
@@ -160,7 +160,7 @@ class HelloWorldPlugin(MaiBotPlugin):
     @HomeCard(
         "hello_world_feature_card",
         title="Hello World 功能入口",
-        description="展示示例插件提供的命令、Action 和工具入口。",
+        description="展示示例插件提供的命令和工具入口。",
         content=[
             {
                 "type": "markdown",
@@ -200,7 +200,7 @@ class HelloWorldPlugin(MaiBotPlugin):
         title="Hello World 示例数据",
         description="用静态示例数据演示首页数据型卡片的结构化写法。",
         content=[
-            {"type": "stat", "label": "已声明组件", "value": "8+", "detail": "Tool / Action / Command / EventHandler / HomeCard"},
+            {"type": "stat", "label": "已声明组件", "value": "8+", "detail": "Tool / Command / EventHandler / HomeCard"},
             {
                 "type": "key_value",
                 "entries": {
@@ -245,15 +245,12 @@ class HelloWorldPlugin(MaiBotPlugin):
         except Exception as e:
             return {"name": "compare_numbers", "content": f"比较数字失败，炸了: {e}"}
 
-    # ===== Action 组件 =====
-
-    @Action(
+    @Tool(
         "hello_greeting",
-        description="向用户发送问候消息",
-        activation_type=ActivationType.ALWAYS,
-        action_parameters={"greeting_message": "要发送的问候消息"},
-        action_require=["需要发送友好问候时使用", "当有人向你问好时使用", "当你遇见没有见过的人时使用"],
-        associated_types=["text"],
+        description="当用户打招呼或需要友好问候时，向用户发送问候消息",
+        parameters=[
+            ToolParameterInfo(name="greeting_message", param_type=ToolParamType.STRING, description="要发送的问候消息"),
+        ],
     )
     async def handle_hello(self, stream_id: str = "", greeting_message: str = "", **kwargs):
         """问候动作"""
@@ -262,16 +259,14 @@ class HelloWorldPlugin(MaiBotPlugin):
         base_message = self.config.greeting.message
         message = base_message + greeting_message
         await self.ctx.send.text(message, stream_id)
-        return True, "发送了问候消息"
+        return {"success": True, "message": "发送了问候消息"}
 
-    @Action(
+    @Tool(
         "bye_greeting",
-        description="向用户发送告别消息",
-        activation_type=ActivationType.KEYWORD,
-        activation_keywords=["再见", "bye", "88", "拜拜"],
-        action_parameters={"bye_message": "要发送的告别消息"},
-        action_require=["用户要告别时使用", "当有人要离开时使用", "当有人和你说再见时使用"],
-        associated_types=["text"],
+        description="当用户告别或准备离开时，向用户发送告别消息",
+        parameters=[
+            ToolParameterInfo(name="bye_message", param_type=ToolParamType.STRING, description="要发送的告别消息"),
+        ],
     )
     async def handle_bye(self, stream_id: str = "", bye_message: str = "", **kwargs):
         """告别动作"""
@@ -279,7 +274,7 @@ class HelloWorldPlugin(MaiBotPlugin):
 
         message = f"再见！期待下次聊天！👋{bye_message}"
         await self.ctx.send.text(message, stream_id)
-        return True, "发送了告别消息"
+        return {"success": True, "message": "发送了告别消息"}
 
     # ===== Command 组件 =====
 

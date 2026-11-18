@@ -1,0 +1,4 @@
+The previous reply supplement attempt failed with this error:
+{error}
+
+Regenerate the supplement plan using this feedback. Follow the schema and available resource inventory above. Output exactly one JSON object, without chat text, explanations, Markdown, or tool calls. The Replyer generates the body; you only arrange quotes, attachments, and the reply placeholder.

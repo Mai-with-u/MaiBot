@@ -1,3 +1,5 @@
+import { USER_DATA_MIGRATION_ENABLED } from '@/lib/release-features'
+import { migrationUserId } from '@/lib/person-migration-navigation'
 import {
   createRootRoute,
   createRoute,
@@ -7,10 +9,16 @@ import {
   redirect,
 } from '@tanstack/react-router'
 import { NotFoundPage } from './routes/404'
-import { Layout } from './components/layout'
+import { AppShell } from './components/app-shell'
+import { BasicFeaturesTour } from './components/tour/BasicFeaturesTour'
 import { RoutePendingFallback } from './components/route-pending-fallback'
 import { checkAuth } from './hooks/use-auth'
+import { isDesktopPetEnabled } from './hooks/use-feature-flags'
+import { getHostRuntime } from './host/state'
 import { RouteErrorBoundary } from './components/error-boundary'
+import { getBotConfig } from './lib/config-api'
+import { rememberMarketInstall } from './lib/plugin-market-navigation'
+import { rememberPersonalityImport } from './lib/personality-import'
 
 // Root 路由
 const rootRoute = createRootRoute({
@@ -22,11 +30,20 @@ const rootRoute = createRootRoute({
       return
     }
 
-    return checkAuth().then((authenticated) => {
-      if (!authenticated) {
+    return checkAuth().then(
+      (authenticated) => {
+        if (!authenticated) {
+          throw redirect({ to: '/auth' })
+        }
+        if (getHostRuntime().host && !getHostRuntime().selected_bot_running) {
+          throw redirect({ to: '/bots' })
+        }
+      },
+      () => {
+        // 认证服务未就绪时，由认证页显示等待连接并重试。
         throw redirect({ to: '/auth' })
       }
-    })
+    )
   },
 })
 
@@ -44,14 +61,15 @@ const setupRoute = createRoute({
   component: lazyRouteComponent(() => import('./routes/setup/index.tsx'), 'SetupPage'),
 })
 
-// 受保护的路由 Root（带 Layout）
+// 受保护的路由 Root（统一使用麦麦观察布局）
 const protectedRoute = createRoute({
   getParentRoute: () => rootRoute,
   id: 'protected',
   component: () => (
-    <Layout>
+    <AppShell>
       <Outlet />
-    </Layout>
+      <BasicFeaturesTour />
+    </AppShell>
   ),
   errorComponent: ({ error }) => <RouteErrorBoundary error={error} />,
 })
@@ -74,7 +92,16 @@ const pluginWebUIManagerRoute = createRoute({
 const indexRoute = createRoute({
   getParentRoute: () => protectedRoute,
   path: '/',
-  component: lazyRouteComponent(() => import('./routes/index'), 'IndexPage'),
+  component: lazyRouteComponent(() => import('./routes/home-entry'), 'HomeEntry'),
+})
+
+const helpHistoryRoute = createRoute({
+  getParentRoute: () => protectedRoute,
+  path: '/help-history',
+  validateSearch: (search: Record<string, unknown>): { session?: string } => ({
+    session: typeof search.session === 'string' ? search.session : undefined,
+  }),
+  component: lazyRouteComponent(() => import('./routes/help-history'), 'HelpHistoryPage'),
 })
 
 // 详细统计路由
@@ -84,17 +111,14 @@ const statisticsRoute = createRoute({
   component: lazyRouteComponent(() => import('./routes/logs'), 'StatisticsLogViewerPage'),
 })
 
-const replyEffectsRoute = createRoute({
-  getParentRoute: () => protectedRoute,
-  path: '/reply-effects',
-  component: lazyRouteComponent(() => import('./routes/reply-effects'), 'ReplyEffectsPage'),
-})
-
 // 配置路由 - 麦麦主程序配置
 const botConfigRoute = createRoute({
   getParentRoute: () => protectedRoute,
   path: '/config/bot',
   beforeLoad: ({ location }) => {
+    if (rememberPersonalityImport(location.hash)) {
+      throw redirect({ href: '/config/bot?tab=bot', replace: true })
+    }
     const params = new URLSearchParams(location.searchStr)
     if (params.get('mode') !== 'webui') return
     params.delete('mode')
@@ -104,6 +128,18 @@ const botConfigRoute = createRoute({
     throw redirect({ href: `/settings${search}${hash}`, replace: true })
   },
   component: lazyRouteComponent(() => import('./routes/config/bot'), 'BotConfigPage'),
+})
+
+const desktopPetRoute = createRoute({
+  getParentRoute: () => protectedRoute,
+  path: '/desktop-pet',
+  beforeLoad: async () => {
+    const { host, selected_bot_running } = getHostRuntime()
+    if (host && !selected_bot_running) throw redirect({ to: '/bots', replace: true })
+    if (!isDesktopPetEnabled(await getBotConfig()))
+      throw redirect({ to: '/config/bot', replace: true })
+  },
+  component: lazyRouteComponent(() => import('./routes/desktop-pet'), 'DesktopPetPage'),
 })
 
 // 配置路由 - 麦麦模型配置
@@ -120,22 +156,23 @@ const promptManagementRoute = createRoute({
   component: lazyRouteComponent(() => import('./routes/config/prompts'), 'PromptManagementPage'),
 })
 
-// 资源管理路由 - 表情包管理
+// 旧表情包地址进入学习页的表情包页签。
 const emojiManagementRoute = createRoute({
   getParentRoute: () => protectedRoute,
   path: '/resource/emoji',
-  component: lazyRouteComponent(
-    () => import('./routes/resource/emoji/index.tsx'),
-    'EmojiManagementPage'
-  ),
+  beforeLoad: () => {
+    throw redirect({ to: '/resource/learning', search: { tab: 'emoji' }, replace: true })
+  },
 })
 
-// 资源管理路由 - 学习（表达方式与黑话）
+// 资源管理路由 - 学习（表达方式、黑话与表情包）
 const learningRoute = createRoute({
   getParentRoute: () => protectedRoute,
   path: '/resource/learning',
-  validateSearch: (search: Record<string, unknown>): { tab: 'expression' | 'jargon' } => ({
-    tab: search.tab === 'jargon' ? 'jargon' : 'expression',
+  validateSearch: (
+    search: Record<string, unknown>
+  ): { tab: 'expression' | 'jargon' | 'emoji' } => ({
+    tab: search.tab === 'jargon' || search.tab === 'emoji' ? search.tab : 'expression',
   }),
   component: lazyRouteComponent(() => import('./routes/resource/learning'), 'LearningPage'),
 })
@@ -153,7 +190,7 @@ const expressionManagementRoute = createRoute({
 const personManagementRoute = createRoute({
   getParentRoute: () => protectedRoute,
   path: '/resource/person',
-  component: lazyRouteComponent(() => import('./routes/person'), 'PersonManagementPage'),
+  component: lazyRouteComponent(() => import('./routes/contacts'), 'ContactsPage'),
 })
 
 // 旧黑话地址进入学习页的黑话页签。
@@ -199,11 +236,20 @@ const reasoningProcessRoute = createRoute({
   component: lazyRouteComponent(() => import('./routes/logs'), 'ReasoningLogViewerPage'),
 })
 
-// MaiSaka 聊天流监控路由
-const plannerMonitorRoute = createRoute({
+const filesRoute = createRoute({
   getParentRoute: () => protectedRoute,
-  path: '/planner-monitor',
-  component: lazyRouteComponent(() => import('./routes/monitor/index.tsx'), 'PlannerMonitorPage'),
+  path: '/files',
+  beforeLoad: () => {
+    throw redirect({ to: '/data-transfer', search: { tab: 'files' }, replace: true })
+  },
+})
+
+const agentRoute = createRoute({
+  getParentRoute: () => protectedRoute,
+  path: '/agent',
+  beforeLoad: () => {
+    throw redirect({ to: '/chat', search: { agent: true }, replace: true })
+  },
 })
 
 // 移动端管理页路由：底部标签栏「管理」，汇总侧栏的全部入口
@@ -217,7 +263,10 @@ const manageRoute = createRoute({
 const chatRoute = createRoute({
   getParentRoute: () => protectedRoute,
   path: '/chat',
-  validateSearch: (search: Record<string, unknown>): { setupTrial?: boolean; observe?: string } => ({
+  validateSearch: (
+    search: Record<string, unknown>
+  ): { setupTrial?: boolean; observe?: string; agent?: boolean } => ({
+    agent: search.agent === true || search.agent === 'true' ? true : undefined,
     setupTrial: search.setupTrial === true || search.setupTrial === 'true' ? true : undefined,
     observe: typeof search.observe === 'string' && search.observe ? search.observe : undefined,
   }),
@@ -228,7 +277,7 @@ const chatRoute = createRoute({
 const chatManagementRoute = createRoute({
   getParentRoute: () => protectedRoute,
   path: '/chat-management',
-  component: lazyRouteComponent(() => import('./routes/chat-management'), 'ChatManagementPage'),
+  component: lazyRouteComponent(() => import('./routes/contacts'), 'ContactsPage'),
 })
 
 // 外部程序嵌入用聊天室路由，不挂载 dashboard 顶栏
@@ -255,8 +304,22 @@ const pluginsEmbedRoute = createRoute({
 const pluginsRoute = createRoute({
   getParentRoute: () => protectedRoute,
   path: '/plugins',
-  validateSearch: (search: Record<string, unknown>): { pluginId?: string } => ({
+  beforeLoad: ({ search }) => {
+    rememberMarketInstall(search)
+  },
+  validateSearch: (
+    search: Record<string, unknown>
+  ): { pluginId?: string; installPluginId?: string; installVersion?: string } => ({
     pluginId: typeof search.pluginId === 'string' ? search.pluginId.trim() || undefined : undefined,
+    installPluginId:
+      typeof search.installPluginId === 'string' &&
+      /^[\p{L}\p{N}_.-]{1,256}$/u.test(search.installPluginId)
+        ? search.installPluginId
+        : undefined,
+    installVersion:
+      typeof search.installVersion === 'string' && /^[\w.+-]{1,80}$/.test(search.installVersion)
+        ? search.installVersion
+        : undefined,
   }),
   component: lazyRouteComponent(
     () => import('./routes/plugins/PluginMarketplacePage'),
@@ -321,11 +384,42 @@ const mcpSettingsRoute = createRoute({
   },
 })
 
-// 数据迁移与备份路由
+// 数据管理：迁移备份与文件管理共用入口。
 const dataTransferRoute = createRoute({
   getParentRoute: () => protectedRoute,
   path: '/data-transfer',
+  validateSearch: (
+    search: Record<string, unknown>
+  ): {
+    tab?: 'transfer' | 'files' | 'chat-migration' | 'user-migration'
+    source?: string
+    target?: string
+    fromMapping?: boolean
+  } => ({
+    tab:
+      search.tab === 'files' || search.tab === 'chat-migration' || (USER_DATA_MIGRATION_ENABLED && search.tab === 'user-migration')
+        ? search.tab
+        : undefined,
+    source: migrationUserId(search.source),
+    target: migrationUserId(search.target),
+    fromMapping: search.fromMapping === true || search.fromMapping === 'true' ? true : undefined,
+  }),
   component: lazyRouteComponent(() => import('./routes/data-transfer'), 'DataTransferPage'),
+})
+
+const hostManagementRoute = createRoute({
+  getParentRoute: () => protectedRoute,
+  path: '/bots',
+  component: lazyRouteComponent(() => import('./routes/bots'), 'HostEntryPage'),
+})
+
+const componentLibraryRoute = createRoute({
+  getParentRoute: () => protectedRoute,
+  path: '/settings/components',
+  component: lazyRouteComponent(
+    () => import('./routes/settings/component-library-page'),
+    'ComponentLibraryPage'
+  ),
 })
 
 const settingsRoute = createRoute({
@@ -387,9 +481,10 @@ const routeTree = rootRoute.addChildren([
     pluginWebUIRoute,
     pluginWebUIManagerRoute,
     indexRoute,
+    helpHistoryRoute,
     statisticsRoute,
-    replyEffectsRoute,
     botConfigRoute,
+    desktopPetRoute,
     modelConfigRoute,
     promptManagementRoute,
     emojiManagementRoute,
@@ -408,11 +503,14 @@ const routeTree = rootRoute.addChildren([
     dataTransferRoute,
     logsRoute,
     reasoningProcessRoute,
-    plannerMonitorRoute,
+    agentRoute,
+    filesRoute,
     chatManagementRoute,
     chatRoute,
     manageRoute,
+    hostManagementRoute,
     settingsRoute,
+    componentLibraryRoute,
     packMarketRoute,
     packDetailRoute,
     webuiFeedbackSurveyRoute,
@@ -432,8 +530,6 @@ function collectRoutePaths(node: RouteNode): string[] {
   return [...currentPath, ...childPaths]
 }
 
-export const registeredRoutePaths = new Set(collectRoutePaths(routeTree as RouteNode))
-
 // 创建路由器
 export const router = createRouter({
   routeTree,
@@ -446,9 +542,18 @@ export const router = createRouter({
   defaultPreloadDelay: 80,
 })
 
+// createRouter 初始化后才有 fullPath，搜索索引必须在此时采集已注册路径。
+export const registeredRoutePaths = new Set(collectRoutePaths(routeTree as RouteNode))
+
 // 类型声明
 declare module '@tanstack/react-router' {
   interface Register {
     router: typeof router
+  }
+}
+
+declare module '@tanstack/history' {
+  interface HistoryState {
+    helpDraft?: { id: number; question?: string; submitted?: boolean }
   }
 }

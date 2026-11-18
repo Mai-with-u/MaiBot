@@ -50,6 +50,7 @@ class RPCServer:
         send_queue_size: int = 128,
         host_version: str = "",
         logger_name: str = _DEFAULT_LOGGER_NAME,
+        connection_lost_callback: Optional[Callable[[], None]] = None,
     ):
         self._transport = transport
         self._session_token = session_token or secrets.token_hex(32)
@@ -57,6 +58,7 @@ class RPCServer:
         self._send_queue_size = send_queue_size
         self._host_version = host_version or detect_host_application_version()
         self._logger = get_logger(logger_name)
+        self._connection_lost_callback = connection_lost_callback
 
         self._id_gen = RequestIdGenerator()
         self._connection: Optional[Connection] = None  # 当前活跃的 Runner 连接
@@ -303,11 +305,13 @@ class RPCServer:
                     should_fail_pending_requests = True
             if should_fail_pending_requests:
                 self._fail_pending_requests(ErrorCode.E_PLUGIN_CRASHED, "Runner 连接已断开")
+                if self._connection_lost_callback is not None:
+                    self._connection_lost_callback()
 
     async def _handle_handshake(self, conn: Connection) -> bool:
         """处理 runner.hello 握手"""
         # 接收握手请求
-        data = await asyncio.wait_for(conn.recv_frame(), timeout=10.0)
+        data = await asyncio.wait_for(conn.recv_frame(), timeout=30.0)
         envelope = self._codec.decode_envelope(data)
         if envelope.method != "runner.hello":
             self._logger.error(f"期望 runner.hello，收到 {envelope.method}")

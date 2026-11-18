@@ -42,6 +42,7 @@ export function ChatNicknameSettings({
         <Input
           id={inputId}
           value={draftName}
+          maxLength={64}
           placeholder={t('chat.identity.namePlaceholder')}
           onChange={(event) => setDraftName(event.target.value)}
           onKeyDown={(event) => {

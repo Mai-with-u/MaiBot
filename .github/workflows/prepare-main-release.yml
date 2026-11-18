@@ -3,24 +3,55 @@ name: Prepare Main Release
 on:
   workflow_dispatch:
 
+env:
+  # GitHub 运行器优先使用官方 PyPI，项目保留国内运行的混合源配置。
+  UV_INDEX: https://pypi.org/simple
+
 concurrency:
   group: prepare-main-release
   cancel-in-progress: false
 
 permissions:
   contents: write
+  pull-requests: write
+  actions: read
+  statuses: write
+  id-token: write
 
 jobs:
   prepare-dashboard-release:
     name: Prepare Dashboard Stable Release
     runs-on: ubuntu-24.04
     environment: webui
+    outputs:
+      version: ${{ steps.release-branch.outputs.version }}
+      commit: ${{ steps.push-release.outputs.commit }}
     steps:
       - name: Check out dev
         uses: actions/checkout@v4
         with:
           ref: dev
           fetch-depth: 0
+
+      - name: Create isolated release branch
+        id: release-branch
+        shell: bash
+        run: |
+          set -euo pipefail
+          VERSION=$(python -c "import tomllib; print(tomllib.load(open('pyproject.toml', 'rb'))['project']['version'])")
+          [[ "$VERSION" =~ ^[0-9]+\.[0-9]+\.[0-9]+$ ]]
+          BRANCH="release/$VERSION"
+          # 重试沿用已固定的发布分支，不吸收 dev 后续的自动更新。
+          if git ls-remote --exit-code --heads origin "$BRANCH"; then
+            git fetch origin "$BRANCH"
+            git checkout -b "$BRANCH" FETCH_HEAD
+          else
+            STATUS=$?
+            test "$STATUS" = 2
+            git checkout -b "$BRANCH"
+          fi
+          echo "branch=$BRANCH" >> "$GITHUB_OUTPUT"
+          echo "version=$VERSION" >> "$GITHUB_OUTPUT"
 
       - name: Set up Bun
         uses: oven-sh/setup-bun@v2
@@ -34,6 +65,8 @@ jobs:
 
       - name: Set up uv
         uses: astral-sh/setup-uv@v5
+        with:
+          version: '0.13.0'
 
       - name: Read Dashboard stable version
         id: dashboard-version
@@ -64,7 +97,7 @@ jobs:
         if: steps.dashboard-version.outputs.published == 'false'
         working-directory: dashboard
         run: |
-          bun install --frozen-lockfile
+          bash ../.github/scripts/install_dashboard_dependencies.sh
           bun run build
 
       - name: Prepare Dashboard package
@@ -132,14 +165,10 @@ jobs:
         run: |
           uv run --no-project --with packaging --with tomlkit python .github/scripts/update_dashboard_stable_dependency.py
 
-      - name: Update dependency lock
-        # 刷新发布前可能已缓存的 Dashboard 索引，其他依赖保持正常缓存。
-        run: uv lock --upgrade-package maibot-dashboard --refresh-package maibot-dashboard
-
-      - name: Verify locked runtime dependencies
+      - name: Verify runtime dependencies
         env:
           UV_NO_CACHE: "1"
-        run: uv sync --locked --no-dev --no-install-project
+        run: uv sync --no-dev --no-install-project
 
       - name: Commit release dependency update
         shell: bash
@@ -148,15 +177,78 @@ jobs:
         run: |
           set -euo pipefail
 
-          if git diff --quiet -- pyproject.toml requirements.txt uv.lock; then
-            echo "Dashboard 正式版依赖和锁文件已就绪"
+          if git diff --quiet -- pyproject.toml requirements.txt; then
+            echo "Dashboard 正式版依赖已就绪"
             exit 0
           fi
 
-          # 使用 checkout 默认保存的 GITHUB_TOKEN 推送；此提交不会自动触发 push 工作流。
+          # 仅推送发布分支，dev 继续使用开发版依赖。
           git config user.name "github-actions[bot]"
           git config user.email "github-actions[bot]@users.noreply.github.com"
-          git add pyproject.toml requirements.txt uv.lock
+          git add pyproject.toml requirements.txt
           git commit -m "chore: 准备 Dashboard 正式版 ${DASHBOARD_VERSION}"
-          git pull --rebase origin dev
-          git push origin HEAD:dev
+
+      - name: Record release commit and validation status
+        id: push-release
+        env:
+          GH_TOKEN: ${{ github.token }}
+          RELEASE_BRANCH: ${{ steps.release-branch.outputs.branch }}
+        run: |
+          set -euo pipefail
+          # 即使无需修改依赖，新发布分支也必须推送到远端。
+          git push origin "HEAD:$RELEASE_BRANCH"
+          COMMIT=$(git rev-parse HEAD)
+          echo "commit=$COMMIT" >> "$GITHUB_OUTPUT"
+          gh api "repos/$GITHUB_REPOSITORY/statuses/$COMMIT" \
+            -f state=pending -f context='Release validation' \
+            -f target_url="$GITHUB_SERVER_URL/$GITHUB_REPOSITORY/actions/runs/$GITHUB_RUN_ID"
+
+      - name: Create or update release pull request
+        env:
+          GH_TOKEN: ${{ github.token }}
+          RELEASE_BRANCH: ${{ steps.release-branch.outputs.branch }}
+        run: |
+          set -euo pipefail
+
+          uv run --no-project --with packaging python - <<'PY'
+          from pathlib import Path
+          import json
+          import os
+          import sys
+          import tomllib
+
+          sys.path.insert(0, str(Path(".github/scripts").resolve()))
+          from maibot_release import release_notes
+
+          version = tomllib.loads(Path("pyproject.toml").read_text(encoding="utf-8"))["project"]["version"]
+          dashboard_version = json.loads(Path("dashboard/package.json").read_text(encoding="utf-8"))["version"]
+          notes = release_notes(Path("changelogs/changelog.md").read_text(encoding="utf-8"), version)
+          run_url = f"{os.environ['GITHUB_SERVER_URL']}/{os.environ['GITHUB_REPOSITORY']}/actions/runs/{os.environ['GITHUB_RUN_ID']}"
+          body = (
+              notes
+              + "\n## 验证\n\n"
+              + f"- [Prepare Main Release]({run_url}) 已完成 WebUI 正式版准备、依赖更新及安装验证。\n"
+              + "- 本 PR 自动进行构建与安装验证；合并后自动上传 PyPI 并创建 GitHub Release。\n"
+          )
+          Path(os.environ["RUNNER_TEMP"], "main-release-pr.md").write_text(body, encoding="utf-8")
+          Path(os.environ["RUNNER_TEMP"], "main-release-title.txt").write_text(
+              f"feat: 发布 {version} 与 WebUI {dashboard_version}", encoding="utf-8"
+          )
+          PY
+          PR_NUMBER=$(gh pr list --repo "$GITHUB_REPOSITORY" --base main --head "$RELEASE_BRANCH" --state open --json number --jq '.[0].number // empty')
+          TITLE=$(cat "$RUNNER_TEMP/main-release-title.txt")
+          if [ -n "$PR_NUMBER" ]; then
+            gh pr edit "$PR_NUMBER" --repo "$GITHUB_REPOSITORY" --title "$TITLE" --body-file "$RUNNER_TEMP/main-release-pr.md"
+          else
+            gh pr create --repo "$GITHUB_REPOSITORY" --base main --head "$RELEASE_BRANCH" --title "$TITLE" --body-file "$RUNNER_TEMP/main-release-pr.md"
+          fi
+
+  validate-release:
+    needs: prepare-dashboard-release
+    # GITHUB_TOKEN 创建的 PR 不触发 pull_request；显式复用同一验证流程。
+    uses: ./.github/workflows/publish-maibot.yml
+    with:
+      version: ${{ needs.prepare-dashboard-release.outputs.version }}
+      ref: ${{ needs.prepare-dashboard-release.outputs.commit }}
+      publish: false
+      report_commit: ${{ needs.prepare-dashboard-release.outputs.commit }}

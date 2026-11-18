@@ -1,0 +1,10 @@
+[reply_mai_replier_group_system]
+display_name = "Mai Replier · グループ · System"
+advanced = true
+description = "Mai Replier のグループ用 System テンプレート。既定では人格のみを含み、個別に編集できる。"
+
+[reply_group_mai_replier]
+display_name = "Mai Replier · グループ · User"
+advanced = true
+description = "Mai Replier のグループ用 User テンプレート。"
+

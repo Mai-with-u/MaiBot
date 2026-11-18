@@ -15,7 +15,7 @@ from .context import BuiltinToolRuntimeContext
 def get_tool_spec(*, enabled: bool = True) -> ToolSpec:
     return ToolSpec(
         name="query_image_memory",
-        description="查询当前聊天中某张图片过去出现过的同图、相似图及其关联记忆。",
+        description="查询当前聊天中关于某张图片的记忆。",
         parameters_schema={
             "type": "object",
             "properties": {

@@ -4,5 +4,6 @@
   "prompt.invalid_category": "Prompt category '{category}' is invalid",
   "prompt.invalid_name": "Prompt name '{name}' is invalid",
   "prompt.missing_placeholder": "Prompt template '{name}' is missing placeholder '{placeholder}'",
-  "prompt.template_not_found": "Prompt template '{name}' not found under locale '{locale}'"
+  "prompt.template_not_found": "Prompt template '{name}' not found under locale '{prompt_locale}'",
+  "prompt.template_outdated": "Prompt template '{name}' is outdated; using the default template"
 }

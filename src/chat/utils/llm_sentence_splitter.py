@@ -4,6 +4,7 @@ from typing import List, Tuple
 
 import json
 
+from src.common.llm_json import normalize_llm_json, parse_llm_json
 from src.common.logger import get_logger
 from src.services.llm_service import LLMServiceClient
 
@@ -17,22 +18,12 @@ _SPLITTER_PROMPT = """
 要求：
 1. 只能返回 JSON 字符串数组，例如 ["第一句。", "第二句？"]，不要 Markdown、解释或代码块。
 2. 只能在原文已有字符之间选择切分位置，不能改写文本、增删或调整顺序。
-3. 不要把括号、引号、颜文字或代码从中间拆开。不要在在结尾留逗号
+3. 不要把括号、引号、颜文字或代码从中间拆开。如果是单独的句子，不要在在结尾留逗号。
 4. 如果是完整代码，公式，或者整理阅读更合适的文段，不需要拆分，返回"no_split"。
 5. 如果是本身比较短，或者表意清晰的句子，不需要拆分，返回"no_split"。
 
 原文：
 """
-
-
-def _normalize_json_payload(payload: str) -> str:
-    """去除模型偶尔添加的 Markdown JSON 代码块包装。"""
-    normalized = payload.strip()
-    if normalized.startswith("```json") and normalized.endswith("```"):
-        return normalized[7:-3].strip()
-    if normalized.startswith("```") and normalized.endswith("```"):
-        return normalized[3:-3].strip()
-    return normalized
 
 
 def _is_no_split_marker(payload: str) -> bool:
@@ -104,14 +95,14 @@ async def split_text_with_llm(text: str) -> List[Tuple[str, str]]:
 
     client = LLMServiceClient(task_name="fast_model", request_type="response.splitter")
     result = await client.generate_response(_SPLITTER_PROMPT + text)
-    payload = _normalize_json_payload(result.response)
+    payload = normalize_llm_json(result.response)
 
     # 模型判断不需要拆分时只返回标记，此时作为单独一段，并同样处理段尾逗号
     if _is_no_split_marker(payload):
         return [_extract_trailing_comma(text)]
 
     try:
-        sentences = json.loads(payload)
+        sentences = parse_llm_json(payload)
     except json.JSONDecodeError as exc:
         raise ValueError("LLM 断句结果不是合法 JSON 数组") from exc
 

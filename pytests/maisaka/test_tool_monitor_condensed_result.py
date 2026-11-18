@@ -37,3 +37,21 @@ async def test_monitor_summary_uses_same_condensed_text_as_planner(condensed: st
     if condensed is not None:
         assert original not in monitor[0]['summary']
     assert result.get_history_content() == original
+
+
+def test_monitor_preserves_error_when_structured_content_masks_it() -> None:
+    engine = object.__new__(MaisakaReasoningEngine)
+    result = ToolExecutionResult(
+        tool_name='query_person_profile',
+        success=False,
+        error_message='person_id 无效，且未能通过别名解析',
+        structured_content={'success': False, 'person_id': ''},
+    )
+    call = ToolCall(call_id='profile-1', func_name='query_person_profile')
+    invocation = ToolInvocation(tool_name='query_person_profile', arguments={'person_name': '某人的妈妈'})
+
+    monitor = engine._build_tool_monitor_result(call, invocation, result, 40)
+    serialized = _serialize_tool_results([monitor])[0]
+
+    assert serialized['error_message'] == result.error_message
+    assert result.error_message not in serialized['summary']

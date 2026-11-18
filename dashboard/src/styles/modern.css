@@ -1,11 +1,8 @@
 /*
  * 原版风格的桌面端（lg 及以上）补充样式。
  * 手机端（lg 以下）由 styles/mobile.css 负责；这里的规则全部包在 min-width: 1024px 里，两边互不影响。
- * 配色、卡片、控件沿用原版风格本身的令牌，这里只管三件事：
- * 1. 侧栏：当前页用贴边的 2px 主色线加主色字，不铺底色；
- * 2. 顶栏：跟随悬停滑动的选中块收成一条贴底的线；
- * 3. 磨砂玻璃：只放在有细节、有色彩、有图片的内容前面——吸顶顶栏、浮层、图表提示框，
- *    以及设置了自定义背景时的卡片与侧栏。模糊强度跟随「视觉效果」里的模糊开关（--visual-blur-md）。
+ * 配色、卡片与控件沿用原版风格令牌，补充导航选中态、图表配色和浮层玻璃效果。
+ * 设置了自定义背景时，卡片使用玻璃表面；模糊强度跟随视觉效果开关（--visual-blur-md）。
  */
 
 @media (min-width: 1024px) {
@@ -46,95 +43,10 @@
     --color-chart-5: var(--modern-chart-5, 338.2 61.1% 57.6%);
   }
 
-  /* ---------- 侧栏 ---------- */
-
-  /* 侧栏里的悬停底色用中性灰，不用强调色 */
-  :root[data-dashboard-style='modern'] [data-dashboard-sidebar='true'] {
-    --accent: var(--color-muted);
-    --accent-foreground: var(--color-foreground);
-  }
-
-  /* Logo 行与顶栏同高：色块在前、字标在后，左缘与导航图标对齐 */
-  :root[data-dashboard-style='modern'] [data-dashboard-logo-area='true'] {
-    height: 2.625rem;
-    padding-right: 0.5rem;
-    padding-left: var(--layout-sidebar-nav-icon-left);
-    border-bottom-color: transparent;
-  }
-
-  :root[data-dashboard-style='modern'] [data-dashboard-logo-area='true'] > div:first-child {
-    justify-content: flex-start;
-  }
-
-  :root[data-dashboard-style='modern'] [data-dashboard-logo-area='true'] > div:first-child > div {
-    width: auto;
-    height: auto;
-    flex-direction: row;
-    align-items: center;
-    gap: 0.5rem;
-  }
-
-  :root[data-dashboard-style='modern'] [data-dashboard-logo-title='true'] {
-    width: auto;
-    background: none;
-    color: hsl(var(--foreground));
-    font-size: 1rem;
-    font-weight: 600;
-    letter-spacing: -0.01em;
-    -webkit-text-fill-color: currentColor;
-  }
-
-  :root[data-dashboard-style='modern'] [data-dashboard-logo-spectrum='true'] {
-    width: 1.375rem;
-    height: 1.375rem;
-    flex: none;
-    order: -1;
-    align-items: stretch;
-    --tw-translate-y: 0;
-    translate: none;
-  }
-
-  :root[data-dashboard-style='modern'] [data-dashboard-logo-spectrum='true'] > span {
-    height: 100%;
-  }
-
-  :root[data-dashboard-style='modern'] [data-dashboard-logo-spectrum-block='true'] {
-    top: 0.625rem;
-    left: var(--layout-sidebar-nav-icon-left);
-  }
-
-  /* 侧栏模式开关（固定 / 悬浮）都放在 Logo 行右侧，垂直居中 */
-  :root[data-dashboard-style='modern']
-    [data-dashboard-sidebar='true']
-    :is([data-dashboard-sidebar-fix-switch='true'], [data-dashboard-sidebar-mode-switch='true']) {
-    top: 50%;
-    right: 0.5rem;
-    bottom: auto;
-    transform: translateY(-50%);
-  }
-
-  :root[data-dashboard-style='modern'] [data-dashboard-sidebar-section-title='true'] {
-    color: hsl(var(--muted-foreground));
-    font-size: 0.75rem;
-    font-weight: 500;
-    letter-spacing: 0;
-    text-transform: none;
-  }
-
-  :root[data-dashboard-style='modern'] [data-dashboard-nav-label='true'] {
-    font-size: 0.875rem;
-  }
-
   /* 当前页：贴着侧栏左缘的 2px 主色线加主色字，不铺底色 */
   :root[data-dashboard-style='modern'] [data-dashboard-nav-item='true'][data-active='true'] {
     background-color: transparent;
     color: hsl(var(--primary));
-    font-weight: 600;
-  }
-
-  :root[data-dashboard-style='modern']
-    [data-dashboard-nav-item='true'][data-active='true']
-    [data-dashboard-nav-label='true'] {
     font-weight: 600;
   }
 
@@ -152,90 +64,6 @@
   :root[data-dashboard-style='modern']
     [data-dashboard-nav-item='true'][data-active='true']:hover {
     background-color: hsl(var(--accent));
-  }
-
-  /* ---------- 顶栏：吸顶玻璃，内容滚到下面时透出来 ---------- */
-
-  :root[data-dashboard-style='modern']
-    [data-dashboard-header='true']:not([data-dashboard-header-collapsed='true']) {
-    -webkit-backdrop-filter: var(--mdn-glass-filter);
-    backdrop-filter: var(--mdn-glass-filter);
-    background-color: hsl(var(--background) / 0.72);
-  }
-
-  /* 顶栏按钮悬停只靠滑动的那条线提示，不再叠一层强调色底 */
-  :root[data-dashboard-style='modern'] [data-dashboard-header='true'] {
-    --accent: var(--color-muted);
-    --accent-foreground: var(--color-foreground);
-  }
-
-  :root[data-dashboard-style='modern']
-    [data-dashboard-header='true']
-    [data-dashboard-header-action='true']:hover {
-    background-color: transparent;
-    color: hsl(var(--foreground));
-  }
-
-  /* 工作区标签显示文字时不再带图标；顶栏变窄、文字收起后图标照常显示 */
-  :root[data-dashboard-style='modern']
-    [data-dashboard-workspace-tabs='true']
-    [data-dashboard-tabs-trigger='true']:has(span.sm\:inline)
-    > svg {
-    display: none;
-  }
-
-  /* 顶栏里跟随悬停滑动的选中块，收成一条贴底的 2px 线 */
-  :root[data-dashboard-style='modern'] [data-dashboard-topbar-pill='true'] {
-    top: auto;
-    right: 0.5rem;
-    bottom: -0.5rem;
-    left: 0.5rem;
-    height: 2px;
-    border-radius: 0;
-    --tw-shadow: 0 0 #0000;
-  }
-
-  :root[data-dashboard-style='modern']
-    [data-dashboard-header-action='true']
-    [data-dashboard-topbar-pill='true'] {
-    right: 0.375rem;
-    bottom: -0.375rem;
-    left: 0.375rem;
-  }
-
-  :root[data-dashboard-style='modern']
-    [data-dashboard-workspace-tabs='true']
-    [data-dashboard-tabs-trigger='true'][data-workspace-highlighted='true'],
-  :root[data-dashboard-style='modern']
-    [data-dashboard-header-action='true'][data-header-action-highlighted='true'] {
-    color: hsl(var(--foreground));
-  }
-
-  :root[data-dashboard-style='modern']
-    [data-dashboard-workspace-tabs='true']
-    [data-dashboard-tabs-trigger='true']
-    span {
-    font-size: 0.9375rem;
-    letter-spacing: 0;
-    text-transform: none;
-  }
-
-  /* 顶栏收起后只剩一条细边：展开用的拉片收成一枚小圆角短条，悬停时变主色 */
-  :root[data-dashboard-style='modern']
-    [data-dashboard-header='true'][data-dashboard-header-collapsed='true']
-    [data-dashboard-topbar-toggle='true'] {
-    width: 2.5rem;
-    height: 0.25rem;
-    border-radius: 9999px !important;
-    background-color: hsl(var(--muted-foreground) / 0.5);
-    transition: background-color 150ms;
-  }
-
-  :root[data-dashboard-style='modern']
-    [data-dashboard-header='true'][data-dashboard-header-collapsed='true']
-    [data-dashboard-topbar-toggle='true']:hover {
-    background-color: hsl(var(--primary));
-    box-shadow: none !important;
   }
 
   /* ---------- 浮层：磨砂玻璃 ----------
@@ -295,20 +123,119 @@
       [data-dashboard-page-background='image'],
       [data-dashboard-page-background='video']
     )
-    :is([data-dashboard-sidebar='true'], [data-dashboard-card='true']) {
+    :is( [data-dashboard-card='true']) {
     border-color: hsl(var(--mdn-glass-edge));
     -webkit-backdrop-filter: var(--mdn-glass-filter);
     backdrop-filter: var(--mdn-glass-filter);
     background-color: hsl(var(--card) / var(--mdn-glass-surface-alpha));
   }
+}
 
-  :root[data-dashboard-style='modern']
-    [data-dashboard-shell='true']:is(
-      [data-dashboard-page-background='image'],
-      [data-dashboard-page-background='video']
-    )
-    [data-dashboard-header='true']:not([data-dashboard-header-collapsed='true']) {
-    border-color: hsl(var(--mdn-glass-edge));
-    background-color: hsl(var(--background) / var(--mdn-glass-surface-alpha));
-  }
+/* ---------- 可读性：层级与按钮状态 ----------
+   原版风格的公共控件在这里补足「一眼看出选中了哪个、哪里能点」。
+   手机和桌面都生效；千禧、未来复古有各自的主题样式，不受影响。 */
+
+/* 分段选择：凹槽轨道 + 白色滑块，选中项加粗。 */
+:root[data-dashboard-style='modern'] [data-dashboard-segmented-control='true'] {
+  gap: 2px;
+  padding: 3px;
+  border-radius: calc(var(--radius) + 1px);
+  background: hsl(var(--muted));
+  box-shadow: inset 0 0 0 1px hsl(var(--border));
+}
+
+:root[data-dashboard-style='modern'] [data-dashboard-segmented-control='true'] > .dashboard-button {
+  border-color: transparent;
+  background: transparent;
+  box-shadow: none;
+  color: hsl(var(--muted-foreground));
+}
+
+:root[data-dashboard-style='modern'] [data-dashboard-segmented-control='true'] > .dashboard-button:hover {
+  color: hsl(var(--foreground));
+}
+
+:root[data-dashboard-style='modern']
+  [data-dashboard-segmented-control='true']
+  > .dashboard-button[aria-pressed='true'] {
+  background: hsl(var(--background));
+  color: hsl(var(--foreground));
+  font-weight: 600;
+  box-shadow:
+    0 1px 2px hsl(var(--foreground) / 0.12),
+    0 0 0 1px hsl(var(--input));
+}
+
+/* 其他可切换的描边按钮：选中时浅主色底 + 主色边，不再只是换成同样很浅的灰。 */
+:root[data-dashboard-style='modern']
+  .dashboard-button--outline[aria-pressed='true']:not([data-dashboard-segmented-control='true'] > *) {
+  border-color: hsl(var(--primary) / 0.7);
+  background: hsl(var(--primary) / 0.1);
+  color: hsl(var(--foreground));
+  font-weight: 600;
+}
+
+/* 标签页：选中项是浮起的白块并加粗，未选项用次要字色。文件夹标签和顶栏标签有自己的样式。 */
+:root[data-dashboard-style='modern']
+  [data-dashboard-tabs-list='true']:not(
+    [data-dashboard-folder-tabs] > *) {
+  box-shadow: inset 0 0 0 1px hsl(var(--border));
+}
+
+:root[data-dashboard-style='modern']
+  [data-dashboard-tabs-list='true']:not(
+    [data-dashboard-folder-tabs] > *)
+  > [data-dashboard-tabs-trigger='true'][data-state='active'] {
+  font-weight: 600;
+  box-shadow:
+    0 1px 2px hsl(var(--foreground) / 0.12),
+    0 0 0 1px hsl(var(--input));
+}
+
+/* 设置页的分类标签：一条底线 + 主色下划线，和页面内容的分组标签区分开。 */
+:root[data-dashboard-style='modern'] [data-dashboard-tabs-list='true']:has(> [data-dashboard-settings-tabs='true']) {
+  border-radius: 0;
+  padding: 0;
+  background: transparent;
+  box-shadow: inset 0 -1px 0 hsl(var(--border));
+}
+
+:root[data-dashboard-style='modern'] [data-dashboard-settings-tabs='true'] {
+  border-radius: 0;
+  min-height: 2.75rem;
+  color: hsl(var(--muted-foreground));
+  box-shadow: none;
+}
+
+:root[data-dashboard-style='modern'] [data-dashboard-settings-tabs='true']:hover {
+  color: hsl(var(--foreground));
+}
+
+:root[data-dashboard-style='modern'] [data-dashboard-settings-tabs='true'][data-state='active'] {
+  background: transparent;
+  color: hsl(var(--foreground));
+  font-weight: 600;
+  box-shadow: inset 0 -2px 0 hsl(var(--primary));
+}
+
+/* 选项卡片：选中加粗主色边和对勾，未选显示空心圆。 */
+:root[data-dashboard-style='modern'] [data-dashboard-option-card='true'][aria-pressed='true'] {
+  border-color: hsl(var(--primary));
+  box-shadow: inset 0 0 0 1px hsl(var(--primary));
+}
+
+/* 模型分工：英文等宽小标只在千禧里当装饰，原版直接用中文分组标题。 */
+:root[data-dashboard-style='modern'] :is([data-task-board-label], [data-task-board-more]) > b {
+  display: none;
+}
+
+:root[data-dashboard-style='modern'] [data-task-board-label] > h2 {
+  font-size: 0.9375rem;
+  font-weight: 600;
+  color: hsl(var(--foreground));
+}
+
+:root[data-dashboard-style='modern'] [data-task-board-more] > span {
+  font-weight: 600;
+  color: hsl(var(--foreground));
 }

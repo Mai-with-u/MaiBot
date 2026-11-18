@@ -22,7 +22,7 @@ import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from '@
 import { SplitDropdownSelect } from '@/components/ui/split-dropdown-select'
 import { Slider } from '@/components/ui/slider'
 import { DiscreteSlider } from '@/components/ui/discrete-slider'
-import { Switch } from '@/components/ui/switch'
+import { Switch, SwitchField } from '@/components/ui/switch'
 import { Tabs, TabsContent, TabsList, TabsTrigger } from '@/components/ui/tabs'
 import { Textarea } from '@/components/ui/textarea'
 import { buildFutureRetroTexture } from '@/lib/theme/future-retro'
@@ -150,6 +150,22 @@ function Samples({ label, dark }: { label: string; dark: boolean }) {
           <label>禁用 <Switch aria-label="禁用开关" disabled /></label>
           <label>禁用开启 <Switch aria-label="禁用开启" defaultChecked disabled /></label>
           <label>仅显示兼容 <Switch aria-label="仅显示兼容" size="lg" defaultChecked /></label>
+        </div>
+      </section>
+      <section>
+        <h2>开关字段 · 与下拉框、按钮等高 / 开启 / 禁用</h2>
+        {/* 工具栏里的开关带上与下拉框同款外框，不用 sample-row 的 label 样式覆盖组件间距。 */}
+        <div className="flex flex-wrap items-center gap-2">
+          <Select defaultValue="time"><SelectTrigger controlSize="sm" className="w-[130px]" aria-label="排序"><SelectValue /></SelectTrigger><SelectContent><SelectItem value="time">最近活跃</SelectItem><SelectItem value="created">最新创建</SelectItem></SelectContent></Select>
+          <SwitchField controlSize="sm" label="仅精选" />
+          <SwitchField controlSize="sm" label="已开启" defaultChecked />
+          <SwitchField controlSize="sm" label="不可用" disabled />
+          <Button size="sm"><Plus />新增</Button>
+        </div>
+        <div className="mt-3 flex flex-wrap items-center gap-2">
+          <Input aria-label="搜索" placeholder="标准高度" className="w-48" />
+          <SwitchField label="显示旧格式" defaultChecked />
+          <Button variant="outline">普通按钮</Button>
         </div>
       </section>
       <section>

@@ -10,6 +10,18 @@ from src.A_memorix.core.utils.profile_text import parse_profile_sections
 
 
 class FakeMetadataStore:
+    @staticmethod
+    def get_paragraphs_by_relation_hashes(relation_hashes):
+        return {}
+
+    @staticmethod
+    def project_fact_paragraph(paragraph):
+        return paragraph
+
+    @staticmethod
+    def get_person_identity(person_id: str):
+        return None
+
     def __init__(self) -> None:
         self.snapshots: list[dict] = []
         self.refresh_count = 0
@@ -156,7 +168,7 @@ def test_person_profile_manual_aliases_replace_derived_aliases() -> None:
         "aliases": ["新别名", "正式称呼"],
     }
     service = PersonProfileService(metadata_store=metadata_store, retriever=FakeRetriever())
-    service._get_derived_person_aliases = lambda person_id: (["旧昵称"], "正式称呼", ["记忆特征"])
+    service._get_derived_person_aliases = lambda person_id: (["旧昵称"], "正式称呼")
 
     details = service.get_person_alias_details("person-1")
 
@@ -164,7 +176,7 @@ def test_person_profile_manual_aliases_replace_derived_aliases() -> None:
     assert details["manual_aliases"] == ["新别名", "正式称呼"]
     assert details["effective_aliases"] == ["新别名", "正式称呼"]
     assert details["has_override"] is True
-    assert service.get_person_aliases("person-1") == (["新别名", "正式称呼"], "正式称呼", ["记忆特征"])
+    assert service.get_person_aliases("person-1") == (["新别名", "正式称呼"], "正式称呼")
 
 
 def test_person_profile_cooccurring_entities_are_suggestions_not_effective_aliases() -> None:
@@ -182,7 +194,7 @@ def test_person_profile_cooccurring_entities_are_suggestions_not_effective_alias
         {"name": "向量索引"},
     ]
     service = PersonProfileService(metadata_store=metadata_store, retriever=FakeRetriever())
-    service._get_derived_person_aliases = lambda person_id: (["测试用户"], "测试用户", [])
+    service._get_derived_person_aliases = lambda person_id: (["测试用户"], "测试用户")
 
     details = service.get_person_alias_details("person-1")
 
@@ -209,7 +221,7 @@ def test_person_profile_alias_suggestions_merge_paragraphs_from_trusted_names() 
         "paragraph-2": [{"name": "小测"}, {"name": "摄影"}],
     }[paragraph_hash]
     service = PersonProfileService(metadata_store=metadata_store, retriever=FakeRetriever())
-    service._get_derived_person_aliases = lambda person_id: (["测试用户", "小测"], "测试用户", [])
+    service._get_derived_person_aliases = lambda person_id: (["测试用户", "小测"], "测试用户")
 
     details = service.get_person_alias_details("person-1")
 
@@ -254,7 +266,7 @@ def test_person_profile_without_master_record_uses_person_id_as_trusted_alias(mo
 async def test_person_profile_keeps_chat_summary_as_recent_interaction_not_stable_profile():
     metadata_store = FakeMetadataStore()
     service = PersonProfileService(metadata_store=metadata_store, retriever=FakeRetriever())
-    service.get_person_aliases = lambda person_id: (["测试用户"], "测试用户", [])
+    service.get_person_aliases = lambda person_id: (["测试用户"], "测试用户")
     service._resolve_profile_classification_model = lambda: None
 
     payload = await service.query_person_profile(person_id="person-1", top_k=6, force_refresh=True)
@@ -278,7 +290,7 @@ async def test_profile_refresh_short_circuits_when_only_retrieval_score_changes(
     metadata_store = FakeMetadataStore()
     retriever = FakeRetriever()
     service = PersonProfileService(metadata_store=metadata_store, retriever=retriever)
-    service.get_person_aliases = lambda person_id: (["测试用户", "小测"], "测试用户", ["喜欢简洁表达"])
+    service.get_person_aliases = lambda person_id: (["测试用户", "小测"], "测试用户")
     service._resolve_profile_classification_model = lambda: None
 
     first = await service.query_person_profile(person_id="person-1", top_k=6, force_refresh=True)
@@ -307,7 +319,7 @@ async def test_profile_refresh_skips_llm_when_nested_retrieval_scores_change(mon
         }
     )
     service = PersonProfileService(metadata_store=metadata_store, retriever=retriever)
-    service.get_person_aliases = lambda person_id: (["测试用户"], "测试用户", [])
+    service.get_person_aliases = lambda person_id: (["测试用户"], "测试用户")
     service._resolve_profile_classification_model = lambda: SimpleNamespace(
         task_name="memory",
         selected_model_name=None,
@@ -356,7 +368,6 @@ def test_profile_fingerprint_tracks_non_scoring_evidence_metadata(field: str) ->
         "aliases": ["测试用户"],
         "relation_edges": [],
         "vector_evidence": [evidence],
-        "memory_traits": [],
         "fact_claims": [],
     }
     first = service._profile_evidence_fingerprint(**inputs)
@@ -370,7 +381,7 @@ async def test_profile_refresh_creates_version_when_same_evidence_id_content_cha
     metadata_store = FakeMetadataStore()
     retriever = FakeRetriever()
     service = PersonProfileService(metadata_store=metadata_store, retriever=retriever)
-    service.get_person_aliases = lambda person_id: (["测试用户"], "测试用户", [])
+    service.get_person_aliases = lambda person_id: (["测试用户"], "测试用户")
     service._resolve_profile_classification_model = lambda: None
 
     first = await service.query_person_profile(person_id="person-1", top_k=6, force_refresh=True)
@@ -431,7 +442,6 @@ async def test_profile_classification_uses_llm_buckets_and_guards_uncertain_stab
                 "metadata": {"source_type": "person_fact"},
             }
         ],
-        memory_traits=[],
     )
 
     assert buckets["identity_settings"] == ["测试用户是画师。"]
@@ -454,7 +464,7 @@ async def test_profile_projects_ledger_claims_before_retrieval_evidence() -> Non
         for index in range(1, 9)
     ]
     service = PersonProfileService(metadata_store=metadata_store, retriever=FakeRetriever())
-    service.get_person_aliases = lambda person_id: (["测试用户"], "测试用户", [])
+    service.get_person_aliases = lambda person_id: (["测试用户"], "测试用户")
     service._resolve_profile_classification_model = lambda: None
 
     payload = await service.query_person_profile(person_id="person-1", top_k=12, force_refresh=True)
@@ -480,7 +490,7 @@ async def test_model_derived_person_fact_is_confined_to_uncertain_projection() -
         }
     ]
     service = PersonProfileService(metadata_store=metadata_store, retriever=FakeRetriever())
-    service.get_person_aliases = lambda person_id: (["测试用户"], "测试用户", [])
+    service.get_person_aliases = lambda person_id: (["测试用户"], "测试用户")
     service._resolve_profile_classification_model = lambda: None
 
     payload = await service.query_person_profile(person_id="person-1", top_k=12, force_refresh=True)
@@ -495,7 +505,7 @@ async def test_model_classification_can_write_stable_profile() -> None:
     metadata_store = FakeMetadataStore()
     metadata_store.fact_claims = []
     service = PersonProfileService(metadata_store=metadata_store, retriever=FakeRetriever())
-    service.get_person_aliases = lambda person_id: (["测试用户"], "测试用户", [])
+    service.get_person_aliases = lambda person_id: (["测试用户"], "测试用户")
 
     async def model_classification(**kwargs):
         del kwargs

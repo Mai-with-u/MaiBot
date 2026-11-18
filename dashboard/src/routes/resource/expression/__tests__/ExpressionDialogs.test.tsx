@@ -1,20 +1,13 @@
 /**
  * ExpressionDialogs 行为测试：
  * 覆盖编辑对话框的信息展示、预填与保存 / 创建对话框校验与提交 /
- * 三个确认对话框回调 / 旧版导入对话框的预览、映射与导入链路。
+ * 三个确认对话框回调。
  */
-import { cleanup, fireEvent, render, screen, waitFor } from '@testing-library/react'
+import { cleanup, render, screen, waitFor } from '@testing-library/react'
 import userEvent from '@testing-library/user-event'
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest'
 
-import {
-  createExpression,
-  getExpressionChatTargets,
-  importLegacyExpressions,
-  previewLegacyExpressionImport,
-  previewLegacyExpressionImportFile,
-  updateExpression,
-} from '@/lib/expression-api'
+import { createExpression, updateExpression } from '@/lib/expression-api'
 
 import {
   BatchDeleteConfirmDialog,
@@ -22,15 +15,9 @@ import {
   DeleteConfirmDialog,
   ExpressionCreateDialog,
   ExpressionEditDialog,
-  LegacyExpressionImportDialog,
 } from '../ExpressionDialogs'
 
-import type {
-  ChatInfo,
-  Expression,
-  LegacyExpressionGroupPreview,
-  LegacyExpressionImportPreviewResponse,
-} from '@/types/expression'
+import type { ChatInfo, Expression } from '@/types/expression'
 
 const toastMock = vi.hoisted(() => vi.fn())
 
@@ -38,10 +25,6 @@ vi.mock('@/hooks/use-toast', () => ({ useToast: () => ({ toast: toastMock }) }))
 
 vi.mock('@/lib/expression-api', () => ({
   createExpression: vi.fn(),
-  getExpressionChatTargets: vi.fn(),
-  importLegacyExpressions: vi.fn(),
-  previewLegacyExpressionImport: vi.fn(),
-  previewLegacyExpressionImportFile: vi.fn(),
   updateExpression: vi.fn(),
 }))
 
@@ -102,8 +85,7 @@ describe('ExpressionCreateDialog', () => {
     expect(toastMock).toHaveBeenCalledWith(
       expect.objectContaining({
         title: '验证失败',
-        // 现状特征化：源码文案中「聊天」误写为「聚天」
-        description: '请填写必填字段：情境、风格和聚天',
+        description: '请填写必填字段：情境、风格和聊天',
         variant: 'destructive',
       })
     )
@@ -303,271 +285,5 @@ describe('确认对话框', () => {
     expect(screen.getByText(/被夸奖时/)).toBeInTheDocument()
     await user.click(screen.getByRole('button', { name: '删除' }))
     expect(onConfirm).toHaveBeenCalledTimes(1)
-  })
-})
-
-describe('LegacyExpressionImportDialog', () => {
-  function makeGroup(
-    overrides: Partial<LegacyExpressionGroupPreview> = {}
-  ): LegacyExpressionGroupPreview {
-    return {
-      old_chat_id: 'old-1',
-      expression_count: 3,
-      platform: 'qq',
-      target_id: '12345',
-      chat_type: 'group',
-      matched_session_id: 's1',
-      matched_chat_name: '匹配群',
-      matched: true,
-      matched_sessions: [{ session_id: 's1', chat_name: '匹配群', account_id: null }],
-      ...overrides,
-    }
-  }
-
-  function makePreview(
-    groups: LegacyExpressionGroupPreview[]
-  ): LegacyExpressionImportPreviewResponse {
-    return {
-      success: true,
-      db_path: '/data/legacy.db',
-      total_count: 4,
-      matched_count: 1,
-      unmatched_count: 1,
-      groups,
-    }
-  }
-
-  function getFileInput(): HTMLInputElement {
-    const input = document.querySelector('input[type="file"]')
-    if (!(input instanceof HTMLInputElement)) {
-      throw new Error('未找到文件输入框')
-    }
-    return input
-  }
-
-  function renderDialog(onSuccess = vi.fn(), onOpenChange = vi.fn()) {
-    render(
-      <LegacyExpressionImportDialog
-        open
-        onOpenChange={onOpenChange}
-        chatList={[makeChat('chat-9', '备用聊天')]}
-        onSuccess={onSuccess}
-      />
-    )
-    return { onSuccess, onOpenChange }
-  }
-
-  beforeEach(() => {
-    vi.mocked(getExpressionChatTargets).mockResolvedValue([makeChat('chat-9', '备用聊天')])
-  })
-
-  it('选择无本地路径的文件时走文件上传预览并渲染分组信息', async () => {
-    vi.mocked(previewLegacyExpressionImportFile).mockResolvedValue(
-      makePreview([
-        makeGroup(),
-        makeGroup({
-          old_chat_id: 'old-2',
-          expression_count: 1,
-          platform: null,
-          target_id: null,
-          chat_type: null,
-          matched_session_id: null,
-          matched_chat_name: null,
-          matched: false,
-          matched_sessions: [],
-        }),
-      ])
-    )
-    renderDialog()
-    await waitFor(() => expect(getExpressionChatTargets).toHaveBeenCalled())
-
-    const file = new File(['sqlite'], 'legacy.db', { type: 'application/octet-stream' })
-    fireEvent.change(getFileInput(), { target: { files: [file] } })
-
-    await waitFor(() => expect(previewLegacyExpressionImportFile).toHaveBeenCalledWith(file))
-    expect(previewLegacyExpressionImport).not.toHaveBeenCalled()
-    // 统计信息
-    expect(await screen.findByText('表达方式 4 条')).toBeInTheDocument()
-    expect(screen.getByText('已匹配 1 组')).toBeInTheDocument()
-    expect(screen.getByText('未匹配 1 组')).toBeInTheDocument()
-    // 分组标签：平台:类型:目标 与未匹配提示
-    expect(screen.getByText('qq:群:12345')).toBeInTheDocument()
-    // 「匹配群」同时出现在自动匹配列与目标下拉的隐藏原生 select 中
-    expect(screen.getAllByText('匹配群').length).toBeGreaterThan(0)
-    expect(screen.getByText('未找到')).toBeInTheDocument()
-  })
-
-  it('确认导入：已匹配组映射到会话，未匹配组目标为 null，成功后关闭并回调', async () => {
-    const user = userEvent.setup()
-    vi.mocked(previewLegacyExpressionImportFile).mockResolvedValue(
-      makePreview([
-        makeGroup(),
-        makeGroup({
-          old_chat_id: 'old-2',
-          matched_session_id: null,
-          matched_chat_name: null,
-          matched: false,
-          matched_sessions: [],
-        }),
-      ])
-    )
-    vi.mocked(importLegacyExpressions).mockResolvedValue({
-      success: true,
-      message: '导入 3 条',
-      imported_count: 3,
-      skipped_count: 0,
-      failed_count: 0,
-      ignored_group_count: 1,
-    })
-    const { onSuccess, onOpenChange } = renderDialog()
-
-    const file = new File(['sqlite'], 'legacy.db', { type: 'application/octet-stream' })
-    fireEvent.change(getFileInput(), { target: { files: [file] } })
-    await screen.findByText('表达方式 4 条')
-
-    await user.click(screen.getByRole('button', { name: '确认导入' }))
-
-    await waitFor(() => {
-      expect(importLegacyExpressions).toHaveBeenCalledWith({
-        db_path: '/data/legacy.db',
-        mappings: [
-          { old_chat_id: 'old-1', target_chat_id: 's1', target_chat_ids: [] },
-          { old_chat_id: 'old-2', target_chat_id: null, target_chat_ids: [] },
-        ],
-      })
-    })
-    expect(toastMock).toHaveBeenCalledWith(
-      expect.objectContaining({ title: '导入完成', description: '导入 3 条' })
-    )
-    expect(onSuccess).toHaveBeenCalledTimes(1)
-    expect(onOpenChange).toHaveBeenCalledWith(false)
-  })
-
-  it('多匹配组默认导入到全部匹配项', async () => {
-    const user = userEvent.setup()
-    vi.mocked(previewLegacyExpressionImportFile).mockResolvedValue(
-      makePreview([
-        makeGroup({
-          old_chat_id: 'old-3',
-          matched_session_id: 's2',
-          matched_sessions: [
-            { session_id: 's2', chat_name: '群A', account_id: null },
-            { session_id: 's3', chat_name: '群B', account_id: null },
-          ],
-        }),
-      ])
-    )
-    vi.mocked(importLegacyExpressions).mockResolvedValue({
-      success: true,
-      message: 'ok',
-      imported_count: 3,
-      skipped_count: 0,
-      failed_count: 0,
-      ignored_group_count: 0,
-    })
-    renderDialog()
-
-    const file = new File(['sqlite'], 'legacy.db', { type: 'application/octet-stream' })
-    fireEvent.change(getFileInput(), { target: { files: [file] } })
-    await screen.findByText('表达方式 4 条')
-    // 多匹配时展示匹配数量
-    expect(screen.getByText('2 个匹配')).toBeInTheDocument()
-
-    await user.click(screen.getByRole('button', { name: '确认导入' }))
-
-    await waitFor(() => {
-      expect(importLegacyExpressions).toHaveBeenCalledWith({
-        db_path: '/data/legacy.db',
-        mappings: [{ old_chat_id: 'old-3', target_chat_id: null, target_chat_ids: ['s2', 's3'] }],
-      })
-    })
-  })
-
-  it('取消勾选分组后导入目标为 null', async () => {
-    const user = userEvent.setup()
-    vi.mocked(previewLegacyExpressionImportFile).mockResolvedValue(makePreview([makeGroup()]))
-    vi.mocked(importLegacyExpressions).mockResolvedValue({
-      success: true,
-      message: 'ok',
-      imported_count: 0,
-      skipped_count: 0,
-      failed_count: 0,
-      ignored_group_count: 1,
-    })
-    renderDialog()
-
-    const file = new File(['sqlite'], 'legacy.db', { type: 'application/octet-stream' })
-    fireEvent.change(getFileInput(), { target: { files: [file] } })
-    await screen.findByText('表达方式 4 条')
-
-    // 行内勾选框默认勾选（自动匹配成功），取消后该组不导入
-    await user.click(screen.getByRole('checkbox'))
-    await user.click(screen.getByRole('button', { name: '确认导入' }))
-
-    await waitFor(() => {
-      expect(importLegacyExpressions).toHaveBeenCalledWith({
-        db_path: '/data/legacy.db',
-        mappings: [{ old_chat_id: 'old-1', target_chat_id: null, target_chat_ids: [] }],
-      })
-    })
-  })
-
-  it('带本地路径的文件（Electron）走 db_path 预览', async () => {
-    vi.mocked(previewLegacyExpressionImport).mockResolvedValue(makePreview([makeGroup()]))
-    renderDialog()
-
-    const file = new File(['sqlite'], 'legacy.db', { type: 'application/octet-stream' })
-    Object.defineProperty(file, 'path', { value: '/tmp/legacy.db' })
-    fireEvent.change(getFileInput(), { target: { files: [file] } })
-
-    await waitFor(() => {
-      expect(previewLegacyExpressionImport).toHaveBeenCalledWith({ db_path: '/tmp/legacy.db' })
-    })
-    expect(previewLegacyExpressionImportFile).not.toHaveBeenCalled()
-    // 输入框展示本地路径
-    expect(screen.getByLabelText('旧数据库路径')).toHaveValue('/tmp/legacy.db')
-  })
-
-  it('预览失败时弹预览失败提示', async () => {
-    vi.mocked(previewLegacyExpressionImportFile).mockRejectedValue(new Error('数据库损坏'))
-    renderDialog()
-
-    const file = new File(['sqlite'], 'legacy.db', { type: 'application/octet-stream' })
-    fireEvent.change(getFileInput(), { target: { files: [file] } })
-
-    await waitFor(() => {
-      expect(toastMock).toHaveBeenCalledWith(
-        expect.objectContaining({
-          title: '预览失败',
-          description: '数据库损坏',
-          variant: 'destructive',
-        })
-      )
-    })
-  })
-
-  it('导入失败时弹导入失败提示且不关闭对话框', async () => {
-    const user = userEvent.setup()
-    vi.mocked(previewLegacyExpressionImportFile).mockResolvedValue(makePreview([makeGroup()]))
-    vi.mocked(importLegacyExpressions).mockRejectedValue(new Error('导入接口炸了'))
-    const { onSuccess, onOpenChange } = renderDialog()
-
-    const file = new File(['sqlite'], 'legacy.db', { type: 'application/octet-stream' })
-    fireEvent.change(getFileInput(), { target: { files: [file] } })
-    await screen.findByText('表达方式 4 条')
-
-    await user.click(screen.getByRole('button', { name: '确认导入' }))
-
-    await waitFor(() => {
-      expect(toastMock).toHaveBeenCalledWith(
-        expect.objectContaining({
-          title: '导入失败',
-          description: '导入接口炸了',
-          variant: 'destructive',
-        })
-      )
-    })
-    expect(onSuccess).not.toHaveBeenCalled()
-    expect(onOpenChange).not.toHaveBeenCalled()
   })
 })

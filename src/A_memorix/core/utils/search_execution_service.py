@@ -1,7 +1,7 @@
 """
 统一检索执行服务。
 
-用于收敛 Action/Tool 在 search/time 上的核心执行流程，避免重复实现。
+统一 search/time 的核心执行流程，避免重复实现。
 """
 
 from __future__ import annotations

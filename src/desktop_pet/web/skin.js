@@ -1,0 +1,165 @@
+/* 声明式皮肤播放器。资源在切换前全部解码，播放状态由窗口确认。 */
+(() => {
+  const stage = document.getElementById('stage');
+  const pet = document.getElementById('pet');
+  const builtin = document.getElementById('builtin-pet');
+  const canvas = document.getElementById('skin-canvas');
+  const ctx = canvas.getContext('2d');
+  const previousCanvas = document.createElement('canvas');
+  const previousCtx = previousCanvas.getContext('2d');
+  const hitCanvas = document.createElement('canvas');
+  const hitCtx = hitCanvas.getContext('2d', {willReadFrequently: true});
+  let hitRects = [];
+  const transitionDuration = 160;
+  let skin = null, images = {}, active = null, visible = true, switching = 0;
+  let selected = '', started = performance.now(), flash = null;
+  let transitionStarted = null, hasFrame = false;
+  const history = new Map();
+  let builtinEffectNodes = [];
+  const fail = (code, message) => ({error: {code, message}});
+  const state = () => ['dragging', 'talking', 'thinking'].find(name => stage.classList.contains(name)) || 'idle';
+  function finish(status, reason) {
+    if (!active) return;
+    if (skin?.id === 'builtin') builtin.classList.remove(active.animation);
+    for (const node of builtinEffectNodes) node.style.animationIterationCount = '';
+    builtinEffectNodes = [];
+    history.set(active.playback_id, {...active, status, reason});
+    while (history.size > 128) history.delete(history.keys().next().value);
+    active = null;
+    selected = '';
+  }
+  function info() { return {id: skin?.id || 'builtin', name: skin?.name || '麦麦（内置）', version: skin?.version || '1'}; }
+  async function install(next) {
+    const revision = ++switching;
+    const loaded = {};
+    await Promise.all(Object.entries(next.resources || {}).map(async ([name, src]) => {
+      const image = new Image(); image.src = src; await image.decode(); loaded[name] = image;
+    }));
+    if (revision !== switching) throw new Error('皮肤切换已被新请求替代');
+    finish('interrupted', 'skin_changed');
+    skin = next; images = loaded; flash = null; selected = '';
+    transitionStarted = null; hasFrame = false;
+    const c = skin.canvas;
+    // 底部预留阶段字幕，落脚点固定在窗口底边中点，气泡随皮肤锚点调整，输入区仍由主页面管理。
+    pet.style.width = c.width + 'px'; pet.style.height = c.height + 'px';
+    pet.style.left = (130 - c.anchor[0]) + 'px';
+    pet.style.bottom = (24 - (c.height - c.anchor[1])) + 'px';
+    pet.dataset.skinHitbox = JSON.stringify(c.hitbox);
+    stage.style.setProperty('--pet-top', (24 + c.anchor[1] - c.bubble_anchor[1] + 8) + 'px');
+    canvas.width = c.width * 2; canvas.height = c.height * 2;
+    hitCanvas.width = c.width; hitCanvas.height = c.height;
+    hitRects = [];
+    previousCanvas.width = canvas.width; previousCanvas.height = canvas.height;
+    canvas.style.width = c.width + 'px'; canvas.style.height = c.height + 'px';
+    builtin.style.display = skin.id === 'builtin' ? '' : 'none';
+    canvas.style.display = skin.id === 'builtin' ? 'none' : 'block';
+    window.dispatchEvent(new Event('pet-skin-changed'));
+    return info();
+  }
+  function play(owner, name, repeat = 1) {
+    if (!visible) return fail('hidden', '桌宠已隐藏');
+    if (!skin || !Object.hasOwn(skin.animations, name)) return fail('animation_not_found', '当前皮肤没有此动画');
+    if (['talking', 'dragging'].includes(state()) || (active && active.owner !== owner)) return fail('busy', '桌宠正在执行其他动作');
+    const duration = skin.animations[name].duration_ms * repeat;
+    if (!Number.isInteger(repeat) || repeat < 1 || duration > 30000) return fail('invalid_duration', '动画总时长应不超过 30 秒');
+    finish('interrupted', 'replaced');
+    active = {playback_id: crypto.randomUUID(), owner, skin_id: skin.id, animation: name, status: 'playing',
+              duration_ms: duration, started: performance.now()};
+    flash = null; selected = '';
+    if (skin.id === 'builtin') {
+      builtin.classList.remove(name); void builtin.offsetWidth; builtin.classList.add(name);
+      const selector = {squish: '#squash', happy: '#squash', shake: '#squash', blink: '.eye-open'}[name];
+      builtinEffectNodes = selector ? [...builtin.querySelectorAll(selector)] : [];
+      for (const node of builtinEffectNodes) node.style.animationIterationCount = String(repeat);
+    }
+    return {...active};
+  }
+  function tick(now) {
+    requestAnimationFrame(tick);
+    if (!skin) return;
+    const current = state();
+    if (active && ['talking', 'dragging'].includes(current)) finish('interrupted', current);
+    if (active && now - active.started >= active.duration_ms) finish('finished', 'completed');
+    if (flash && now >= flash.until) flash = null;
+    if (skin.id === 'builtin' || !visible) return;
+    const event = ['talking', 'dragging'].includes(current) ? null : flash;
+    const name = active?.animation || event?.name || skin.states[current];
+    const selection = active || event || name;
+    if (selected !== selection) {
+      // 保存实际显示的画面，连续点击或中途切换也从当前姿势开始过渡。
+      if (hasFrame) {
+        previousCtx.clearRect(0, 0, previousCanvas.width, previousCanvas.height);
+        previousCtx.drawImage(canvas, 0, 0);
+        transitionStarted = now;
+      }
+      selected = selection; started = now;
+    }
+    const animation = skin.animations[name];
+    const elapsed = now - (active?.started ?? event?.started ?? started);
+    let progress = elapsed % animation.duration_ms;
+    let frame = animation.sequence[0];
+    for (const candidate of animation.sequence) { frame = candidate; if (progress < frame.duration_ms) break; progress -= frame.duration_ms; }
+    const [x,y,w,h] = frame.rect, c = skin.canvas;
+    ctx.clearRect(0,0,canvas.width,canvas.height); ctx.save();
+    if (transitionStarted !== null && now - transitionStarted >= transitionDuration) transitionStarted = null;
+    if (transitionStarted !== null) {
+      const progress = (now - transitionStarted) / transitionDuration;
+      const blend = progress * progress * (3 - 2 * progress);
+      ctx.globalAlpha = 1 - blend;
+      ctx.drawImage(previousCanvas, 0, 0);
+      // 透明帧按预乘颜色相加，避免两帧重叠处在过渡中变暗或变透明。
+      ctx.globalCompositeOperation = 'lighter';
+      ctx.globalAlpha = blend;
+    }
+    ctx.scale(2,2);
+    const phase = elapsed / Math.max(600, animation.duration_ms) * Math.PI * 2;
+    ctx.translate(c.width / 2, c.height - 4);
+    if (animation.motion === 'bob') ctx.translate(0, -2 - 2 * Math.sin(phase));
+    if (animation.motion === 'hop') ctx.translate(0, -Math.abs(Math.sin(phase)) * 8);
+    if (animation.motion === 'sway') ctx.rotate(Math.sin(phase) * .035);
+    if (animation.motion === 'shake') ctx.translate(Math.sin(elapsed / 40) * 3, 0);
+    if (animation.motion === 'pulse') ctx.scale(1 + Math.sin(phase) * .025, 1 - Math.sin(phase) * .025);
+    ctx.translate(-c.width / 2, -c.height + 4);
+    const scale = Math.min((c.width - 8) / w, (c.height - 12) / h);
+    ctx.drawImage(images[frame.file], x,y,w,h, (c.width-w*scale)/2,c.height-4-h*scale,w*scale,h*scale);
+    ctx.restore();
+    hasFrame = true;
+    // 用当前合成帧的 alpha 生成逐像素区域，包含动作位移和过渡，透明空隙交还桌面。
+    hitCtx.clearRect(0, 0, c.width, c.height);
+    hitCtx.drawImage(canvas, 0, 0, c.width, c.height);
+    hitRects = window.petAlphaRegion(hitCtx.getImageData(0, 0, c.width, c.height).data, c.width, c.height);
+    window.dispatchEvent(new Event('pet-skin-frame'));
+  }
+  requestAnimationFrame(tick);
+  window.petSkin = {
+    install,
+    hitRegion() { return skin && skin.id !== 'builtin' ? hitRects : null; },
+    cancelInstall() { switching++; },
+    event(event) {
+      if (!skin || skin.id === 'builtin' || active) return;
+      const name = skin.events[event];
+      if (name) {
+        const started = performance.now();
+        flash = {name, started, until: started + skin.animations[name].duration_ms};
+      }
+    },
+    visibility(value) { visible = value; if (!visible) finish('interrupted', 'hidden'); },
+    command(action, args, owner) {
+      if (action === 'get_skin') return info();
+      if (action === 'list_animations') return {skin: info(), animations: Object.entries(skin?.animations || {}).map(([name, a]) => ({name, duration_ms: a.duration_ms})), events: skin?.events || {}};
+      if (action === 'play_animation') return play(owner, args.name, args.repeat);
+      if (action === 'play_event') {
+        const name = skin?.events[args.event];
+        return name ? play(owner, name, 1) : fail('event_not_found', '当前皮肤没有映射此事件');
+      }
+      if (action === 'stop_animation' || action === 'animation_status') {
+        const item = active?.playback_id === args.playback_id ? active : history.get(args.playback_id);
+        if (!item) return fail('playback_not_found', '播放记录不存在或已过期');
+        if (item.owner !== owner) return fail('not_owner', '不能访问其他插件的播放记录');
+        if (action === 'stop_animation' && item === active) { finish('stopped', 'requested'); return history.get(args.playback_id); }
+        return {...item};
+      }
+      return fail('unknown_action', '未知动画操作');
+    },
+  };
+})();

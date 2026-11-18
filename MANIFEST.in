@@ -3,6 +3,13 @@ include changelogs/changelog.md
 recursive-include prompts *.prompt *.toml
 recursive-include locales *.json
 recursive-include src/plugins/built_in _manifest.json
+include src/plugins/built_in/qq_official_adapter/README.md src/plugins/built_in/qq_official_adapter/CHANGELOG.md
+include src/plugins/built_in/telegram_adapter/README.md src/plugins/built_in/telegram_adapter/CHANGELOG.md
+include src/plugins/built_in/weixin_clawbot_adapter/README.md src/plugins/built_in/weixin_clawbot_adapter/changelog.md
+include src/plugins/built_in/weixin_clawbot_adapter/webui.json
+include src/plugins/built_in/weixin_clawbot_adapter/web/accounts.html
+include src/plugins/built_in/weixin_clawbot_adapter/icon-mascot.webp
+include src/plugins/built_in/weixin_clawbot_adapter/config.toml.example
 include src/A_memorix/config_schema.json src/A_memorix/LICENSE src/A_memorix/LICENSE-MAIBOT-GPL.md
 prune src/data
 global-exclude *.pyc *.pyo

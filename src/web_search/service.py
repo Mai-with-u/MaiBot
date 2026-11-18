@@ -8,10 +8,13 @@ import httpx
 
 from src.core.tooling import ToolExecutionContext, ToolInvocation
 
+from .adapters.anysearch import AnySearchAdapter
 from .adapters.deepseek import DeepSeekAdapter
+from .adapters.exa import ExaAdapter
+from .adapters.firecrawl import FirecrawlAdapter
 from .adapters.stepsearch import MCPCaller, StepSearchAdapter
 from .adapters.tavily import TavilyAdapter
-from .config import WebRuntimeConfig
+from .config import WebRuntimeConfig, require_web_service
 from .models import PageResult, SearchResult, WebSearchError
 
 
@@ -43,13 +46,19 @@ class WebSearchService:
             raise WebSearchError("未知联网工具")
         search = invocation.tool_name == "web_search"
         name = config.search if search else config.fetch
-        if not name or name not in config.services:
+        if not name:
             raise WebSearchError("当前操作未配置联网服务")
-        settings = config.services[name]
+        settings = require_web_service(config, name)
         if settings.adapter == "deepseek":
             adapter = DeepSeekAdapter(settings, self.transport)
         elif settings.adapter == "tavily":
             adapter = TavilyAdapter(settings, self.transport)
+        elif settings.adapter == "anysearch":
+            adapter = AnySearchAdapter(settings, self.transport)
+        elif settings.adapter == "exa":
+            adapter = ExaAdapter(settings, self.transport)
+        elif settings.adapter == "firecrawl":
+            adapter = FirecrawlAdapter(settings, self.transport)
         else:
             adapter = StepSearchAdapter(settings, self.mcp, invocation, context)
         arguments = invocation.arguments

@@ -1,6 +1,7 @@
 from datetime import datetime
-from typing import Any, Dict, List, Optional, Union
+from typing import Any, Dict, List, Optional, Tuple, Union
 
+from sqlalchemy import text
 from sqlmodel import col, select
 
 import hashlib
@@ -10,11 +11,12 @@ import time
 from src.chat.message_receive.chat_manager import chat_manager as _chat_manager
 from src.common.data_models.person_info_data_model import dump_group_cardname_records, parse_group_cardname_json
 from src.common.database.database import get_db_session
-from src.common.database.database_model import PersonInfo
+from src.common.database.database_model import Individual, PersonInfo
 from src.common.logger import get_logger
 from src.config.config import global_config
 from src.services.memory_service import memory_service
 
+from .identity import person_id_for, resolve_person_id, resolve_user_id
 
 logger = get_logger("person_info")
 
@@ -47,20 +49,16 @@ def _to_group_cardname_records(group_cardname_json: Optional[str]) -> list[dict[
 
 def get_person_id(platform: str, user_id: Union[int, str]) -> str:
     """获取唯一id"""
-    if "-" in platform:
-        platform = platform.split("-")[1]
-    components = [platform, str(user_id)]
-    key = "_".join(components)
-    return hashlib.md5(key.encode()).hexdigest()
+    return person_id_for(platform, resolve_user_id(platform, str(user_id)))
 
 
 def get_person_id_by_person_name(person_name: str) -> str:
     """根据用户名获取用户ID"""
     try:
         with get_db_session(auto_commit=False) as session:
-            statement = select(PersonInfo.person_id).where(col(PersonInfo.person_name) == person_name).limit(1)
-            person_id = session.exec(statement).first()
-            return str(person_id) if person_id else ""
+            statement = select(PersonInfo.person_id).join(Individual, PersonInfo.individual_id == Individual.individual_id).where(col(Individual.display_name) == person_name).limit(2)
+            person_ids = session.exec(statement).all()
+            return str(person_ids[0]) if len(person_ids) == 1 else ""
     except Exception as e:
         logger.error(f"根据用户名 {person_name} 获取用户ID时出错: {e}")
         return ""
@@ -76,15 +74,10 @@ def resolve_person_id_for_memory(
     """解析长期记忆检索/写入使用的人物 ID。
 
     解析顺序：
-    1. 优先按 `person_name` 映射数据库中的 `person_id`
-    2. 回退到 `platform + user_id` 生成稳定 `person_id`
+    1. 有 `platform + user_id` 时只按真实 ID 确认身份，不让同名人物覆盖它
+    2. 没有 ID 时才按唯一的 `person_name` 映射数据库中的 `person_id`
     3. 若 `strict_known=True`，则要求该 `person_id` 已被认识
     """
-    clean_name = str(person_name or "").strip()
-    if clean_name:
-        if by_name := get_person_id_by_person_name(clean_name):
-            return by_name
-
     clean_platform = str(platform or "").strip()
     clean_user_id = str(user_id or "").strip()
     if clean_platform and clean_user_id:
@@ -92,6 +85,12 @@ def resolve_person_id_for_memory(
         if strict_known and not is_person_known(person_id=candidate):
             return ""
         return candidate
+
+    clean_name = str(person_name or "").strip()
+    if clean_name:
+        candidate = get_person_id_by_person_name(clean_name)
+        if candidate and (not strict_known or is_person_known(person_id=candidate)):
+            return candidate
 
     return ""
 
@@ -106,19 +105,19 @@ def is_person_known(
         with get_db_session() as session:
             statement = select(PersonInfo).where(col(PersonInfo.person_id) == person_id).limit(1)
             person = session.exec(statement).first()
-            return person.is_known if person else False
+            return person.individual.is_known if person else False
     elif user_id and platform:
         person_id = get_person_id(platform, user_id)
         with get_db_session() as session:
             statement = select(PersonInfo).where(col(PersonInfo.person_id) == person_id).limit(1)
             person = session.exec(statement).first()
-            return person.is_known if person else False
+            return person.individual.is_known if person else False
     elif person_name:
         person_id = get_person_id_by_person_name(person_name)
         with get_db_session() as session:
             statement = select(PersonInfo).where(col(PersonInfo.person_id) == person_id).limit(1)
             person = session.exec(statement).first()
-            return person.is_known if person else False
+            return person.individual.is_known if person else False
     else:
         return False
 
@@ -209,9 +208,12 @@ class Person:
             return None
 
         # 生成唯一的person_id
+        user_id = resolve_user_id(platform, user_id)
         person_id = get_person_id(platform, user_id)
 
-        if is_person_known(person_id=person_id):
+        with get_db_session() as session:
+            exists = session.exec(select(PersonInfo.id).where(PersonInfo.person_id == person_id)).first() is not None
+        if exists:
             logger.debug(f"用户 {nickname} 已存在")
             person = Person(person_id=person_id)
             # 如果是群聊，更新群昵称
@@ -223,6 +225,7 @@ class Person:
         person = cls.__new__(cls)
 
         # 设置基本属性
+        person._loaded_individual_profile = None
         person.person_id = person_id
         person.platform = platform
         person.user_id = user_id
@@ -231,11 +234,9 @@ class Person:
         # 初始化默认值
         person.is_known = True  # 注册后立即标记为已认识
         person.person_name = nickname  # 使用nickname作为初始person_name
-        person.name_reason = "用户注册时设置的昵称"
         person.know_times = 1
         person.know_since = time.time()
         person.last_know = time.time()
-        person.memory_points = []
         person.group_cardname_list = []  # 初始化群名片列表
 
         # 如果是群聊，添加群昵称
@@ -266,6 +267,8 @@ class Person:
         return is_bot_self(platform, user_id)
 
     def __init__(self, platform: str = "", user_id: str = "", person_id: str = "", person_name: str = ""):
+        if platform and user_id:
+            user_id = resolve_user_id(platform, user_id)
         # 使用统一的机器人识别函数（支持多平台，包括 WebUI）
         if self._is_bot_self(platform, user_id):
             self.is_known = True
@@ -281,7 +284,7 @@ class Person:
         self.platform = ""
 
         if person_id:
-            self.person_id = person_id
+            self.person_id = resolve_person_id(person_id)
         elif person_name:
             self.person_id = get_person_id_by_person_name(person_name)
             if not self.person_id:
@@ -296,7 +299,9 @@ class Person:
             logger.error("Person 初始化失败，缺少必要参数")
             raise ValueError("Person 初始化失败，缺少必要参数")
 
-        if not is_person_known(person_id=self.person_id):
+        with get_db_session() as session:
+            exists = session.exec(select(PersonInfo.id).where(PersonInfo.person_id == self.person_id)).first() is not None
+        if not exists:
             self.is_known = False
             logger.debug(f"用户 {platform}:{user_id}:{person_name}:{person_id} 尚未认识")
             self.person_name = f"未知用户{self.person_id[:4]}"
@@ -308,73 +313,14 @@ class Person:
         # 初始化默认值
         self.nickname = ""
         self.person_name: Optional[str] = None
-        self.name_reason: Optional[str] = None
+        self._loaded_individual_profile: Optional[Tuple[str, str, bool]] = None
         self.know_times = 0
         self.know_since = None
         self.last_know: Optional[float] = None
-        self.memory_points = []
         self.group_cardname_list: list[dict[str, str]] = []  # 群名片列表，存储 {"group_id": str, "group_cardname": str}
 
         # 从数据库加载数据
         self.load_from_database()
-
-    def del_memory(self, category: str, memory_content: str, similarity_threshold: float = 0.95):
-        """
-        删除指定分类和记忆内容的记忆点
-
-        Args:
-            category: 记忆分类
-            memory_content: 要删除的记忆内容
-            similarity_threshold: 相似度阈值，默认0.95（95%）
-
-        Returns:
-            int: 删除的记忆点数量
-        """
-        if not self.memory_points:
-            return 0
-
-        deleted_count = 0
-        memory_points_to_keep = []
-
-        for memory_point in self.memory_points:
-            # 跳过None值
-            if memory_point is None:
-                continue
-            # 解析记忆点
-            parts = memory_point.split(":", 2)  # 最多分割2次，保留记忆内容中的冒号
-            if len(parts) < 3:
-                # 格式不正确，保留原样
-                memory_points_to_keep.append(memory_point)
-                continue
-
-            memory_category = parts[0].strip()
-            memory_text = parts[1].strip()
-            _memory_weight = parts[2].strip()
-
-            # 检查分类是否匹配
-            if memory_category != category:
-                memory_points_to_keep.append(memory_point)
-                continue
-
-            # 计算记忆内容的相似度
-            similarity = calculate_string_similarity(memory_content, memory_text)
-
-            # 如果相似度达到阈值，则删除（不添加到保留列表）
-            if similarity >= similarity_threshold:
-                deleted_count += 1
-                logger.debug(f"删除记忆点: {memory_point} (相似度: {similarity:.4f})")
-            else:
-                memory_points_to_keep.append(memory_point)
-
-        # 更新memory_points
-        self.memory_points = memory_points_to_keep
-
-        # 同步到数据库
-        if deleted_count > 0:
-            self.sync_to_database()
-            logger.info(f"成功删除 {deleted_count} 个记忆点，分类: {category}")
-
-        return deleted_count
 
     def add_group_nick_name(self, group_id: str, group_nick_name: str):
         """
@@ -411,26 +357,16 @@ class Person:
                 if record:
                     self.user_id = record.user_id or ""
                     self.platform = record.platform or ""
-                    self.is_known = record.is_known or False
+                    self.is_known = record.individual.is_known
                     self.nickname = record.user_nickname or ""
-                    self.person_name = record.person_name or self.nickname
-                    self.name_reason = record.name_reason or None
+                    self.person_name = record.individual.display_name
+                    self.individual_id = record.individual_id
+                    self._loaded_individual_profile = (
+                        record.individual_id, self.person_name, self.is_known,
+                    )
+                    self.know_since = record.first_known_time.timestamp() if record.first_known_time else None
+                    self.last_know = record.last_known_time.timestamp() if record.last_known_time else None
                     self.know_times = record.know_counts or 0
-
-                    # 处理points字段（JSON格式的列表）
-                    if record.memory_points:
-                        try:
-                            loaded_points = json.loads(record.memory_points)
-                            # 过滤掉None值，确保数据质量
-                            if isinstance(loaded_points, list):
-                                self.memory_points = [point for point in loaded_points if point is not None]
-                            else:
-                                self.memory_points = []
-                        except (json.JSONDecodeError, TypeError):
-                            logger.warning(f"解析用户 {self.person_id} 的points字段失败，使用默认值")
-                            self.memory_points = []
-                    else:
-                        self.memory_points = []
 
                     # 处理 group_cardname 字段（JSON 格式的列表）
                     if record.group_cardname:
@@ -453,34 +389,39 @@ class Person:
 
     def sync_to_database(self):
         """将所有属性同步回数据库"""
-        if not self.is_known:
+        if not self.is_known and self._loaded_individual_profile is None:
             return
         try:
-            memory_points_value = (
-                json.dumps([point for point in self.memory_points if point is not None], ensure_ascii=False)
-                if self.memory_points
-                else json.dumps([], ensure_ascii=False)
-            )
             group_cardname_value = dump_group_cardname_records(self.group_cardname_list)
             first_known_time = datetime.fromtimestamp(self.know_since) if self.know_since else None
             last_known_time = datetime.fromtimestamp(self.last_know) if self.last_know else None
 
             with get_db_session() as session:
+                session.execute(text("BEGIN IMMEDIATE"))
                 statement = select(PersonInfo).where(col(PersonInfo.person_id) == self.person_id).limit(1)
                 record = session.exec(statement).first()
 
                 if record:
                     record.person_id = self.person_id
-                    record.is_known = self.is_known
                     record.platform = self.platform
                     record.user_id = self.user_id
                     record.user_nickname = self.nickname
-                    record.person_name = self.person_name
-                    record.name_reason = self.name_reason
+                    loaded = self._loaded_individual_profile
+                    desired = (self.person_name, self.is_known)
+                    if loaded is not None and desired != loaded[1:]:
+                        individual = record.individual
+                        current = (individual.individual_id, individual.display_name, individual.is_known)
+                        if current != loaded:
+                            raise ValueError("人物资料或归属已变化，请重新加载后修改")
+                        if not self.person_name or not self.person_name.strip():
+                            raise ValueError("人物名称不能为空")
+                        individual.display_name = self.person_name.strip()
+                        individual.is_known = self.is_known
+                        session.add(individual)
+                        self._loaded_individual_profile = (individual.individual_id, individual.display_name, individual.is_known)
                     record.know_counts = self.know_times
                     record.first_known_time = first_known_time
                     record.last_known_time = last_known_time
-                    record.memory_points = memory_points_value
                     record.group_cardname = group_cardname_value
                     session.add(record)
                     logger.debug(f"已同步用户 {self.person_id} 的信息到数据库")
@@ -492,14 +433,17 @@ class Person:
                         user_id=self.user_id,
                         user_nickname=self.nickname,
                         person_name=self.person_name,
-                        name_reason=self.name_reason,
                         know_counts=self.know_times,
                         first_known_time=first_known_time,
                         last_known_time=last_known_time,
-                        memory_points=memory_points_value,
                         group_cardname=group_cardname_value,
                     )
                     session.add(record)
+                    session.flush()
+                    self.individual_id = record.individual_id
+                    self._loaded_individual_profile = (
+                        record.individual_id, self.person_name or self.nickname, self.is_known,
+                    )
                     logger.debug(f"已创建用户 {self.person_id} 的信息到数据库")
 
         except Exception as e:
@@ -574,6 +518,7 @@ async def store_person_memory_from_answer(
             participants=[participant_name] if participant_name else [],
             tags=["person_fact"],
             metadata={
+                "platform": session_platform,
                 "person_id": person_id,
                 "person_name": participant_name,
                 "writeback_source": "memory_flow_service",

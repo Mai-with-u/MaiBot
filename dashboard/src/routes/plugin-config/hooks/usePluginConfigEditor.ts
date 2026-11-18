@@ -39,7 +39,7 @@ export function usePluginConfigEditor(options: UsePluginConfigEditorOptions) {
   const { toast } = useToast()
 
   const [editMode, setEditMode] = useState<'visual' | 'source'>('visual')
-  const [pluginPageTab, setPluginPageTab] = useState<'settings' | 'host-policy' | 'details'>('settings')
+  const [pluginPageTab, setPluginPageTab] = useState<'settings' | 'details'>('settings')
   const [schema, setSchema] = useState<PluginConfigSchema | null>(null)
   const [configError, setConfigError] = useState('')
   const [activeConfigTab, setActiveConfigTab] = useState<string | undefined>(initialTab)

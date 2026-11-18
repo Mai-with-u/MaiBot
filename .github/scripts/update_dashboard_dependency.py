@@ -1,76 +1,18 @@
 from __future__ import annotations
 
 from pathlib import Path
-from subprocess import CalledProcessError, run
-from time import monotonic, sleep
-from typing import Iterable
 from urllib.request import urlopen
 
-from packaging.requirements import Requirement
-from packaging.utils import canonicalize_name
 from packaging.version import InvalidVersion, Version
 import json
 import os
 
-import tomlkit
+from dashboard_dependency import PACKAGE_NAME, update_dependencies
 
 
-PACKAGE_NAME = os.environ.get("DASHBOARD_PACKAGE_NAME", "maibot-dashboard")
 PUBLISHED_DEV_VERSION = os.environ.get("DASHBOARD_DEV_VERSION")
 DASHBOARD_PACKAGE_PATH = Path("dashboard/package.json")
-PYPROJECT_PATH = Path("pyproject.toml")
-REQUIREMENTS_PATH = Path("requirements.txt")
 PYPI_JSON_URL = f"https://pypi.org/pypi/{PACKAGE_NAME}/json"
-PYPI_INDEX_URL = "https://pypi.org/simple"
-
-
-def wait_for_pypi_version(version: Version, timeout: float = 300, interval: float = 10) -> None:
-    # PyPI 按 Accept/Accept-Encoding 区分缓存，urllib 查询成功不能代表 uv 已可见。
-    # 用实际解析器检查精确版本；只等待新包尚不可见，其他解析或网络错误立即暴露。
-    deadline = monotonic() + timeout
-    requirement = f"{PACKAGE_NAME}=={version}"
-    command = [
-        "uv", "pip", "compile", "--no-deps", "--no-config",
-        "--index", PYPI_INDEX_URL, "--refresh-package", PACKAGE_NAME,
-        "--no-header", "--no-annotate", "-",
-    ]
-    while True:
-        remaining = deadline - monotonic()
-        if remaining <= 0:
-            raise TimeoutError(f"等待 uv 从 {PYPI_INDEX_URL} 解析 {requirement} 超时（{timeout:g}s）")
-
-        result = run(command, input=f"{requirement}\n", capture_output=True, text=True, timeout=remaining)
-        if result.returncode == 0:
-            print(f"uv 已确认 PyPI 目标版本可解析: {requirement}", flush=True)
-            return
-        print(result.stderr, flush=True)
-        if f"there is no version of {requirement}" not in result.stderr:
-            raise CalledProcessError(result.returncode, command, output=result.stdout, stderr=result.stderr)
-
-        print(f"uv 尚未看到 {requirement}，继续等待", flush=True)
-        sleep(min(interval, max(0, deadline - monotonic())))
-
-
-def find_dashboard_requirement(requirements: Iterable[str]) -> Requirement:
-    normalized_package_name = canonicalize_name(PACKAGE_NAME)
-
-    for dependency in requirements:
-        parsed_requirement = Requirement(dependency)
-        if canonicalize_name(parsed_requirement.name) == normalized_package_name:
-            return parsed_requirement
-
-    raise RuntimeError(f"未在依赖列表中找到 {PACKAGE_NAME}")
-
-
-def extract_pinned_min_version(requirement: Requirement) -> Version:
-    matched_versions = [
-        Version(specifier.version) for specifier in requirement.specifier if specifier.operator in {">=", "=="}
-    ]
-
-    if len(matched_versions) != 1:
-        raise RuntimeError(f"{requirement} 的版本约束无法唯一定位当前 dashboard 版本")
-
-    return matched_versions[0]
 
 
 def get_target_base_version() -> Version:
@@ -118,76 +60,11 @@ def get_target_dev_version(target_base_version: Version) -> Version:
     return published_version
 
 
-def update_pyproject(latest_version: Version) -> bool:
-    document = tomlkit.parse(PYPROJECT_PATH.read_text(encoding="utf-8"))
-    dependencies = document["project"]["dependencies"]
-    current_requirement = find_dashboard_requirement(str(item) for item in dependencies)
-    current_version = extract_pinned_min_version(current_requirement)
-
-    if latest_version == current_version:
-        print(f"pyproject.toml 已是最新 dev 版本: {current_version}")
-        return False
-
-    normalized_package_name = canonicalize_name(PACKAGE_NAME)
-    updated_dependency = f"{PACKAGE_NAME}=={latest_version}"
-
-    for index, dependency in enumerate(dependencies):
-        parsed_requirement = Requirement(str(dependency))
-        if canonicalize_name(parsed_requirement.name) == normalized_package_name:
-            dependencies[index] = updated_dependency
-            break
-
-    PYPROJECT_PATH.write_text(tomlkit.dumps(document), encoding="utf-8")
-    print(f"pyproject.toml: {current_version} -> {latest_version}")
-    return True
-
-
-def update_requirements(latest_version: Version) -> bool:
-    lines = REQUIREMENTS_PATH.read_text(encoding="utf-8").splitlines(keepends=True)
-    current_requirement = find_dashboard_requirement(
-        line.strip() for line in lines if line.strip() and not line.strip().startswith("#")
-    )
-    current_version = extract_pinned_min_version(current_requirement)
-
-    if latest_version == current_version:
-        print(f"requirements.txt 已是最新 dev 版本: {current_version}")
-        return False
-
-    normalized_package_name = canonicalize_name(PACKAGE_NAME)
-    updated_requirement = f"{PACKAGE_NAME}=={latest_version}"
-
-    for index, line in enumerate(lines):
-        stripped_line = line.strip()
-        if not stripped_line or stripped_line.startswith("#"):
-            continue
-
-        parsed_requirement = Requirement(stripped_line)
-        if canonicalize_name(parsed_requirement.name) == normalized_package_name:
-            if line.endswith("\r\n"):
-                newline = "\r\n"
-            elif line.endswith("\n"):
-                newline = "\n"
-            else:
-                newline = ""
-            lines[index] = f"{updated_requirement}{newline}"
-            break
-
-    REQUIREMENTS_PATH.write_text("".join(lines), encoding="utf-8")
-    print(f"requirements.txt: {current_version} -> {latest_version}")
-    return True
-
-
 def main() -> None:
     target_base_version = get_target_base_version()
     latest_version = get_target_dev_version(target_base_version)
     print(f"Dashboard {target_base_version} 序列目标 dev 版本: {latest_version}")
-
-    wait_for_pypi_version(latest_version)
-    pyproject_updated = update_pyproject(latest_version)
-    requirements_updated = update_requirements(latest_version)
-
-    if pyproject_updated != requirements_updated:
-        raise RuntimeError("pyproject.toml 与 requirements.txt 的 dashboard 依赖更新状态不一致")
+    update_dependencies(latest_version)
 
 
 if __name__ == "__main__":

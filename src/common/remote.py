@@ -3,12 +3,14 @@ from typing import Any
 
 import aiohttp
 import asyncio
+import os
 import platform
 
 from src.common.logger import get_logger
 from src.config.config import global_config, MMC_VERSION
 from src.manager.async_task_manager import AsyncTask
 from src.manager.local_store_manager import local_storage
+from src.services.telemetry_platform_service import collect_telemetry_adapters
 from src.services.telemetry_stats_service import build_telemetry_stats_payload, clamp_period_start
 
 logger = get_logger("remote")
@@ -53,13 +55,23 @@ class TelemetryHeartBeatTask(AsyncTask):
             "mmc_version": MMC_VERSION,
         }
 
-        match platform.system():
+        system_name = platform.system()
+        # Android 上的 Termux 或 proot 容器（如 MaiDroid）运行的是普通 Linux 版 Python，
+        # platform.system() 只会返回 "Linux"；这些进程都继承了 Android 系统设置的
+        # ANDROID_ROOT 和 ANDROID_DATA，两者同时存在时按 Android 上报。
+        if system_name == "Linux" and os.getenv("ANDROID_ROOT") == "/system" and os.getenv("ANDROID_DATA") == "/data":
+            system_name = "Android"
+
+        match system_name:
             case "Windows":
                 info_dict["os_type"] = "Windows"
             case "Linux":
                 info_dict["os_type"] = "Linux"
             case "Darwin":
                 info_dict["os_type"] = "macOS"
+            case "Android":
+                # Python 3.13 起，官方 Android 构建的 platform.system() 会直接返回 "Android"
+                info_dict["os_type"] = "Android"
             case _:
                 info_dict["os_type"] = "Unknown"
 
@@ -140,7 +152,7 @@ class TelemetryHeartBeatTask(AsyncTask):
                 async with session.post(
                     f"{self.server_url}/stat/client_heartbeat",
                     headers=headers,
-                    json=self.info_dict,
+                    json={**self.info_dict, "adapters": collect_telemetry_adapters()},
                     timeout=aiohttp.ClientTimeout(total=5),  # 设置超时时间为5秒
                 ) as response:
                     logger.debug(f"Response status: {response.status}")
@@ -277,12 +289,16 @@ class TelemetryStatsUploadTask(AsyncTask):
         if period_end <= period_start:
             return
 
-        payload = build_telemetry_stats_payload(
+        # 驱动快照在主循环采集，数据库聚合在线程池执行，避免阻塞心跳和消息处理。
+        adapters = collect_telemetry_adapters()
+        payload = await asyncio.to_thread(
+            build_telemetry_stats_payload,
             client_uuid=self.client_uuid,
             period_start=period_start,
             period_end=period_end,
             truncated=truncated,
             client_info=self.info_dict,
         )
+        payload["adapters"] = adapters
         if await self._send_stats_payload(payload):
             self._save_cursor(period_end)

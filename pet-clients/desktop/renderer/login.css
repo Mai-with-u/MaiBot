@@ -1,0 +1,17 @@
+:root { color-scheme: light; font: 13px/1.5 "Microsoft YaHei UI", "Microsoft YaHei", "PingFang SC", sans-serif; color: #333129; background: #fffaf2; }
+* { box-sizing: border-box; }
+body { margin: 0; }
+main { padding: 24px; max-width: 440px; margin: auto; }
+h1 { margin: 0 0 20px; font-size: 18px; font-weight: 600; }
+label { display: block; margin: 14px 0 6px; color: #6f685c; }
+input, select, button { font: inherit; color: inherit; border-radius: 7px; }
+input, select { width: 100%; height: 38px; padding: 8px 10px; border: 1px solid #ddd5c8; background: #fffdf9; }
+input::placeholder { color: #a1988b; }
+.check { display: flex; align-items: center; gap: 8px; margin: 18px 0; cursor: pointer; }
+.check input { width: 15px; height: 15px; margin: 0; accent-color: #967134; }
+#status { margin: 0 0 12px; font-size: 12px; color: #766d60; overflow-wrap: anywhere; }
+#status.error { color: #b54c3e; }
+button { width: 100%; height: 38px; border: 0; background: #e8aa61; font-weight: 600; cursor: pointer; }
+button:hover:enabled { background: #dfa059; }
+button:disabled { opacity: .6; cursor: default; }
+:focus-visible { outline: 2px solid #b18a51; outline-offset: 2px; }

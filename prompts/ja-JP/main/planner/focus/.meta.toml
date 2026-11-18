@@ -1,0 +1,4 @@
+[planner_focus]
+display_name = "Focus 共有プランナー"
+advanced = true
+description = "Focus 共有グループ内の複数チャットを扱う計画テンプレート。Focus が有効な個別チャットでも使用し、session_id で対象を指定する。"

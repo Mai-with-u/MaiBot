@@ -155,7 +155,7 @@ def _make_reload_test_manager(monkeypatch: pytest.MonkeyPatch, new_global_config
     monkeypatch.setattr(manager, "_update_config_file_fingerprints", lambda scopes: None)
 
     def fake_load(config_class, path, new_ver, override_repr=False):
-        return (new_global_config, False) if config_class is Config else (SimpleNamespace(), False)
+        return (new_global_config, False) if config_class is Config else (SimpleNamespace(models=[], model_task_config=SimpleNamespace(replyer=SimpleNamespace(model_list=[]))), False)
 
     monkeypatch.setattr("src.config.config.load_config_from_file", fake_load)
     return manager
@@ -166,7 +166,7 @@ async def test_reload_config_notifies_section_callback_only_on_match(monkeypatch
     from src.config.config import Config
 
     new_config = Config()
-    new_config.webui.anti_crawler_mode = "strict"
+    new_config.webui.webui_style = 1
     manager = _make_reload_test_manager(monkeypatch, new_config)
 
     notified_all: list[int] = []
@@ -252,7 +252,9 @@ async def test_reload_config_model_scope_skips_bot_section_callbacks(monkeypatch
     from src.config.config import Config
 
     manager = _make_reload_test_manager(monkeypatch, Config())
-    manager.model_config = SimpleNamespace()  # type: ignore[assignment]
+    manager.model_config = SimpleNamespace(
+        models=[], model_task_config=SimpleNamespace(replyer=SimpleNamespace(model_list=[]))
+    )  # type: ignore[assignment]
 
     notified_all: list[int] = []
     notified_webui: list[int] = []

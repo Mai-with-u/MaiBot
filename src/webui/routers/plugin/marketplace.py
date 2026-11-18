@@ -1,6 +1,6 @@
 """公共市场服务的 WebUI HTTP 适配层，不实现选源、合并或版本判断。"""
 
-from fastapi import APIRouter, Depends, HTTPException, Query
+from fastapi import APIRouter, HTTPException, Query
 from fastapi.exceptions import RequestValidationError
 from fastapi.responses import JSONResponse
 from fastapi.routing import APIRoute
@@ -10,10 +10,9 @@ from typing import Any, Awaitable, Callable, Dict
 from urllib.error import HTTPError
 
 from src.config.config import global_config
-from src.plugin_market import engagement, service
+from src.plugin_market import engagement, feedback, service, statistics
 from src.plugin_market.errors import MarketError
 from src.plugin_market.sources import PluginSourceSettings, load_source_settings, save_source_settings
-from src.webui.dependencies import require_auth
 
 
 class MarketRoute(APIRoute):
@@ -35,7 +34,7 @@ class MarketRoute(APIRoute):
         return handle
 
 
-router = APIRouter(prefix="/marketplace", route_class=MarketRoute, dependencies=[Depends(require_auth)])
+router = APIRouter(prefix="/marketplace", route_class=MarketRoute)
 
 
 def _reply(reply: engagement.MarketReply) -> JSONResponse:
@@ -65,6 +64,11 @@ async def get_marketplace(compatible_only: bool = False, force_refresh: bool = F
 def get_review_identity() -> Dict[str, str]:
     """默认评论昵称仅从本地读取，不发送给市场。"""
     return {"username": global_config.bot.nickname}
+
+
+@router.get("/stats/summary")
+async def get_statistics_summary(force_refresh: bool = False) -> Dict[str, Any]:
+    return await statistics.get_summary(force_refresh)
 
 
 @router.get("/user-states")
@@ -100,6 +104,11 @@ async def get_user_state(plugin_id: str, user_id: str = Query(min_length=1, max_
 @router.get("/{plugin_id}/stats")
 async def get_stats(plugin_id: str, force_refresh: bool = False) -> Dict[str, Any]:
     return await service.get_stats(plugin_id, force_refresh)
+
+
+@router.get("/{plugin_id}/feedback", response_model=feedback.FeedbackPage)
+async def get_feedback(plugin_id: str, offset: int = Query(default=0, ge=0, le=100000)) -> feedback.FeedbackPage:
+    return await feedback.get_feedback(plugin_id, offset)
 
 
 @router.get("/{plugin_id}/readme")

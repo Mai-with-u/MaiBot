@@ -231,7 +231,8 @@ class MemoryEmbeddingStateService(KernelServiceBase):
         )
         if bool(prev.get("active", False)) != bool(active):
             if active:
-                logger.warning(
+                log_degraded = logger.info if reason == "正在同步当前模型向量库" else logger.warning
+                log_degraded(
                     "embedding 进入降级态，将启用 sparse-only 与 metadata-only 写入回退: "
                     f"reason={self._embedding_degraded.get('reason', '')}"
                 )

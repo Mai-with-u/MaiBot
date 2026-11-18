@@ -1,7 +1,7 @@
 import { createContext } from 'react'
 
 import { DEFAULT_DASHBOARD_STYLE, DEFAULT_DASHBOARD_STYLE_CONFIG } from './theme/tokens'
-import type { UserThemeConfig } from './theme/tokens'
+import type { DashboardStyle, UserThemeConfig } from './theme/tokens'
 
 type Theme = 'dark' | 'light' | 'system'
 
@@ -32,3 +32,4 @@ const initialState: ThemeProviderState = {
 }
 
 export const ThemeProviderContext = createContext<ThemeProviderState>(initialState)
+export const DashboardStylePreviewContext = createContext<(style: DashboardStyle | null) => void>(() => {})

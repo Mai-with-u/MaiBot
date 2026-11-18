@@ -1,9 +1,36 @@
 from datetime import datetime
 from enum import Enum
 from typing import Optional
+from uuid import uuid4
 
-from sqlalchemy import Boolean, Column, DateTime, Enum as SQLEnum, Float, Index, Integer, String, Text, UniqueConstraint
-from sqlmodel import Field, LargeBinary, SQLModel
+from sqlalchemy import Boolean, Column, DateTime, Enum as SQLEnum, Float, Index, Integer, String, Text, UniqueConstraint, event
+from sqlalchemy.engine import Connection
+from sqlalchemy.orm import Mapper
+from sqlmodel import Field, LargeBinary, Relationship, SQLModel
+
+import json
+
+from src.common.database.chat_migration_models import copies, jobs  # noqa: F401 -- 注册迁移账本
+from src.common.database.sharing_models import SharingGroup, SharingGroupMember, SharingGroupCapability, SharingGroupRule, SharingGroupMigration  # noqa: F401
+from src.files.models import FileAsset, FileBinding, FileParse  # noqa: F401 -- 注册文件服务模型
+
+
+class WebUIHelpSession(SQLModel, table=True):
+    __tablename__ = "webui_help_sessions"  # type: ignore
+
+    id: str = Field(primary_key=True)
+    title: str
+    updated_at: float = Field(index=True)
+
+
+class WebUIHelpTurn(SQLModel, table=True):
+    __tablename__ = "webui_help_turns"  # type: ignore
+
+    id: Optional[int] = Field(default=None, primary_key=True)
+    session_id: str = Field(foreign_key="webui_help_sessions.id", index=True)
+    question: str
+    reply_json: Optional[str] = None
+    error: str = ""
 
 
 class ImageType(str, Enum):
@@ -185,41 +212,6 @@ class MaisakaMonitorEventRecord(SQLModel, table=True):
     created_at: datetime = Field(default_factory=datetime.now, sa_column=Column(DateTime))
 
 
-class MaisakaReplyEffect(SQLModel, table=True):
-    """可供 WebUI 聚合查询的 MaiSaka 回复效果记录。"""
-
-    __tablename__ = "maisaka_reply_effects"  # type: ignore
-    __table_args__ = (
-        Index("ix_reply_effect_session_finalized", "session_id", "finalized_at"),
-        Index("ix_reply_effect_strategy_finalized", "strategy_primary", "finalized_at"),
-        Index("ix_reply_effect_model_prompt", "model_name", "prompt_fingerprint"),
-        Index("ix_reply_effect_request_fingerprint", "request_fingerprint"),
-    )
-
-    effect_id: str = Field(primary_key=True, max_length=36)
-    session_id: str = Field(index=True, max_length=255)
-    session_name: str = Field(default="", max_length=255)
-    chat_type: str = Field(default="group", index=True, max_length=20)
-    status: str = Field(index=True, max_length=30)
-    created_at: datetime = Field(sa_column=Column(DateTime, index=True))
-    finalized_at: Optional[datetime] = Field(default=None, sa_column=Column(DateTime, index=True, nullable=True))
-    strategy_primary: str = Field(default="other", index=True, max_length=40)
-    model_name: str = Field(default="", index=True, max_length=255)
-    request_fingerprint: str = Field(default="", index=True, max_length=64)
-    prompt_fingerprint: str = Field(default="", index=True, max_length=64)
-    # ORM 使用统一命名，物理列沿用 scorer_version 以避免重建回复效果表。
-    evaluation_version: int = Field(
-        default=2,
-        sa_column=Column("scorer_version", Integer, nullable=False, index=True),
-    )
-    response_score: Optional[float] = Field(default=None, sa_column=Column(Float, nullable=True))
-    reception_score: Optional[float] = Field(default=None, sa_column=Column(Float, nullable=True))
-    conversation_score: Optional[float] = Field(default=None, sa_column=Column(Float, nullable=True))
-    raw_score: Optional[float] = Field(default=None, sa_column=Column(Float, nullable=True))
-    relative_score: Optional[float] = Field(default=None, sa_column=Column(Float, nullable=True))
-    confidence: float = Field(default=0.0, sa_column=Column(Float, nullable=False, server_default="0"))
-    record_json: str = Field(default="{}", sa_column=Column(Text, nullable=False))
-    record_blob: Optional[bytes] = Field(default=None, sa_column=Column(LargeBinary, nullable=True))
 
 
 class OneTimeMaintenanceTask(SQLModel, table=True):
@@ -308,6 +300,47 @@ class StatisticsModelHourly(SQLModel, table=True):
     cost: float = Field(default=0.0)
     time_cost_sum: float = Field(default=0.0)
     time_cost_sq_sum: float = Field(default=0.0)
+
+
+class StatisticsUsageHourly(SQLModel, table=True):
+    """按小时、按全部统计维度汇总的模型调用；口径与逐条统计完全一致，可替代 30 天明细扫描。
+
+    维度值写入前已按统计规则归一化（空值归为 unknown / 未记录），
+    缓存 token 已逐条归一化，耗时只累计大于 0 的有效耗时。
+    """
+
+    __tablename__ = "statistics_usage_hourly"  # type: ignore
+    __table_args__ = (
+        UniqueConstraint(
+            "bucket_time",
+            "request_type",
+            "provider_name",
+            "model_name",
+            "task_name",
+            "session_id",
+            name="uq_statistics_usage_hourly_dimensions",
+        ),
+        Index("ix_statistics_usage_hourly_bucket_time", "bucket_time"),
+    )
+
+    id: Optional[int] = Field(default=None, primary_key=True)
+    bucket_time: datetime = Field(sa_column=Column(DateTime, nullable=False))
+    request_type: str = Field(max_length=100)
+    provider_name: str = Field(max_length=255)
+    model_name: str = Field(max_length=255)
+    task_name: str = Field(max_length=100)
+    session_id: str = Field(default="", max_length=255)
+    request_count: int = Field(default=0)
+    prompt_tokens: int = Field(default=0)
+    completion_tokens: int = Field(default=0)
+    cache_hit_tokens: int = Field(default=0)
+    cache_miss_tokens: int = Field(default=0)
+    cost: float = Field(default=0.0)
+    duration_count: int = Field(default=0)
+    duration_sum: float = Field(default=0.0)
+    duration_sum_sq: float = Field(default=0.0)
+    response_time_count: int = Field(default=0)
+    response_time_sum: float = Field(default=0.0)
 
 
 class HighFrequencyTerm(SQLModel, table=True):
@@ -416,6 +449,30 @@ class BinaryData(SQLModel, table=True):
     full_path: str = Field(max_length=1024)  # 文件的完整路径 (包括文件名)
 
 
+class Individual(SQLModel, table=True):
+    """跨平台统一个体；平台账号通过 PersonInfo 归属于个体。"""
+
+    __tablename__ = "individuals"
+
+    individual_id: str = Field(default_factory=lambda: uuid4().hex, primary_key=True)
+    display_name: str
+    is_known: bool = False
+    profile_sources_json: str = "[]"
+    created_at: datetime = Field(default_factory=datetime.now)
+
+
+class IndividualMergeEvent(SQLModel, table=True):
+    """手动合并的成员归属快照，保留被合并个体的历史 ID。"""
+
+    __tablename__ = "individual_merge_events"
+
+    id: Optional[int] = Field(default=None, primary_key=True)
+    target_individual_id: str = Field(index=True)
+    members_json: str
+    profiles_json: str = "{}"
+    created_at: datetime = Field(default_factory=datetime.now)
+
+
 class PersonInfo(SQLModel, table=True):
     """存储个人信息的模型"""
 
@@ -423,10 +480,12 @@ class PersonInfo(SQLModel, table=True):
 
     id: Optional[int] = Field(default=None, primary_key=True)  # 自增主键
 
-    is_known: bool = Field(default=False)  # 是否为已知人
+    # 建档时的账号来源资料；当前人物资料统一读取 individual。
+    is_known: bool = Field(default=False)  # 来源账号原认识状态
     person_id: str = Field(unique=True, index=True, max_length=255)  # 人员ID
+    individual_id: str = Field(default_factory=lambda: uuid4().hex, foreign_key="individuals.individual_id", index=True)
+    individual: Individual = Relationship(sa_relationship_kwargs={"lazy": "joined"})
     person_name: Optional[str] = Field(default=None, max_length=255, nullable=True)  # 人员名称
-    name_reason: Optional[str] = Field(default=None, nullable=True)  # 名称原因
 
     # 身份元数据
     platform: str = Field(index=True, max_length=100)  # 平台名称
@@ -436,15 +495,41 @@ class PersonInfo(SQLModel, table=True):
         default=None, nullable=True
     )  # 群昵称 (JSON, [{"group_id": str, "group_cardname": str}])
 
-    # 印象
-    memory_points: Optional[str] = Field(default=None, nullable=True)  # 记忆要点，JSON格式存储
-
     # 认识次数和时间
     know_counts: int = Field(default=0)  # 认识次数
     first_known_time: Optional[datetime] = Field(
         default=None, sa_column=Column(DateTime, nullable=True)
     )  # 首次认识时间
     last_known_time: Optional[datetime] = Field(default=None, sa_column=Column(DateTime, nullable=True))  # 最后认识时间
+
+
+@event.listens_for(PersonInfo, "before_insert")
+def create_person_individual(mapper: Mapper, connection: Connection, person: PersonInfo) -> None:
+    """所有 ORM 建档入口都在同一事务内创建默认个体。"""
+    table = Individual.__table__
+    existing = connection.execute(
+        table.select().where(table.c.individual_id == person.individual_id)
+    ).first()
+    origin = {
+        "individual_id": person.individual_id, "person_id": person.person_id,
+        "platform": person.platform, "user_id": person.user_id,
+        "display_name": person.person_name or person.user_nickname or person.user_id,
+        "is_known": person.is_known,
+    }
+    if existing is None:
+        connection.execute(table.insert().values(
+            individual_id=person.individual_id,
+            display_name=origin["display_name"],
+            is_known=person.is_known,
+            profile_sources_json=json.dumps([origin], ensure_ascii=False),
+            created_at=datetime.now(),
+        ))
+    else:
+        origins = json.loads(existing.profile_sources_json)
+        origins.append(origin)
+        connection.execute(table.update().where(table.c.individual_id == person.individual_id).values(
+            profile_sources_json=json.dumps(origins, ensure_ascii=False),
+        ))
 
 
 class ChatSession(SQLModel, table=True):

@@ -1,0 +1,15 @@
+[reply_mai_replier_private_system]
+display_name = "Mai Replier · 私聊 · System"
+advanced = true
+description = "Mai Replier 的私聊 System 消息模板，默认只包含人设；可独立编辑。"
+
+[reply_private_mai_replier]
+display_name = "Mai Replier · 私聊 · User"
+advanced = true
+description = "Mai Replier 的私聊 User 消息模板。"
+
+[reply_private_followup_mai_replier]
+display_name = "Mai Replier · 私聊补充发言 · User"
+advanced = true
+description = "Mai Replier 的私聊补充发言 User 消息模板。"
+

@@ -7,6 +7,18 @@ from typing import List, Optional, Tuple
 from sqlmodel import col, select
 
 from src.chat.message_receive.message import SessionMessage
+from src.common.data_models.message_component_data_model import (
+    AtComponent,
+    DictComponent,
+    EmojiComponent,
+    FileComponent,
+    ForwardNodeComponent,
+    ImageComponent,
+    ReplyComponent,
+    StandardMessageComponents,
+    TextComponent,
+    VoiceComponent,
+)
 from src.common.data_models.tool_record_data_model import MaiToolRecord
 from src.common.database.database import get_db_session
 from src.common.database.database_model import Images, ImageType, ToolRecord
@@ -16,14 +28,61 @@ from src.common.utils.utils_action import ActionUtils
 from src.config.config import global_config
 
 
+def _contains_reply_components(components: List[StandardMessageComponents]) -> bool:
+    return any(
+        isinstance(component, ReplyComponent)
+        or (
+            isinstance(component, ForwardNodeComponent)
+            and any(_contains_reply_components(node.content) for node in component.forward_components)
+        )
+        for component in components
+    )
+
+
+def _render_without_reply_components(
+    message: SessionMessage,
+    components: List[StandardMessageComponents],
+    depth: int = 0,
+) -> str:
+    """只渲染自己的消息组件，不解析引用原文，也不重新执行媒体识别。"""
+    parts: List[str] = []
+    for component in components:
+        if isinstance(component, ReplyComponent):
+            continue
+        if isinstance(component, TextComponent):
+            parts.append(component.text)
+        elif isinstance(component, (ImageComponent, EmojiComponent, VoiceComponent)):
+            parts.append(component.content)
+        elif isinstance(component, AtComponent):
+            target_name = component.target_user_cardname or component.target_user_nickname or component.target_user_id
+            parts.append(f"@{target_name}")
+        elif isinstance(component, FileComponent):
+            parts.append(component.to_plain_text())
+        elif isinstance(component, DictComponent):
+            parts.append(message.process_dict_component(component))
+        elif isinstance(component, ForwardNodeComponent):
+            nodes: List[str] = []
+            for node in component.forward_components:
+                sender = node.user_cardname or node.user_nickname or node.user_id or "未知用户"
+                body = _render_without_reply_components(message, node.content, depth + 1)
+                nodes.append(f"{'-' * (depth + 1) * 2} 【{sender}】: {body}")
+            parts.append("【合并转发消息: \n" + "\n".join(nodes) + "\n】")
+        else:
+            raise NotImplementedError(f"暂时不支持的消息组件类型: {type(component)}")
+    return " ".join(parts)
+
+
 def _build_readable_line(
     message: SessionMessage,
     *,
     replace_bot_name: bool,
     timestamp_mode: Optional[str],
     show_message_id_prefix: bool,
+    include_reply_components: bool = True,
 ) -> str:
     plain_text = (message.processed_plain_text or "").strip()
+    if not include_reply_components and _contains_reply_components(message.raw_message.components):
+        plain_text = _render_without_reply_components(message, message.raw_message.components).strip()
     if replace_bot_name and global_config.bot.nickname:
         plain_text = plain_text.replace(global_config.bot.nickname, "你")
     user_name = (
@@ -180,19 +239,32 @@ def build_readable_messages(
     read_mark: float = 0.0,
     truncate: bool = False,
     show_actions: bool = False,
+    *,
+    group_dates: bool = False,
+    include_reply_components: bool = True,
 ) -> str:
+    if group_dates and timestamp_mode != "normal":
+        raise ValueError("按日期分组时必须使用 normal 固定时间模式")
     normalized_messages = _normalize_messages(messages)
     lines: List[str] = []
     unread_mark_added = False
+    current_date = ""
     for message in normalized_messages:
         if read_mark and not unread_mark_added and message.timestamp.timestamp() > read_mark:
             lines.append("--- 以上消息是你已经看过，请关注以下未读的新消息 ---")
             unread_mark_added = True
+        # 日期仅在变化时输出一次；跨天仍保留日期边界，每条消息使用固定时分秒。
+        if group_dates:
+            message_date = message.timestamp.strftime("%Y-%m-%d")
+            if message_date != current_date:
+                lines.append(f"日期：{message_date}")
+                current_date = message_date
         line = _build_readable_line(
             message,
             replace_bot_name=replace_bot_name,
-            timestamp_mode=timestamp_mode,
+            timestamp_mode="normal_no_ymd" if group_dates else timestamp_mode,
             show_message_id_prefix=False,
+            include_reply_components=include_reply_components,
         )
         if truncate and len(line) > 200:
             line = f"{line[:200]}......（内容太长了）"

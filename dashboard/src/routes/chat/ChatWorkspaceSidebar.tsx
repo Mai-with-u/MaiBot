@@ -15,11 +15,17 @@ import type { SessionInfo, StageStatusInfo } from '@/routes/monitor/use-maisaka-
 import { StageStatusLabel } from '@/routes/monitor/StageStatusLabel'
 import { getStageStatusLight } from '@/routes/monitor/stage-status-light'
 
+import { useChatTabAvatarUrl } from './local-bot-avatar'
+import { isFocusFlowId } from './observed-sessions'
 import type { ChatMessage, ChatTab, ObservedMessagePreview } from './types'
 import { getChatTabDisplayName } from './utils'
+import { ObservedConversationHoverCard } from './ObservedConversationHoverCard'
 
 interface ChatWorkspaceSidebarProps {
   className?: string
+  agentEnabled?: boolean
+  agentActive?: boolean
+  onSelectAgent?: () => void
   tabs: ChatTab[]
   activeTabId: string
   activeObservedSessionId: string | null
@@ -55,10 +61,7 @@ const ConversationItem = memo(function ConversationItem({
   const lastMessage = tab.messages[tab.messages.length - 1]
   const preview = getMessagePreview(lastMessage, t('chat.sidebar.emptyPreview'))
   const displayName = getChatTabDisplayName(tab, t('chat.botNameFallback'))
-  const avatarUrl = useResolvedAvatarUrl(
-    isVirtual ? tab.virtualConfig?.platform : 'qq',
-    isVirtual ? tab.virtualConfig?.userId : tab.sessionInfo.bot_qq
-  )
+  const avatarUrl = useChatTabAvatarUrl(tab)
   return (
     <ConversationListItem
       title={displayName}
@@ -123,40 +126,50 @@ const ObservedConversationItem = memo(function ObservedConversationItem({
       ? `${latestMessage.speakerName}: ${messagePreview}`
       : messagePreview
   return (
-    <ConversationListItem
-      title={session.sessionName}
+    <ObservedConversationHoverCard
+      sessionId={session.sessionId}
+      name={session.sessionName}
+      platform={session.platform}
+      targetId={targetId}
+      isGroupChat={session.isGroupChat}
+      status={status?.stage ? <StageStatusLabel status={status} /> : '暂无运行状态'}
       preview={previewText}
-      selected={active}
-      onSelect={() => onSelect(session.sessionId)}
-      avatar={<ConversationAvatar src={avatarUrl} name={session.sessionName} />}
-      status={
-        <span className="inline-flex min-w-0 max-w-full items-center gap-1">
-          <StatusIndicator
-            variant="inline"
-            status={getStageStatusLight(status)}
-          />
-          {status?.stage && <span className="truncate"><StageStatusLabel status={status} /></span>}
-        </span>
-      }
-      actions={
-        <Tooltip>
-          <TooltipTrigger asChild>
-            <Button
-              type="button"
-              variant="ghost"
-              size="icon-sm"
-              aria-label={t('chat.sidebar.openSettings', { name: session.sessionName })}
-              onClick={() => onOpenSettings(session.sessionId)}
-            >
-              <Settings />
-            </Button>
-          </TooltipTrigger>
-          <TooltipContent side="right">
-            {t('chat.sidebar.openSettings', { name: session.sessionName })}
-          </TooltipContent>
-        </Tooltip>
-      }
-    />
+    >
+      <ConversationListItem
+        title={session.sessionName}
+        preview={previewText}
+        selected={active}
+        onSelect={() => onSelect(session.sessionId)}
+        avatar={<ConversationAvatar src={avatarUrl} name={session.sessionName} />}
+        status={
+          <span className="inline-flex min-w-0 max-w-full items-center gap-1">
+            <StatusIndicator
+              variant="inline"
+              status={getStageStatusLight(status)}
+            />
+            {status?.stage && <span className="truncate"><StageStatusLabel status={status} /></span>}
+          </span>
+        }
+        actions={isFocusFlowId(session.sessionId) ? undefined : (
+          <Tooltip>
+            <TooltipTrigger asChild>
+              <Button
+                type="button"
+                variant="ghost"
+                size="icon-sm"
+                aria-label={t('chat.sidebar.openSettings', { name: session.sessionName })}
+                onClick={() => onOpenSettings(session.sessionId)}
+              >
+                <Settings />
+              </Button>
+            </TooltipTrigger>
+            <TooltipContent side="right">
+              {t('chat.sidebar.openSettings', { name: session.sessionName })}
+            </TooltipContent>
+          </Tooltip>
+        )}
+      />
+      </ObservedConversationHoverCard>
   )
 }, (previous, next) => {
   // 父页面会重建会话/预览对象，只比较本行实际使用的字段。
@@ -180,6 +193,9 @@ const ObservedConversationItem = memo(function ObservedConversationItem({
 
 export function ChatWorkspaceSidebar({
   className,
+  agentEnabled = false,
+  agentActive = false,
+  onSelectAgent,
   tabs,
   activeTabId,
   activeObservedSessionId,
@@ -195,7 +211,7 @@ export function ChatWorkspaceSidebar({
   const { t } = useTranslation()
   const [searchQuery, setSearchQuery] = useState('')
   const sortedObservedSessions = useMemo(
-    () => Array.from(observedSessions.values()).sort((a, b) => b.lastActivity - a.lastActivity),
+    () => Array.from(observedSessions.values()).filter((session) => session.platform !== 'internal').sort((a, b) => b.lastActivity - a.lastActivity),
     [observedSessions]
   )
 
@@ -216,10 +232,15 @@ export function ChatWorkspaceSidebar({
       : sortedObservedSessions,
     [normalizedQuery, sortedObservedSessions]
   )
+  const observedSections = [
+    { title: 'Focus 共享流', sessions: filteredObservedSessions.filter((session) => isFocusFlowId(session.sessionId)) },
+    { title: '聊天会话', sessions: filteredObservedSessions.filter((session) => !isFocusFlowId(session.sessionId)) },
+  ].filter((section) => section.sessions.length > 0)
+  const showAgent = agentEnabled && (!normalizedQuery || t('sidebar.menu.agent').toLowerCase().includes(normalizedQuery))
   const showLocalSection = !normalizedQuery || filteredTabs.length > 0
   const showObservedSection = !normalizedQuery || filteredObservedSessions.length > 0
   const showNoResults =
-    normalizedQuery.length > 0 && filteredTabs.length === 0 && filteredObservedSessions.length === 0
+    normalizedQuery.length > 0 && !showAgent && filteredTabs.length === 0 && filteredObservedSessions.length === 0
 
   return (
     <PageFrame asChild>
@@ -265,7 +286,7 @@ export function ChatWorkspaceSidebar({
                 {filteredTabs.map((tab) => (
                   <ConversationItem
                     key={tab.id}
-                    active={activeObservedSessionId === null && activeTabId === tab.id}
+                    active={!agentActive && activeObservedSessionId === null && activeTabId === tab.id}
                     tab={tab}
                     onSwitch={onSwitch}
                     onClose={onClose}
@@ -273,6 +294,18 @@ export function ChatWorkspaceSidebar({
                 ))}
               </DataPanel>
             </section>
+          )}
+
+          {showAgent && onSelectAgent && (
+            <DataPanel padding="none" className="shrink-0">
+              <ConversationListItem
+                title={t('sidebar.menu.agent')}
+                preview=""
+                selected={agentActive}
+                onSelect={onSelectAgent}
+                avatar={<ConversationAvatar name={t('sidebar.menu.agent')} bot />}
+              />
+            </DataPanel>
           )}
 
           {showObservedSection && (
@@ -306,16 +339,21 @@ export function ChatWorkspaceSidebar({
                         {t('chat.sidebar.waitingObservedChats')}
                       </p>
                     ) : (
-                      filteredObservedSessions.map((session) => (
-                        <ObservedConversationItem
-                          key={session.sessionId}
-                          session={session}
-                          status={observedStageStatuses.get(session.sessionId)}
-                          latestMessage={observedLatestMessages.get(session.sessionId)}
-                          active={activeObservedSessionId === session.sessionId}
-                          onSelect={onSelectObserved}
-                          onOpenSettings={onOpenObservedSettings}
-                        />
+                      observedSections.map((section) => (
+                        <div key={section.title}>
+                          <h3 className="text-muted-foreground px-2.5 pt-2 pb-1 text-xs">{section.title}</h3>
+                          {section.sessions.map((session) => (
+                            <ObservedConversationItem
+                              key={session.sessionId}
+                              session={session}
+                              status={observedStageStatuses.get(session.sessionId)}
+                              latestMessage={observedLatestMessages.get(session.sessionId)}
+                              active={!agentActive && activeObservedSessionId === session.sessionId}
+                              onSelect={onSelectObserved}
+                              onOpenSettings={onOpenObservedSettings}
+                            />
+                          ))}
+                        </div>
                       ))
                     )}
                   </div>

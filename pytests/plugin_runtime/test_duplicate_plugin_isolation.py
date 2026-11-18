@@ -86,3 +86,22 @@ def test_startup_cleanup_removes_empty_plugin_directories_only(tmp_path: Path) -
     assert removed_paths == [empty_plugin_dir]
     assert not empty_plugin_dir.exists()
     assert normal_plugin_dir.is_dir()
+
+
+@pytest.mark.asyncio
+async def test_retired_desktop_pet_is_blocked_without_deleting_sources(tmp_path: Path) -> None:
+    plugin_root = tmp_path / "plugins"
+    plugin_root.mkdir()
+    old_pet = _write_plugin(plugin_root, "desktop_pet", "sengokucola.desktop-pet")
+    _write_plugin(plugin_root, "other", "test.other")
+    manager = PluginRuntimeManager()
+    await manager._sync_plugin_dependencies([plugin_root])
+    reasons = manager.get_plugin_load_failure_reasons()
+    assert "desktop_pet.enabled" in reasons["sengokucola.desktop-pet"]
+    assert "test.other" not in reasons
+    loader = PluginLoader(plugin_type_filter="not_adapter")
+    loader.set_blocked_plugin_reasons(reasons)
+    candidates, _ = loader.discover_candidates([str(plugin_root)])
+    load_order, _ = loader.resolve_dependencies(candidates)
+    assert set(load_order) == {"test.other"}
+    assert (old_pet / "plugin.py").is_file()

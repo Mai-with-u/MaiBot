@@ -24,8 +24,9 @@ from google.genai.types import (
     ContentUnion,
     EmbedContentConfig,
     EmbedContentResponse,
-    FunctionDeclaration,
     FunctionCall,
+    FunctionCallingConfig,
+    FunctionDeclaration,
     FunctionResponse,
     GenerateContentConfig,
     GenerateContentResponse,
@@ -37,9 +38,11 @@ from google.genai.types import (
     SafetySetting,
     ThinkingConfig,
     Tool,
+    ToolConfig,
 )
 
 from src.common.logger import get_logger
+from src.common.http_client import get_shared_ssl_context
 from src.config.model_configs import APIProvider
 from src.llm_models.exceptions import (
     EmptyResponseException,
@@ -377,7 +380,7 @@ def _convert_messages(items: List[ContextItem]) -> Tuple[ContentListUnion, str |
                     response=_normalize_function_response_payload(item),
                 )
             )
-            contents.append(Content(role="tool", parts=[function_response_part]))
+            contents.append(Content(role="user", parts=[function_response_part]))
             index += 1
             continue
 
@@ -730,7 +733,11 @@ def _build_http_options(api_provider: APIProvider) -> HttpOptions:
     Returns:
         HttpOptions: Gemini SDK HTTP 选项对象。
     """
-    http_options_payload: Dict[str, Any] = {}
+    ssl_context = get_shared_ssl_context()
+    http_options_payload: Dict[str, Any] = {
+        "client_args": {"verify": ssl_context},
+        "async_client_args": {"verify": ssl_context},
+    }
     if api_provider.timeout is not None:
         http_options_payload["timeout"] = int(api_provider.timeout * 1000)
 
@@ -1034,6 +1041,8 @@ class GeminiClient(AdapterClient[AsyncIterator[GenerateContentResponse], Generat
                 extra_params=request.extra_params,
                 enable_google_search=enable_google_search,
             )
+            if request.tool_choice == "none":
+                generation_config.tool_config = ToolConfig(function_calling_config=FunctionCallingConfig(mode="NONE"))
             snapshot_provider_request["request_kwargs"] = {
                 "config": generation_config,
                 "contents": contents,

@@ -42,7 +42,7 @@ from src.platform_io import DeliveryBatch, DriverKind, get_platform_io_manager
 from src.platform_io.route_key_factory import RouteKeyFactory
 from src.plugin_runtime.hook_payloads import deserialize_session_message, serialize_session_message
 from src.plugin_runtime.hook_schema_utils import build_object_schema
-from src.plugin_runtime.host.hook_dispatcher import HookDispatchResult
+from src.plugin_runtime.host.hook_dispatcher import HookAbortedError, HookDispatchResult
 from src.plugin_runtime.host.hook_spec_registry import HookSpec, HookSpecRegistry
 
 logger = get_logger("send_service")
@@ -232,9 +232,15 @@ async def _invoke_send_hook(
         tuple[HookDispatchResult, SessionMessage]: Hook 聚合结果以及可能被改写后的消息对象。
     """
 
+    serialized_message = serialize_session_message(message)
+    if hook_name == "send_service.after_send" and kwargs.get("sent"):
+        from src.common.runtime_loop import run_on_main_loop
+        from src.desktop_pet.service import desktop_pet_service
+
+        await run_on_main_loop(desktop_pet_service.notify_reply(serialized_message))
     hook_result = await _get_runtime_manager().invoke_hook(
         hook_name,
-        message=serialize_session_message(message),
+        message=serialized_message,
         **kwargs,
     )
     mutated_message = message
@@ -278,7 +284,11 @@ def _inherit_platform_io_route_metadata(target_stream: BotChatSession) -> Dict[s
         inherited_metadata["platform_io_target_group_id"] = normalized_group_id
 
     if target_stream.user_id and (normalized_user_id := str(target_stream.user_id).strip()):
-        inherited_metadata["platform_io_target_user_id"] = normalized_user_id
+        from src.person_info.identity import resolve_private_transport_user
+
+        inherited_metadata["platform_io_target_user_id"] = resolve_private_transport_user(
+            target_stream.platform, normalized_user_id, target_stream.account_id, target_stream.scope,
+        )
 
     return inherited_metadata
 
@@ -668,6 +678,21 @@ async def _prepare_message_for_platform_io(
 
     if set_reply or not message.processed_plain_text:
         message.processed_plain_text = _build_processed_plain_text(message)
+    from src.files.service import disk_call, get_file_service
+
+    # 所有出站驱动共用归属检查，包括 WebUI、本地驱动和转发节点。
+    pending = list(message.raw_message.components)
+    while pending:
+        component = pending.pop()
+        if isinstance(component, ForwardNodeComponent):
+            for node in component.forward_components:
+                pending.extend(node.content)
+        elif isinstance(component, FileComponent) and component.file_ref:
+            file_service = get_file_service()
+            file_service.require_enabled()
+            asset = await disk_call(file_service.store.get, component.file_ref, message.session_id)
+            component.name, component.size, component.mime_type = asset.name, str(asset.size), asset.mime_type
+            component.url, component.base64_data = "", ""
     if typing:
         # 纯图片分段与表情包一样使用固定等待，避免按图片描述长度模拟打字。
         components = message.raw_message.components
@@ -833,6 +858,7 @@ async def _send_via_platform_io(
     reply_message: Optional[MaiMessage] = None,
     storage_message: bool,
     show_log: bool,
+    raise_on_hook_abort: bool = False,
 ) -> Optional[SessionMessage]:
     """通过 Platform IO 发送消息。
 
@@ -858,6 +884,8 @@ async def _send_via_platform_io(
     )
     if before_send_result.aborted:
         logger.info(f"[SendService] 消息 {message.message_id} 在发送前被 Hook 中止")
+        if raise_on_hook_abort:
+            raise HookAbortedError(before_send_result)
         return None
 
     before_kwargs = before_send_result.kwargs
@@ -914,7 +942,8 @@ async def _send_via_platform_io(
     )
 
     if delivery_batch.has_success:
-        _record_sent_emoji_usage(message)
+        if any(isinstance(component, EmojiComponent) for component in message.raw_message.components):
+            await asyncio.to_thread(_record_sent_emoji_usage, message)
         if storage_message:
             await _store_sent_message(message)
         await _notify_memory_automation_on_message_sent(message)
@@ -962,8 +991,9 @@ async def send_session_message_with_message(
     show_log: bool = True,
     sync_to_maisaka_history: bool = False,
     maisaka_source_kind: str = "outbound_send",
+    raise_on_hook_abort: bool = False,
 ) -> Optional[SessionMessage]:
-    """统一发送一条内部消息，并返回最终发送成功的消息对象。"""
+    """统一发送消息；raise_on_hook_abort 允许调用方接收带原因的 HookAbortedError。"""
     if not message.message_id:
         logger.error("[SendService] 消息缺少 message_id，无法发送")
         raise ValueError("消息缺少 message_id，无法发送")
@@ -976,6 +1006,7 @@ async def send_session_message_with_message(
         reply_message=reply_message,
         storage_message=storage_message,
         show_log=show_log,
+        raise_on_hook_abort=raise_on_hook_abort,
     )
     if sent_message is not None and sync_to_maisaka_history:
         _sync_sent_message_to_maisaka_history(
@@ -1080,6 +1111,9 @@ async def _send_to_target_with_message(
     selected_expressions: Optional[List[int]] = None,
     sync_to_maisaka_history: bool = False,
     maisaka_source_kind: str = "outbound_send",
+    raise_on_hook_abort: bool = False,
+    *,
+    quote_message: Optional[MaiMessage] = None,
 ) -> Optional[SessionMessage]:
     """向指定目标构建并发送消息。
 
@@ -1093,12 +1127,15 @@ async def _send_to_target_with_message(
         storage_message: 是否将发送结果写入消息存储。
         show_log: 是否输出发送日志。
         selected_expressions: 可选的表情候选索引列表。
+        raise_on_hook_abort: 为 True 时向调用方传递带原因的 Hook 中止。
+        quote_message: 独立的显示引用目标；未指定时引用 reply_message，不改变被动回复锚点。
 
     Returns:
         bool: 发送成功返回 ``True``，否则返回 ``False``。
     """
     try:
-        if set_reply and reply_message is None:
+        reference_message = quote_message if quote_message is not None else reply_message
+        if set_reply and reference_message is None:
             logger.warning("[SendService] 使用引用回复，但未提供回复消息")
             return None
 
@@ -1127,6 +1164,8 @@ async def _send_to_target_with_message(
         )
         if after_build_result.aborted:
             logger.info(f"[SendService] 消息 {outbound_message.message_id} 在构建后被 Hook 中止")
+            if raise_on_hook_abort:
+                raise HookAbortedError(after_build_result)
             return None
 
         after_build_kwargs = after_build_result.kwargs
@@ -1139,12 +1178,13 @@ async def _send_to_target_with_message(
             outbound_message,
             typing=typing,
             set_reply=set_reply,
-            reply_message_id=reply_message.message_id if reply_message is not None else None,
-            reply_message=reply_message,
+            reply_message_id=reference_message.message_id if reference_message is not None else None,
+            reply_message=reference_message,
             storage_message=storage_message,
             show_log=show_log,
             sync_to_maisaka_history=sync_to_maisaka_history,
             maisaka_source_kind=maisaka_source_kind,
+            raise_on_hook_abort=raise_on_hook_abort,
         )
         if sent_message is not None:
             logger.debug(f"[SendService] 成功发送消息到 {stream_id}")
@@ -1152,6 +1192,8 @@ async def _send_to_target_with_message(
 
         logger.error("[SendService] 发送消息失败")
         return None
+    except HookAbortedError:
+        raise
     except Exception as exc:
         logger.exception(f"[SendService] 发送消息时出错: {exc}")
         return None
@@ -1231,6 +1273,7 @@ async def emoji_to_stream_with_message(
     reply_message: Optional[MaiMessage] = None,
     sync_to_maisaka_history: bool = False,
     maisaka_source_kind: str = "outbound_send",
+    raise_on_hook_abort: bool = False,
 ) -> Optional[SessionMessage]:
     """向指定流发送表情消息，并返回发送成功后的消息对象。"""
     return await _send_to_target_with_message(
@@ -1242,6 +1285,7 @@ async def emoji_to_stream_with_message(
         reply_message=reply_message,
         sync_to_maisaka_history=sync_to_maisaka_history,
         maisaka_source_kind=maisaka_source_kind,
+        raise_on_hook_abort=raise_on_hook_abort,
     )
 
 

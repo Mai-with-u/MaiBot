@@ -10,6 +10,8 @@ import time
 
 from rich.console import RenderableType
 
+from src.chat.message_receive.chat_manager import chat_manager
+
 from src.common.data_models.llm_service_data_models import LLMGenerationOptions
 from src.common.data_models.message_component_data_model import AtComponent
 from src.common.i18n import get_locale
@@ -37,7 +39,13 @@ from src.llm_models.payload_content.context_item import (
 from src.llm_models.payload_content.context_protocol import ContextProtocolMode
 from src.llm_models.payload_content.native_tool import NativeToolCallSummary
 from src.llm_models.payload_content.resp_format import RespFormat
-from src.llm_models.payload_content.tool_option import ToolCall, ToolDefinitionInput, ToolOption, normalize_tool_options
+from src.llm_models.payload_content.tool_option import (
+    ToolCall,
+    ToolDefinitionInput,
+    ToolOption,
+    normalize_tool_option,
+    normalize_tool_options,
+)
 from src.plugin_runtime.hook_payloads import (
     deserialize_prompt_items,
     serialize_prompt_items,
@@ -45,11 +53,13 @@ from src.plugin_runtime.hook_payloads import (
 )
 from src.plugin_runtime.hook_schema_utils import build_object_schema
 from src.plugin_runtime.host.hook_spec_registry import HookSpec, HookSpecRegistry
+from src.plugin_runtime.host.reply_extensions import build_reply_extension_capabilities
 from src.services.llm_service import LLMServiceClient
 
-from src.maisaka.builtin_tool import get_builtin_tools
+from src.maisaka.builtin_tool import get_builtin_tools, is_builtin_tool_in_action_stage
 from src.maisaka.context.history import collect_tool_turn_anchor_indices, normalize_tool_call_result_pairs
 from src.maisaka.context.messages import (
+    IMAGE_QUALITY_MAX_SIDE,
     LLMContextMessage,
     ModelOutputContextMessage,
     ReferenceMessage,
@@ -65,41 +75,32 @@ from src.maisaka.context.usage import (
     resolve_tool_definition_name,
 )
 from src.maisaka.display.prompt_cli_renderer import PromptCLIVisualizer
-from src.maisaka.memory.mid_term import is_mid_term_memory_message
+from src.maisaka.context.compaction import ContextSummaryMessage, PlannerRequestSnapshot
+from src.maisaka.context.post_processor import MIN_RETAINED_CHAT_MESSAGES
 from src.maisaka.focus import focus_mode_manager
 from src.maisaka.visual.message_limiter import limit_latest_images_in_messages
-from src.maisaka.context.emoji_candidates import EmojiCandidateMessage
+from src.maisaka.visual.deferred_images import defer_context_image_encoding
 from src.maisaka.visual.mode_utils import resolve_enable_visual_planner
 
-from .attention_drift import build_attention_drift_prompt_block
+from src.maisaka.scenes.factory import get_prompt_profile
+
+from .planner_action_judge import complete_missing_planner_action
+from .tool_arguments import filter_tool_call_items
 
 REQUEST_TYPE_BY_REQUEST_KIND = {
-    "emotion": "emoji.selector",
     "expression_selector": "expression.selector",
     "planner": "maisaka.planner",
-    "reply_effect_judge": "reply.effect_judge",
     "sub_agent": "maisaka.sub_agent",
 }
 MODEL_TASK_NAME_BY_REQUEST_KIND: dict[str, str] = {
     "expression_selector": "fast_model",
-    "reply_effect_judge": "utils",
 }
 PROMPT_PREVIEW_CATEGORY_BY_REQUEST_KIND = {
     "planner": "planner",
-    "reply_effect_judge": "reply_effect_judge",
     "expression_selector": "expression_selector",
-    "emotion": "emotion",
     "sub_agent": "sub_agent",
 }
 CONTEXT_SELECTION_CACHE_STABILITY_RATIO = 2.0
-FOCUS_PLANNER_FINAL_USER_REMINDER_TEMPLATE = (
-    "你需要输出对{bot_name}发言的分析，视情况输出文本内容的分析，思考是否进行工具调用"
-)
-PLANNER_FINAL_USER_REMINDER = (
-    "请你进行分析，是不调用工具，进行思考和等待\n还是使用工具搜集处理信息或使用reply回复"
-)
-
-
 @dataclass(slots=True)
 class ChatResponse:
     """LLM 对话循环单步响应。"""
@@ -294,7 +295,7 @@ def register_maisaka_hook_specs(registry: HookSpecRegistry) -> List[HookSpec]:
             ),
             HookSpec(
                 name="maisaka.replyer.before_request",
-                description="在 Maisaka replyer 向模型发起请求前触发，可读取或改写本次 reply 工具透传参数。",
+                description="在 Maisaka replyer 向模型发起请求前触发，可改写参数，或以 action=abort 取消本次回复并通过 custom_result.reason 说明原因。",
                 parameters_schema=build_object_schema(
                     {
                         "session_id": {
@@ -316,6 +317,10 @@ def register_maisaka_hook_specs(registry: HookSpecRegistry) -> List[HookSpec]:
                         "extra_prompt": {
                             "type": "string",
                             "description": "Hook 可追加到本次 replyer 提示词中的额外回复要求。",
+                        },
+                        "match_text": {
+                            "type": "string",
+                            "description": "本次回复所针对的最新用户消息文本，供插件做关键词等匹配；无可用文本时为空字符串。",
                         },
                         "attempt": {
                             "type": "integer",
@@ -352,6 +357,7 @@ def register_maisaka_hook_specs(registry: HookSpecRegistry) -> List[HookSpec]:
                         "task_name",
                         "model_name",
                         "extra_prompt",
+                        "match_text",
                         "attempt",
                         "retry_count",
                         "max_retries",
@@ -362,12 +368,12 @@ def register_maisaka_hook_specs(registry: HookSpecRegistry) -> List[HookSpec]:
                     ],
                 ),
                 default_timeout_ms=6000,
-                allow_abort=False,
+                allow_abort=True,
                 allow_kwargs_mutation=True,
             ),
             HookSpec(
                 name="maisaka.replyer.before_model_request",
-                description="在 Maisaka replyer 构造完本次模型请求后触发，可改写实际发送的 Context Items。",
+                description="在 Maisaka replyer 构造完本次模型请求后触发，可改写 Context Items，或以 action=abort 取消本次回复并通过 custom_result.reason 说明原因。",
                 parameters_schema=build_object_schema(
                     {
                         "items": {
@@ -450,12 +456,12 @@ def register_maisaka_hook_specs(registry: HookSpecRegistry) -> List[HookSpec]:
                     ],
                 ),
                 default_timeout_ms=6000,
-                allow_abort=False,
+                allow_abort=True,
                 allow_kwargs_mutation=True,
             ),
             HookSpec(
                 name="maisaka.replyer.after_response",
-                description="在 Maisaka replyer 收到模型响应后触发，可要求重新生成或改写回复文本。",
+                description="在 Maisaka replyer 收到模型响应后触发，可重生成、改写回复，或以 action=abort 中止回复并通过 custom_result.reason 说明原因。",
                 parameters_schema=build_object_schema(
                     {
                         "response": {
@@ -563,12 +569,12 @@ def register_maisaka_hook_specs(registry: HookSpecRegistry) -> List[HookSpec]:
                     ],
                 ),
                 default_timeout_ms=6000,
-                allow_abort=False,
+                allow_abort=True,
                 allow_kwargs_mutation=True,
             ),
             HookSpec(
                 name="maisaka.reply.before_post_process",
-                description="在 Maisaka 对最终可见回复执行文本后处理前触发，可按本次回复调整后处理策略。",
+                description="在最终可见回复后处理前触发，可调整后处理策略，或以 action=abort 取消本次回复并通过 custom_result.reason 说明原因。",
                 parameters_schema=build_object_schema(
                     {
                         "response": {
@@ -597,7 +603,7 @@ def register_maisaka_hook_specs(registry: HookSpecRegistry) -> List[HookSpec]:
                         },
                         "enable_chinese_typo": {
                             "type": "boolean",
-                            "description": "本次回复是否允许按全局配置注入中文错别字。",
+                            "description": "本次回复是否允许内置错别字插件注入错字。",
                         },
                     },
                     required=[
@@ -611,6 +617,33 @@ def register_maisaka_hook_specs(registry: HookSpecRegistry) -> List[HookSpec]:
                     ],
                 ),
                 default_timeout_ms=6000,
+                allow_abort=True,
+                allow_kwargs_mutation=True,
+            ),
+            HookSpec(
+                name="maisaka.reply.after_split",
+                description="最终回复完成断句后、限制段数与合并前触发，可修改有序文本分段。",
+                parameters_schema=build_object_schema(
+                    {
+                        "segments": {
+                            "type": "array",
+                            "minItems": 1,
+                            "items": build_object_schema(
+                                {
+                                    "text": {"type": "string", "minLength": 1},
+                                    "separator": {"type": "string"},
+                                    "quote_previous": {"type": "boolean"},
+                                    "is_correction": {"type": "boolean"},
+                                },
+                                required=["text", "separator", "quote_previous", "is_correction"],
+                            ),
+                        },
+                        "session_id": {"type": "string"},
+                        "enable_chinese_typo": {"type": "boolean"},
+                    },
+                    required=["segments", "session_id", "enable_chinese_typo"],
+                ),
+                default_timeout_ms=3000,
                 allow_abort=False,
                 allow_kwargs_mutation=True,
             ),
@@ -637,6 +670,7 @@ class MaisakaChatLoopService:
         """
         self._model_task_name = model_task_name.strip() or "planner"
         self._is_group_chat = is_group_chat
+        self._scene_prompts = get_prompt_profile(is_group_chat)
         self._session_id = session_id or ""
         self._bot_platform = ""
         self._bot_platform_nickname = ""
@@ -648,6 +682,9 @@ class MaisakaChatLoopService:
         self._custom_chat_system_prompt = chat_system_prompt
         self._prompt_load_lock = asyncio.Lock()
         self._llm_chat_clients: dict[str, LLMServiceClient] = {}
+        self.last_planner_prompt_tokens: int = 0
+        self.planner_request_snapshot: PlannerRequestSnapshot | None = None
+        self.passive_replyer_override: Optional[bool] = None
 
     @property
     def behavior_style_prompt(self) -> str:
@@ -769,23 +806,33 @@ class MaisakaChatLoopService:
             **self.build_prompt_template_context(tools_section, bot_nickname_notice),
         )
         # 每轮读取实验开关，普通与专注模式共用同一份本地化风格指令。
-        if attention_drift := build_attention_drift_prompt_block():
+        if attention_drift := self._scene_prompts.attention_drift_block():
             system_prompt += f"\n\n{attention_drift}"
         return system_prompt
 
     def _build_planner_final_user_reminder(self) -> str:
         """构造每轮 Planner 请求末尾的一次性 user 提醒。"""
 
-        if self._get_chat_prompt_name() == "maisaka_chat":
-            return PLANNER_FINAL_USER_REMINDER
-        return FOCUS_PLANNER_FINAL_USER_REMINDER_TEMPLATE.format(bot_name=global_config.bot.nickname.strip())
+        prompt_name = self._get_chat_prompt_name()
+        instruction = {
+            "planner_default_group": "planner_turn_action",
+            "planner_passive_group": "planner_turn_passive",
+            "planner_default_private": "planner_turn_action",
+            "planner_passive_private": "planner_turn_passive",
+            "planner_focus": "planner_turn_focus",
+        }[prompt_name]
+        return load_prompt(instruction, bot_name=global_config.bot.nickname.strip()).strip()
 
     def _get_chat_prompt_name(self) -> str:
         """选择当前聊天使用的 Planner 模板。"""
 
         if focus_mode_manager.is_enabled_for_session(self._session_id, is_group_chat=self._is_group_chat):
-            return "maisaka_chat_focus"
-        return "maisaka_chat"
+            return "planner_focus"
+        passive_replyer = (
+            self.passive_replyer_override if self.passive_replyer_override is not None
+            else global_config.experimental.passive_replyer
+        )
+        return self._scene_prompts.select_planner_template(passive_replyer=passive_replyer)
 
     def _build_bot_alias_notice(self) -> str:
         """构造普通聊天模板中紧跟在名字之后的别名说明；没有配置别名时为空。"""
@@ -807,11 +854,13 @@ class MaisakaChatLoopService:
         return {
             "bot_name": global_config.bot.nickname,
             "bot_alias_notice": self._build_bot_alias_notice(),
-            # 昵称说明另起一行跟在名字和行为风格之后；没有需要说明的昵称时不占行
+            # 昵称说明另起一行跟在名字、人格特征和行为风格之后；没有需要说明的昵称时不占行
             "bot_nickname_notice": f"\n{bot_nickname_notice}" if bot_nickname_notice else "",
+            "personality": global_config.personality.personality.strip(),
             "behavior_style": self.behavior_style_prompt,
             "file_tools_section": tools_section,
-            "group_chat_attention_block": self._build_group_chat_attention_block(),
+            "group_chat_attention_block": self._build_chat_attention_block(),
+            "private_chat_attention_block": self._build_chat_attention_block(),
             "planner_idle_focus_rule": self._build_planner_idle_focus_rule(),
             "query_memory_rule": self._build_query_memory_rule(),
             "subagent_rule": self._build_subagent_rule(),
@@ -840,22 +889,9 @@ class MaisakaChatLoopService:
             .build()
         )
 
-    def _build_group_chat_attention_block(self) -> str:
+    def _build_chat_attention_block(self) -> str:
         """构建当前聊天场景下的额外注意事项块。"""
-
-        prompt_lines: List[str] = []
-
-        if self._is_group_chat is True:
-            if group_chat_prompt := str(global_config.chat.reply_style.group_chat_prompt or "").strip():
-                prompt_lines.append(f"通用注意事项：\n{group_chat_prompt}")
-        elif self._is_group_chat is False:
-            if private_chat_prompt := str(global_config.chat.reply_style.private_chat_prompts or "").strip():
-                prompt_lines.append(f"通用注意事项：\n{private_chat_prompt}")
-
-        if not prompt_lines:
-            return ""
-
-        return "在该聊天中的注意事项：\n" + "\n\n".join(prompt_lines) + "\n"
+        return self._scene_prompts.planner_attention_block()
 
     @staticmethod
     def _localized_text(texts: dict[str, str]) -> str:
@@ -866,55 +902,18 @@ class MaisakaChatLoopService:
     def _build_planner_idle_focus_rule(self) -> str:
         """构造 Focus 模式下空闲等待动作提示。"""
 
-        return self._localized_text(
-            {
-                "en-US": "If the current chat has nothing worth acting on, prefer using `switch_chat` to check another chat. Use `wait` only when you need to wait before judging again; otherwise end this thought without calling a tool.",
-                "ja-JP": "現在チャットに行動すべき内容がない場合は、`switch_chat` で別チャットを確認することを優先してください。待ってから再判断すべき場合だけ `wait` を使い、それ以外はツールを呼ばずにこの思考を終了してください。",
-                "zh-CN": "如果当前聊天没有值得行动的内容，应优先考虑使用 `switch_chat` 去其他聊天看看；只有需要等待后重新判断时才使用 `wait`，否则不调用工具结束这轮思考。",
-            }
-        )
+        return load_prompt("planner_turn_focus", bot_name=global_config.bot.nickname.strip()).strip()
 
     def _build_query_memory_rule(self) -> str:
         """按当前聊天类型构造记忆检索提示。"""
-
-        if self._is_group_chat:
-            return self._localized_text(
-                {
-                    "en-US": "- query_memory(): Use it only when the reply clearly depends on past group conversation, shared experiences, public agreements, task progress, or recent clues. Do not retrieve memory for greetings, immediate emotional responses, light banter, or content that can be answered from recent messages alone. Do not bring private-chat or personal-privacy memories into a group chat.",
-                    "ja-JP": "- query_memory()：返信がグループ内の過去会話、共有した経験、公開された約束、タスクの進捗、最近の手がかりに明確に依存する場合だけ使ってください。挨拶、その場の感情への反応、軽いやり取り、最近のメッセージだけで答えられる内容では検索しないでください。個人チャットや私的な記憶をグループチャットに持ち込まないでください。",
-                    "zh-CN": "- query_memory()：只有回复明显依赖群内过去对话、共同经历、公开约定、任务进展或近期线索时使用；不要为了寒暄、即时情绪回应、轻松接话、只看最近消息就能回答的内容而检索。不要把私聊或个人隐私记忆带到群聊里。",
-                }
-            )
-
-        return self._localized_text(
-            {
-                "en-US": '- query_memory(): Consider retrieval more actively when the other person mentions signals like "before", "last time", "recently", "do you remember", "I like", or "I said", or when the reply depends on long-term preferences, prior promises, shared experiences, or long-term information about a person.',
-                "ja-JP": "- query_memory()：相手が「前に」「この前」「最近」「覚えてる？」「好き」「言った」などの合図を出した場合、または返信が長期的な好み、以前の約束、共有した経験、人物の長期的な情報に依存する場合は、より積極的に検索を検討できます。",
-                "zh-CN": "- query_memory()：当对方提到“之前”“上次”“最近”“还记得吗”“我喜欢”“我说过”等信号，或回复依赖长期偏好、先前承诺、共同经历、人物长期信息时，可以更积极检索。",
-            }
-        )
+        return self._scene_prompts.query_memory_rule()
 
     def _build_subagent_rule(self) -> str:
         """开启子代理时说明何时该把任务交给 subagent；未开启时为空，不占提示词。"""
 
         if not global_config.capabilities.planner_subagent:
             return ""
-        rule = self._localized_text(
-            {
-                "en-US": "- subagent(): When something needs looking up before you can answer or judge it (reading docs, searching the web, checking version or plugin information, finding images, verifying a claim, and so on), prefer handing it to a sub-agent: state clearly what to find out and grant it the tools it may need. It only hands you its conclusion. Call a tool directly only for things that take a single step.",
-                "ja-JP": "- subagent()：答えたり判断したりする前に調べものが必要なこと（ドキュメントの確認、ウェブ検索、バージョンやプラグイン情報の確認、画像探し、ある主張の検証など）は、サブエージェントに任せることを優先してください。何を調べるかを明確に書き、使えそうなツールを許可します。サブエージェントは結論だけをあなたに渡します。一手で済むことだけ、該当するツールを直接呼び出してください。",
-                "zh-CN": "- subagent()：遇到需要查资料才能回答或判断的事（查文档、搜网页、查版本或插件信息、找图、核实某个说法等），优先交给子代理：写清楚要查什么，把用得上的工具授权给它；它查完只把结论交给你。只有一步就能完成的事才直接调用对应工具。",
-            }
-        )
-        if global_config.capabilities.advanced_sub_agent:
-            rule += self._localized_text(
-                {
-                    "en-US": " The sub-agent runs in the background: after dispatching it you do not need to wait and can keep chatting; its conclusion will be sent back to you later.",
-                    "ja-JP": "サブエージェントはバックグラウンドで動作します。依頼したあとは待つ必要はなく、会話を続けてかまいません。結論は後であなたに返されます。",
-                    "zh-CN": "子代理在后台运行，派发后不用等它，可以继续聊天，结论稍后会送回给你。",
-                }
-            )
-        return f"\n{rule}"
+        return "\n" + load_prompt("planner_subagent_policy").strip()
 
     def _build_current_chat_attention_tail_message(self) -> str:
         """构建追加到请求末尾的当前聊天专属注意事项。"""
@@ -981,8 +980,9 @@ class MaisakaChatLoopService:
                 self._bot_platform = message.platform
                 if component.target_user_nickname:
                     self._bot_platform_nickname = component.target_user_nickname
-                if self._is_group_chat and component.target_user_cardname:
-                    self._bot_group_cardname = component.target_user_cardname
+                self._bot_group_cardname = self._scene_prompts.update_group_cardname(
+                    self._bot_group_cardname, component.target_user_cardname,
+                )
 
         bot_name = global_config.bot.nickname.strip()
         lines: List[str] = []
@@ -992,24 +992,20 @@ class MaisakaChatLoopService:
                 "en-US": f'Your nickname on {self._bot_platform} is "{self._bot_platform_nickname}".',
                 "ja-JP": f"{self._bot_platform} でのあなたのニックネームは「{self._bot_platform_nickname}」です。",
             }))
-        if (
-            self._is_group_chat
-            and self._bot_group_cardname
-            and not (skip_same_as_bot_name and self._bot_group_cardname == bot_name)
+        if notice := self._scene_prompts.group_cardname_notice(
+            self._bot_group_cardname, bot_name, skip_same_as_bot_name,
         ):
-            lines.append(self._localized_text({
-                "zh-CN": f"你在本群的昵称是“{self._bot_group_cardname}”。",
-                "en-US": f'Your nickname in this group is "{self._bot_group_cardname}".',
-                "ja-JP": f"このグループでのあなたのニックネームは「{self._bot_group_cardname}」です。",
-            }))
+            lines.append(notice)
         return (" " if get_locale() == "en-US" else "").join(lines)
 
+    @defer_context_image_encoding(lambda result: result[0])
     def _build_request_messages(
         self,
         selected_history: List[LLMContextMessage],
         *,
         enable_visual_message: bool,
         include_day_boundary_time_messages: bool = False,
+        deferred_tools_reminder: str = "",
         injected_user_messages: Sequence[str] | None = None,
         tail_user_messages: Sequence[str] | None = None,
         final_user_message: str | None = None,
@@ -1027,7 +1023,9 @@ class MaisakaChatLoopService:
         items: List[ContextItem] = []
         system_item = ContextItemBuilder().set_role(RoleType.System)
         uses_builtin_system_prompt = system_prompt is None and self._custom_chat_system_prompt is None
-        if uses_builtin_system_prompt and self._get_chat_prompt_name() == "maisaka_chat":
+        if uses_builtin_system_prompt and self._get_chat_prompt_name() in {
+            "planner_default_group", "planner_passive_group", "planner_default_private", "planner_passive_private",
+        }:
             # 普通聊天模板自己写明了名字：昵称说明跟在名字之后，且只说明与名字不同的昵称
             bot_nickname_notice = self._build_bot_nickname_notice(selected_history, skip_same_as_bot_name=True)
             resolved_system_prompt = self._build_chat_system_prompt(bot_nickname_notice=bot_nickname_notice)
@@ -1041,7 +1039,32 @@ class MaisakaChatLoopService:
             bot_nickname_notice = self._build_bot_nickname_notice(selected_history)
             if bot_nickname_notice:
                 resolved_system_prompt = f"{bot_nickname_notice}\n\n{resolved_system_prompt}"
+        # 普通 Planner 不持有 reply 工具，按真实会话展示可用回复扩展。
+        if self._get_chat_prompt_name() in {"planner_passive_group", "planner_passive_private"}:
+            session = chat_manager.get_session_by_session_id(self._session_id)
+            if session is not None:
+                capabilities = build_reply_extension_capabilities(ToolAvailabilityContext(
+                    session_id=session.session_id, stream_id=session.session_id,
+                    platform=session.platform, is_group_chat=session.is_group_session,
+                    group_id=session.group_id, user_id=session.user_id,
+                ))
+                if capabilities:
+                    resolved_system_prompt += "\n\n" + load_prompt(
+                        "planner_reply_capabilities", capabilities=capabilities,
+                    )
+        from src.desktop_pet.todo_context import build_todo_context
+        from src.desktop_pet.exploration_search import build_exploration_reuse_context
+
+        todo_context = build_todo_context(self._session_id)
+        if todo_context:
+            resolved_system_prompt += "\n\n" + todo_context
+        exploration_context = build_exploration_reuse_context(self._session_id)
+        if exploration_context:
+            resolved_system_prompt += "\n\n" + exploration_context
         system_item.add_text_content(resolved_system_prompt)
+        # 工具目录不随激活改变，放在历史之前以复用稳定的请求前缀。
+        if deferred_tools_reminder.strip():
+            system_item.add_text_content("\n\n" + deferred_tools_reminder.strip())
         items.append(system_item.build())
 
         previous_context_timestamp: datetime | None = None
@@ -1052,6 +1075,7 @@ class MaisakaChatLoopService:
                 msg,
                 enable_visual_message=enable_visual_message,
                 limit_emoji_size=True,
+                max_image_side=IMAGE_QUALITY_MAX_SIDE[global_config.visual.image_quality],
             )
             if not context_items:
                 continue
@@ -1113,6 +1137,11 @@ class MaisakaChatLoopService:
 
         # 跨日时间提示由本方法生成，不能代替真实 user 消息充当工具调用锚点
         self._validate_function_call_context_anchors(history_context_items)
+        if enable_visual_message:
+            items = limit_latest_images_in_messages(
+                items,
+                max_image_num=global_config.visual.max_image_num,
+            )
         return items, history_item_count
 
     @staticmethod
@@ -1133,6 +1162,7 @@ class MaisakaChatLoopService:
         self,
         chat_history: List[LLMContextMessage],
         *,
+        deferred_tools_reminder: str = "",
         injected_user_messages: Sequence[str] | None = None,
         request_kind: str = "planner",
         response_format: RespFormat | None = None,
@@ -1152,10 +1182,6 @@ class MaisakaChatLoopService:
         """
 
         enable_visual_message = self._resolve_enable_visual_message(request_kind)
-        # 拼图仅在调用工具时追加；不因后续图片增加而替换历史图片、破坏 KV 缓存前缀。
-        preserved_image_item_ids = {
-            message.item.meta.item_id for message in chat_history if isinstance(message, EmojiCandidateMessage)
-        }
         selected_history, selection_reason = self.select_llm_context_messages(
             chat_history,
             request_kind=request_kind,
@@ -1169,6 +1195,7 @@ class MaisakaChatLoopService:
             selected_history,
             enable_visual_message=enable_visual_message,
             include_day_boundary_time_messages=request_kind == "planner",
+            deferred_tools_reminder=deferred_tools_reminder,
             injected_user_messages=injected_user_messages,
             tail_user_messages=tail_user_messages,
             final_user_message=(
@@ -1180,7 +1207,6 @@ class MaisakaChatLoopService:
             built_messages = limit_latest_images_in_messages(
                 built_messages,
                 max_image_num=global_config.visual.max_image_num,
-                preserved_item_ids=preserved_image_item_ids,
             )
 
         def context_factory(_client: BaseClient) -> List[ContextItem]:
@@ -1209,6 +1235,10 @@ class MaisakaChatLoopService:
                 is_group_chat=self._is_group_chat,
             )
             tool_specs = await self._tool_registry.list_tools(availability_context)
+            tool_specs = [
+                spec for spec in tool_specs if spec.provider_name != "maisaka_builtin"
+                or is_builtin_tool_in_action_stage(spec, passive_replyer=self._get_chat_prompt_name() in {"planner_passive_group", "planner_passive_private"})
+            ]
             all_tools = [tool_spec.to_llm_definition() for tool_spec in tool_specs]
             tool_provider_types = [tool_spec.provider_type for tool_spec in tool_specs]
         else:
@@ -1217,7 +1247,9 @@ class MaisakaChatLoopService:
                 stream_id=self._session_id,
                 is_group_chat=self._is_group_chat,
             )
-            builtin_definitions = get_builtin_tools(availability_context)
+            builtin_definitions = get_builtin_tools(
+                availability_context, passive_replyer=self._get_chat_prompt_name() in {"planner_passive_group", "planner_passive_private"},
+            )
             all_tools = [*builtin_definitions, *self._extra_tools]
             tool_provider_types = ["builtin"] * len(builtin_definitions) + [""] * len(self._extra_tools)
 
@@ -1256,7 +1288,6 @@ class MaisakaChatLoopService:
             built_messages = limit_latest_images_in_messages(
                 built_messages,
                 max_image_num=global_config.visual.max_image_num,
-                preserved_item_ids=preserved_image_item_ids,
             )
         raw_tool_definitions = before_request_kwargs.get("tool_definitions")
         if isinstance(raw_tool_definitions, list):
@@ -1281,17 +1312,42 @@ class MaisakaChatLoopService:
         prompt_section: RenderableType | None = None
         prompt_html_uri: str | None = None
 
-        llm_chat = self._get_llm_chat_client(request_kind)
         llm_started_at = time.perf_counter()
-        generation_result = await llm_chat.generate_response_with_context(
-            context_factory=context_factory,
-            options=LLMGenerationOptions(
-                tool_options=all_tools if all_tools else None,
-                response_format=response_format,
-                interrupt_flag=self._interrupt_flag,
-                force_stream_mode=request_kind == "planner" and global_config.experimental.planner_message_steering,
-            ),
+        external_planner = (
+            request_kind == "planner"
+            and global_config.agent.planner_enabled
+            and self._session_id in global_config.agent.planner_sessions
         )
+        if external_planner:
+            from src.agent.planner import ACPPlannerSnapshot, generate_planner_response
+
+            external_snapshot = await asyncio.to_thread(ACPPlannerSnapshot(
+                global_config.agent.model_copy(deep=True), list(built_messages),
+                [item.meta.item_id for item in built_messages[1:history_item_count + 1]],
+            ).detached_snapshot)
+            generation_result = await generate_planner_response(
+                external_snapshot.config, self._session_id, built_messages, all_tools,
+                history_item_ids=external_snapshot.history_item_ids,
+            )
+        else:
+            llm_chat = self._get_llm_chat_client(request_kind)
+            generation_result = await llm_chat.generate_response_with_context(
+                context_factory=context_factory,
+                options=LLMGenerationOptions(
+                    tool_options=all_tools if all_tools else None,
+                    response_format=response_format,
+                    interrupt_flag=self._interrupt_flag,
+                    force_stream_mode=request_kind == "planner" and (
+                        self._is_group_chat is False or global_config.chat.reply_timing.planner_message_steering
+                    ),
+                ),
+            )
+        if request_kind == "planner":
+            self.planner_request_snapshot = (
+                PlannerRequestSnapshot(external_snapshot, tuple(selected_history)) if external_planner else
+                PlannerRequestSnapshot(generation_result.request_snapshot, tuple(selected_history))
+                if generation_result.request_snapshot is not None else None
+            )
         if logical_turn_id:
             generation_result.output_items = bind_output_items_to_turn(
                 generation_result.output_items,
@@ -1338,6 +1394,30 @@ class MaisakaChatLoopService:
                 )
             except Exception as exc:
                 logger.warning(f"Hook maisaka.planner.after_response 返回的 output_items 无法反序列化，已忽略: {exc}")
+        action_judgment = None
+        if request_kind == "planner" and self._get_chat_prompt_name() in {"planner_default_group", "planner_default_private", "planner_focus"}:
+            action_judgment = await complete_missing_planner_action(
+                final_output_items, all_tools, session_id=self._session_id,
+                logical_turn_id=logical_turn_id, chat_history=selected_history, interrupt_flag=self._interrupt_flag,
+            )
+            if action_judgment is not None:
+                final_output_items = (*final_output_items, action_judgment.tool_call)
+                llm_duration_ms = round((time.perf_counter() - llm_started_at) * 1000, 2)
+        tool_schemas = {
+            tool.name: tool.parameters_schema
+            for tool in map(normalize_tool_option, all_tools)
+        }
+        missing_tool_names = {
+            call.func_name for call in get_response_tool_calls(final_output_items)
+            if call.func_name not in tool_schemas
+        }
+        if missing_tool_names and self._tool_registry is not None:
+            for spec in await self._tool_registry.list_tools(ToolAvailabilityContext(
+                session_id=self._session_id, stream_id=self._session_id, is_group_chat=self._is_group_chat,
+            )):
+                if spec.name in missing_tool_names:
+                    tool_schemas[spec.name] = spec.parameters_schema
+        final_output_items = filter_tool_call_items(final_output_items, tool_schemas)
         prompt_tokens = self._coerce_int(after_response_kwargs.get("prompt_tokens"), generation_result.prompt_tokens)
         completion_tokens = self._coerce_int(
             after_response_kwargs.get("completion_tokens"),
@@ -1355,6 +1435,8 @@ class MaisakaChatLoopService:
             "completion_tokens": completion_tokens,
             "total_tokens": total_tokens,
         }
+        if action_judgment is not None:
+            prompt_metadata["planner_action_judge"] = action_judgment.metadata
         if global_config.debug.save_maisaka_reasoning:
             prompt_section_result = await asyncio.to_thread(
                 PromptCLIVisualizer.build_prompt_section_result,
@@ -1371,6 +1453,9 @@ class MaisakaChatLoopService:
             prompt_html_uri = prompt_section_result.preview_access.preview_web_uri
             if global_config.debug.show_maisaka_thinking:
                 prompt_section = prompt_section_result.panel
+
+        if request_kind == "planner":
+            self.last_planner_prompt_tokens = prompt_tokens
 
         return ChatResponse(
             output_items=tuple(final_output_items),
@@ -1408,9 +1493,16 @@ class MaisakaChatLoopService:
         )
         base_context_size = max(1, int(max_context_size or global_config.chat.max_context_size))
         effective_context_size = max(
-            base_context_size,
+            MIN_RETAINED_CHAT_MESSAGES,
             int(base_context_size * CONTEXT_SELECTION_CACHE_STABILITY_RATIO),
         )
+        use_token_limit = (
+            global_config.chat.private_use_token_limit
+            if is_group_chat is False else global_config.chat.use_token_limit
+        ) and request_kind in {"planner", "replyer"}
+        if use_token_limit:
+            # Token 模式保留完整活动历史，裁切由模型返回的实际输入用量触发。
+            effective_context_size = max(MIN_RETAINED_CHAT_MESSAGES, len(filtered_history) + 1)
         selected_indices: List[int] = []
         counted_message_count = 0
 
@@ -1444,7 +1536,7 @@ class MaisakaChatLoopService:
         selected_indices = sorted({*always_selected_indices, *selected_indices})
 
         if not selected_indices:
-            return [], "实际发送 0 条消息（tool 0 条，普通消息 0 条）"
+            return [], "实际发送 0 条上下文（tool 0 条，聊天消息 0 条）"
 
         selected_history = [filtered_history[index] for index in selected_indices]
         selected_context_count_before_tool_expansion = sum(
@@ -1465,12 +1557,15 @@ class MaisakaChatLoopService:
                 f"after_expansion={selected_context_count} overflow={tool_turn_overflow}"
             )
         tool_message_count = sum(1 for message in selected_history if isinstance(message, ToolResultMessage))
-        normal_message_count = len(selected_history) - tool_message_count
-        stability_text = f"|cache_window {base_context_size}->{effective_context_size}"
+        normal_message_count = selected_context_count
+        stability_text = (
+            "|token_limit" if use_token_limit
+            else f"|cache_window {base_context_size}->{effective_context_size}"
+        )
         overflow_text = f"|tool_turn_overflow +{tool_turn_overflow}" if tool_turn_overflow else ""
         selection_reason = (
-            f"实际发送 {len(selected_history)} 条消息"
-            f"|消息 {normal_message_count} 条|tool {tool_message_count} 条"
+            f"实际发送 {len(selected_history)} 条上下文"
+            f"|聊天消息 {normal_message_count} 条|tool {tool_message_count} 条"
             f"{stability_text}{overflow_text}"
         )
         return (
@@ -1533,7 +1628,8 @@ class MaisakaChatLoopService:
         selected_indices: List[int] = []
         for index, message in enumerate(chat_history):
             if not (
-                isinstance(message, ReferenceMessage) and message.reference_type == ReferenceMessageType.CONTEXT_RESTORE
+                isinstance(message, ContextSummaryMessage)
+                or isinstance(message, ReferenceMessage) and message.reference_type == ReferenceMessageType.CONTEXT_RESTORE
             ):
                 continue
             if not build_context_items_from_history_entry(message, enable_visual_message=enable_visual_message):
@@ -1552,15 +1648,8 @@ class MaisakaChatLoopService:
         if request_kind == "expression_selector":
             return [message for message in selected_history if isinstance(message, SessionBackedMessage)]
 
-        if request_kind == "planner":
-            return [message for message in selected_history if not is_mid_term_memory_message(message)]
-
         if request_kind != "planner":
-            return [
-                message
-                for message in selected_history
-                if not is_mid_term_memory_message(message)
-            ]
+            return [message for message in selected_history if not isinstance(message, ContextSummaryMessage)]
 
         return selected_history
 
@@ -1568,6 +1657,6 @@ class MaisakaChatLoopService:
     def _resolve_enable_visual_message(request_kind: str) -> bool:
         if request_kind == "planner":
             return resolve_enable_visual_planner()
-        if request_kind in {"expression_selector", "reply_effect_judge"}:
+        if request_kind == "expression_selector":
             return False
         return True

@@ -110,6 +110,20 @@ class PluginPlatformDriver(PlatformIODriver):
 
         try:
             message_dict = PluginMessageUtils._session_message_to_dict(message)
+            from src.files.service import disk_call, get_file_service
+
+            pending_segments = list(message_dict.get("raw_message", []))
+            while pending_segments:
+                segment = pending_segments.pop()
+                if segment.get("type") == "forward" and isinstance(segment.get("data"), list):
+                    for node in segment["data"]:
+                        pending_segments.extend(node.get("content", []))
+                if segment.get("type") == "file" and isinstance(segment.get("data"), dict):
+                    data = segment["data"]
+                    if data.get("file_ref"):
+                        service = get_file_service()
+                        await service.ensure(data["file_ref"], message.session_id)
+                        data["url"] = await disk_call(service.download_url, data["file_ref"], message.session_id)
             response = await self._supervisor.invoke_message_gateway(
                 plugin_id=plugin_id,
                 component_name=self._component_name,

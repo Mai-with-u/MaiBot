@@ -1,4 +1,6 @@
 data/
+/host/
+/bots/
 # Local roleplay benchmark data
 tools/roleplay_benchmark/
 tools/roleplay_benchmark/data/agent_scores.json
@@ -192,11 +194,8 @@ ipython_config.py
 #   install all needed dependencies.
 #Pipfile.lock
 
-# UV
-#   Similar to Pipfile.lock, it is generally recommended to include uv.lock in version control.
-#   This is especially recommended for binary packages to ensure reproducibility, and is more
-#   commonly ignored for libraries.
-#uv.lock
+# UV: resolve dependencies locally from pyproject.toml.
+uv.lock
 
 # poetry
 #   Similar to Pipfile.lock, it is generally recommended to include poetry.lock in version control.
@@ -365,6 +364,7 @@ run_pet.bat
 
 /plugins/*
 !/plugins
+!/plugins/maibot_helper
 !/plugins/hello_world_plugin
 !/plugins/emoji_manage_plugin
 !/plugins/__init__.py
@@ -389,3 +389,13 @@ agentlite/
 /qwen_mai/
 /MaiMaiFocusPet-Godot/
 start_mac.command
+/.dsh-maibot-manager.lock
+
+# Local package-manager settings and runtime caches
+/dashboard/bunfig.toml
+/.codex-uv-cache/
+/.tmp-uv-cache/
+/.uv-log-cache/
+/.maibot-instance-locks/
+/tmp/
+resource.lock

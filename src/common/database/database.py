@@ -60,7 +60,7 @@ engine = create_engine(
 # 已加载到内存中的 ORM 实例属性被标记为过期。否则会话关闭后实例进入 detached 状态，
 # 任何属性访问都会触发刷新而抛出
 # "Instance ... is not bound to a Session; attribute refresh operation cannot proceed".
-# 当前数据库模型不包含 SQLAlchemy Relationship，因此不会引入 lazy-load 副作用。
+# 跨会话使用的关联需要预加载；PersonInfo.individual 使用 joined 加载，避免会话关闭后再发起查询。
 SessionLocal = sessionmaker(
     autocommit=False,
     autoflush=False,
@@ -95,6 +95,19 @@ _RUNTIME_PERFORMANCE_INDEXES = (
         "ix_mai_messages_session_id_timestamp",
         "CREATE INDEX IF NOT EXISTS ix_mai_messages_session_id_timestamp "
         "ON mai_messages (session_id, timestamp DESC)",
+    ),
+    # 统计优先使用实际接收时间，历史及出站消息使用上游时间。
+    # 单列时间索引无法用于 COALESCE 的范围查询，需与统计查询匹配的表达式索引。
+    (
+        "ix_mai_messages_statistics_time",
+        "CREATE INDEX IF NOT EXISTS ix_mai_messages_statistics_time "
+        "ON mai_messages (COALESCE(received_at, timestamp))",
+    ),
+    # 回复计数先匹配工具名，再按时间范围读取，避免扫描该工具的全部历史调用。
+    (
+        "ix_tool_records_tool_name_timestamp",
+        "CREATE INDEX IF NOT EXISTS ix_tool_records_tool_name_timestamp "
+        "ON tool_records (tool_name, timestamp)",
     ),
 )
 

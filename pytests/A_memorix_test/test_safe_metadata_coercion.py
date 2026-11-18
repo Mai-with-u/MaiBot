@@ -10,6 +10,10 @@ from src.A_memorix.core.utils.search_execution_service import SearchExecutionReq
 
 class FakeMetadataStore:
     @staticmethod
+    def project_fact_paragraph(paragraph):
+        return paragraph
+
+    @staticmethod
     def get_paragraphs_by_source(source: str):
         return [
             {

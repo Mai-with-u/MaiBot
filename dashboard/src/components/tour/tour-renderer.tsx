@@ -1,6 +1,7 @@
 import Joyride from 'react-joyride'
-import { useState, useEffect, useRef } from 'react'
+import { useState, useEffect, useLayoutEffect, useRef } from 'react'
 import { createPortal } from 'react-dom'
+import { useTranslation } from 'react-i18next'
 import { useTour } from './use-tour'
 
 // Joyride 主题配置
@@ -18,6 +19,7 @@ const joyrideStyles = {
   tooltip: {
     borderRadius: 'var(--radius)',
     padding: '1rem',
+    maxWidth: 'calc(100vw - 2rem)',
   },
   tooltipContainer: {
     textAlign: 'left' as const,
@@ -55,23 +57,30 @@ const joyrideStyles = {
   },
 }
 
-// 中文本地化
-const locale = {
-  back: '上一步',
-  close: '关闭',
-  last: '完成',
-  next: '下一步',
-  nextLabelWithProgress: '下一步 ({step}/{steps})',
-  open: '打开对话框',
-  skip: '跳过',
-}
-
 export function TourRenderer() {
+  const { t } = useTranslation()
   const { state, getCurrentSteps, handleJoyrideCallback } = useTour()
+  const locale = {
+    back: t('tour.controls.back'),
+    close: t('tour.controls.close'),
+    last: t('tour.controls.last'),
+    next: t('tour.controls.next'),
+    // {step}/{steps} 是 Joyride 自己的单花括号占位符，i18next 不会替换。
+    nextLabelWithProgress: t('tour.controls.nextWithProgress'),
+    open: t('tour.controls.open'),
+    skip: t('tour.controls.skip'),
+  }
   const steps = getCurrentSteps()
   const [targetReady, setTargetReady] = useState(false)
   const [seenStepIndex, setSeenStepIndex] = useState(state.stepIndex)
   const cleanupRef = useRef<(() => void) | null>(null)
+  const [dialogSpotlight, setDialogSpotlight] = useState<{
+    top: number
+    left: number
+    width: number
+    height: number
+    position: 'fixed'
+  } | null>(null)
 
   if (seenStepIndex !== state.stepIndex) {
     setSeenStepIndex(state.stepIndex)
@@ -81,6 +90,10 @@ export function TourRenderer() {
   }
 
   const currentStep = state.isRunning && steps.length > 0 ? steps[state.stepIndex] : undefined
+  const currentTarget = typeof currentStep?.target === 'string'
+    ? document.querySelector<HTMLElement>(currentStep.target)
+    : currentStep?.target
+  const isDialogTarget = !!currentTarget?.closest('[data-dashboard-dialog-content]')
   if (!state.isRunning || steps.length === 0 || !currentStep) {
     if (targetReady) {
       setTargetReady(false)
@@ -88,6 +101,39 @@ export function TourRenderer() {
   } else if (currentStep.target === 'body' && !targetReady) {
     setTargetReady(true)
   }
+
+  // Joyride 对固定弹窗内的滚动目标使用 offsetTop，会丢失弹窗在视口中的偏移。
+  // 用实际视口坐标覆盖高亮，并在滚动、缩放和字段尺寸变化后同步更新。
+  useLayoutEffect(() => {
+    setDialogSpotlight(null)
+    if (!targetReady || !currentStep) return
+    const target = typeof currentStep.target === 'string'
+      ? document.querySelector<HTMLElement>(currentStep.target)
+      : currentStep.target
+    if (!target?.closest('[data-dashboard-dialog-content]')) return
+
+    const padding = currentStep.spotlightPadding ?? 10
+    const updateSpotlight = () => {
+      const rect = target.getBoundingClientRect()
+      setDialogSpotlight({
+        top: rect.top - padding,
+        left: rect.left - padding,
+        width: rect.width + padding * 2,
+        height: rect.height + padding * 2,
+        position: 'fixed',
+      })
+    }
+    updateSpotlight()
+    const observer = new ResizeObserver(updateSpotlight)
+    observer.observe(target)
+    window.addEventListener('resize', updateSpotlight)
+    document.addEventListener('scroll', updateSpotlight, true)
+    return () => {
+      observer.disconnect()
+      window.removeEventListener('resize', updateSpotlight)
+      document.removeEventListener('scroll', updateSpotlight, true)
+    }
+  }, [currentStep, targetReady])
 
   // 等待当前步骤的目标元素出现
   useEffect(() => {
@@ -116,7 +162,12 @@ export function TourRenderer() {
 
         return Array.from(elements).some((element) => {
           const rect = element.getBoundingClientRect()
-          return rect.width > 0 && rect.height > 0
+          if (rect.width <= 0 || rect.height <= 0) return false
+          // 先滚动弹窗内的字段，再让 Joyride 测量，避免它使用错误的滚动偏移。
+          if (element.closest('[data-dashboard-dialog-content]')) {
+            element.scrollIntoView({ block: 'nearest', inline: 'nearest', behavior: 'instant' })
+          }
+          return true
         })
       }
 
@@ -187,10 +238,13 @@ export function TourRenderer() {
       showSkipButton
       showProgress
       disableOverlayClose
-      disableScrolling={false}
-      disableScrollParentFix={false}
+      disableScrolling={isDialogTarget}
+      disableScrollParentFix
       callback={handleJoyrideCallback}
-      styles={joyrideStyles}
+      styles={{
+        ...joyrideStyles,
+        spotlight: { ...joyrideStyles.spotlight, ...dialogSpotlight },
+      }}
       locale={locale}
       scrollOffset={80}
       scrollToFirstStep

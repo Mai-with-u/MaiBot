@@ -34,9 +34,9 @@
   <!-- Quick links -->
   <p>
     <a href="https://github.com/Mai-with-u/MaiBotOneKey/releases/"><picture><source media="(prefers-color-scheme: dark)" srcset="depends-data/readme/key-get-night.svg"><img src="depends-data/readme/key-get-day.svg" alt="下载启动器"></picture></a>
-    <a href="https://docs.mai-mai.org/manual/"><picture><source media="(prefers-color-scheme: dark)" srcset="depends-data/readme/key-setup-night.svg"><img src="depends-data/readme/key-setup-day.svg" alt="部署教程"></picture></a>
-    <a href="https://docs.mai-mai.org"><picture><source media="(prefers-color-scheme: dark)" srcset="depends-data/readme/key-docs-night.svg"><img src="depends-data/readme/key-docs-day.svg" alt="文档"></picture></a>
-    <a href="https://github.com/Mai-with-u/MaiBot/releases/"><picture><source media="(prefers-color-scheme: dark)" srcset="depends-data/readme/key-release-night.svg"><img src="depends-data/readme/key-release-day.svg" alt="发布页"></picture></a>
+    <a href="https://docs.maibot.chat/manual/"><picture><source media="(prefers-color-scheme: dark)" srcset="depends-data/readme/key-setup-night.svg"><img src="depends-data/readme/key-setup-day.svg" alt="部署教程"></picture></a>
+    <a href="https://docs.maibot.chat"><picture><source media="(prefers-color-scheme: dark)" srcset="depends-data/readme/key-docs-night.svg"><img src="depends-data/readme/key-docs-day.svg" alt="文档"></picture></a>
+    <a href="https://maibot.chat/"><picture><source media="(prefers-color-scheme: dark)" srcset="depends-data/readme/key-website-night.svg"><img src="depends-data/readme/key-website-day.svg" alt="官方网站"></picture></a>
   </p>
 
   <p>
@@ -73,14 +73,14 @@ MaiSaka 不仅仅是一个机器人，不仅仅是一个可以帮你完成任务
 
 <picture><source media="(prefers-color-scheme: dark)" srcset="depends-data/readme/sec-install-night.svg"><img src="depends-data/readme/sec-install-day.svg" alt="安装 · INSTALL" width="100%"></picture>
 
-**最新版本: v1.3.5**
+**最新版本: v1.4.4**
 
-<sub><sup><strong>Latest Version: v1.3.5</strong></sup></sub>
+<sub><sup><strong>Latest Version: v1.4.4</strong></sup></sub>
 
 - **发布**：[Release](https://github.com/Mai-with-u/MaiBot/releases/) 页面展示了最新发布的正式版。
   <sub><sup><strong>Download</strong>: Visit the <a href="https://github.com/Mai-with-u/MaiBot/releases/">Release</a> page to get the latest version.</sup></sub>
 
-- **[部署教程](https://docs.mai-mai.org/manual/)**  
+- **[部署教程](https://docs.maibot.chat/manual/)**  
 <sub><sup>Deployment Guide</sup></sub>
 
 - **方便使用的麦麦启动器下载 (Windows/MAC)**：[Maibot-OK](https://github.com/Mai-with-u/MaiBotOneKey/releases/)  
@@ -94,8 +94,8 @@ MaiSaka 不仅仅是一个机器人，不仅仅是一个可以帮你完成任务
 
 <picture><source media="(prefers-color-scheme: dark)" srcset="depends-data/readme/sec-doc-night.svg"><img src="depends-data/readme/sec-doc-day.svg" alt="文档 · DOC" width="100%"></picture>
 
-- **[麦麦文档](https://docs.mai-mai.org)**：最全面的文档中心，了解麦麦的一切。  
-  <sub><sup><strong><a href="https://docs.mai-mai.org">Documentation</a></strong>: The most comprehensive documentation hub for everything about MaiSaka.</sup></sub>
+- **[麦麦文档](https://docs.maibot.chat)**：最全面的文档中心，了解麦麦的一切。  
+  <sub><sup><strong><a href="https://docs.maibot.chat">Documentation</a></strong>: The most comprehensive documentation hub for everything about MaiSaka.</sup></sub>
 
 
 - **[演示视频]**
@@ -114,6 +114,7 @@ MaiSaka 不仅仅是一个机器人，不仅仅是一个可以帮你完成任务
 
 | 群组 / Group | 说明 / Description |
 | :--- | :--- |
+| 麦麦最新交流群:995845542<br><sub><sup>Mai Newest</sup></sub> | 技术交流 / 答疑<br><sub><sup>Technical discussion / Q&A</sup></sub> |
 | 麦麦脑电图:571780722<br><sub><sup>MaiBrain EEG</sup></sub> | 技术交流 / 答疑<br><sub><sup>Technical discussion / Q&A</sup></sub> |
 | 麦麦大脑磁共振:766798517<br><sub><sup>MaiBrain MRI</sup></sub> | 技术交流 / 答疑<br><sub><sup>Technical discussion / Q&A</sup></sub> |
 | [麦麦要当 VTB](https://qm.qq.com/q/wGePTl1UyY)<br><sub><sup>Mai Wants to Be a VTuber</sup></sub> | 技术交流 / 答疑<br><sub><sup>Technical discussion / Q&A</sup></sub> |
@@ -127,8 +128,6 @@ MaiSaka 不仅仅是一个机器人，不仅仅是一个可以帮你完成任务
   <sub><sup>Let MaiSaka stream on Bilibili.</sup></sub>
 - **[MoFox_Bot](https://github.com/MoFox-Studio/MoFox-Core)**：基于 MaiCore 0.10.0 的 Fork。  
   <sub><sup>An enhanced fork based on MaiCore 0.10.0.</sup></sub>
-- **[MaiCraft](https://github.com/MaiM-with-u/Maicraft)**：让麦麦陪你玩 Minecraft（暂时停止维护中）。  
-  <sub><sup>Let MaiSaka accompany you in Minecraft (currently paused).</sup></sub>
 
 <picture><source media="(prefers-color-scheme: dark)" srcset="depends-data/readme/sec-idea-night.svg"><img src="depends-data/readme/sec-idea-day.svg" alt="设计理念 · IDEA" width="100%"></picture>
 

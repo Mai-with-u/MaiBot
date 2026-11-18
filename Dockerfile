@@ -7,7 +7,7 @@ FROM python:3.13-slim@sha256:70729b46c69b4f1e97c4822c1af3df53a1476cf5ddc6c087c0c
 FROM base AS deps
 COPY --from=uv /uv /bin/
 WORKDIR /MaiMBot
-COPY pyproject.toml uv.lock ./
+COPY pyproject.toml ./
 # Place uv cache in the cache mount.
 RUN --mount=type=cache,target=/root/.cache/uv \
     uv sync --no-dev --no-install-project --link-mode=copy \
@@ -40,8 +40,10 @@ RUN --mount=type=bind,from=deps,source=/playwright,target=/tmp/playwright \
 
 COPY --from=deps /MaiMBot/.venv /MaiMBot/.venv
 
+# Reuse the lock generated in the dependency stage for this build.
+COPY --from=deps /MaiMBot/uv.lock ./uv.lock
 # Install the remaining dependencies (dashboard, plugin SDK, maim-message)
-COPY pyproject.toml uv.lock ./
+COPY pyproject.toml ./
 RUN --mount=type=cache,target=/root/.cache/uv \
     uv sync --no-dev --no-install-project --link-mode=copy
 

@@ -113,26 +113,10 @@ describe('menuSections 菜单结构', () => {
     expect(advancedToolsSection?.items).not.toEqual(
       expect.arrayContaining([expect.objectContaining({ path: '/statistics' })])
     )
-    expect(advancedToolsSection?.items).toEqual(
-      expect.arrayContaining([
-        expect.objectContaining({
-          label: 'sidebar.menu.replyEffects',
-          path: '/reply-effects',
-          featureFlag: 'replyEffects',
-        }),
-      ])
-    )
   })
 
-  it('回复效果入口受特性开关控制', () => {
-    const flaggedItems = allItems.filter((item) => item.featureFlag !== undefined)
-
-    expect(flaggedItems).toHaveLength(1)
-    expect(flaggedItems).toEqual(
-      expect.arrayContaining([
-        expect.objectContaining({ path: '/reply-effects', featureFlag: 'replyEffects' }),
-      ])
-    )
+  it('桌宠入口受桌宠开关控制', () => {
+    expect(allItems.find((item) => item.path === '/desktop-pet')?.featureFlag).toBe('desktopPet')
   })
 
   it('searchDescription 均为 search.items 命名空间的 i18n key', () => {

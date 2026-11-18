@@ -1,6 +1,5 @@
 import { Link } from '@tanstack/react-router'
 import { ExternalLink, Newspaper, Package, Pin, RefreshCw } from 'lucide-react'
-import { useState } from 'react'
 import { useTranslation } from 'react-i18next'
 
 import { Badge } from '@/components/ui/badge'
@@ -20,8 +19,8 @@ import { Skeleton } from '@/components/ui/skeleton'
 import type { NewsItem } from '@/lib/news-api'
 import { cn } from '@/lib/utils'
 
-import { useNews } from './hooks/useNews'
-import { useNewsReadState } from './hooks/useNewsReadState'
+import type { useNews } from './hooks/useNews'
+import type { useNewsReadState } from './hooks/useNewsReadState'
 
 const RELATIVE_TIME_DAY_THRESHOLD = 30
 
@@ -148,17 +147,18 @@ function NewsRow({
   )
 }
 
-export function NewsCard() {
+export function NewsCard({ newsState, readState, onOpen }: {
+  newsState: ReturnType<typeof useNews>
+  readState: ReturnType<typeof useNewsReadState>
+  onOpen: (item: NewsItem) => void
+}) {
   const { t, i18n } = useTranslation()
-  const { news, isNewsLoading, newsError, fetchNews } = useNews()
-  const { isUnread, markRead } = useNewsReadState()
-  const [selectedNews, setSelectedNews] = useState<NewsItem | null>(null)
+  const { news, isNewsLoading, newsError, fetchNews } = newsState
+  const { isUnread, markRead } = readState
   const locale = i18n.resolvedLanguage || i18n.language
   const unreadCount = news?.filter(isUnread).length || 0
-  const selectedPluginId = selectedNews ? getNewsPluginId(selectedNews.url) : null
 
   return (
-    <>
       <Card className="flex h-full min-h-0 flex-col">
         <CardHeader className="flex flex-row items-center justify-between gap-2 pb-3">
           <CardTitle className="flex items-center gap-2 text-sm font-medium">
@@ -214,10 +214,7 @@ export function NewsCard() {
                     unreadLabel={t('home.news.unread')}
                     unread={isUnread(item)}
                     onRead={() => markRead(item)}
-                    onOpen={() => {
-                      markRead(item)
-                      setSelectedNews(item)
-                    }}
+                    onOpen={() => onOpen(item)}
                   />
                 ))}
               </div>
@@ -229,47 +226,54 @@ export function NewsCard() {
           )}
         </CardContent>
       </Card>
+  )
+}
 
-      <Dialog open={selectedNews !== null} onOpenChange={(open) => !open && setSelectedNews(null)}>
-        <DialogContent className="[--dialog-width:48rem]">
-          {selectedNews && (
-            <>
-              <DialogHeader>
-                <DialogTitle className="pr-6">{selectedNews.title}</DialogTitle>
-                <DialogDescription>
-                  {[selectedNews.pinned ? t('home.news.pinned') : '', selectedNews.source, formatRelativeTime(selectedNews.published_at, locale)]
-                    .filter(Boolean)
-                    .join(' · ')}
-                </DialogDescription>
-              </DialogHeader>
-              <DialogBody>
-                <MarkdownRenderer content={selectedNews.content || selectedNews.summary} />
-              </DialogBody>
-              {selectedNews.url && (
-                <div className="flex justify-end">
-                  <Button asChild variant="outline" size="sm">
-                    {selectedPluginId ? (
-                      <Link
-                        to="/plugins"
-                        search={{ pluginId: selectedPluginId }}
-                        onClick={() => setSelectedNews(null)}
-                      >
-                        <Package className="mr-2 h-4 w-4" />
-                        {t('home.news.openPlugin')}
-                      </Link>
-                    ) : (
-                      <a href={selectedNews.url} target="_blank" rel="noopener noreferrer">
-                        <ExternalLink className="mr-2 h-4 w-4" />
-                        {t('home.news.openLink')}
-                      </a>
-                    )}
-                  </Button>
-                </div>
-              )}
-            </>
-          )}
-        </DialogContent>
-      </Dialog>
-    </>
+export function NewsDialog({ selectedNews, onClose }: { selectedNews: NewsItem | null; onClose: () => void }) {
+  const { t, i18n } = useTranslation()
+  const locale = i18n.resolvedLanguage || i18n.language
+  const selectedPluginId = selectedNews ? getNewsPluginId(selectedNews.url) : null
+
+  return (
+    <Dialog open={selectedNews !== null} onOpenChange={(open) => !open && onClose()}>
+      <DialogContent className="[--dialog-width:48rem]">
+        {selectedNews && (
+          <>
+            <DialogHeader>
+              <DialogTitle className="pr-6">{selectedNews.title}</DialogTitle>
+              <DialogDescription>
+                {[selectedNews.pinned ? t('home.news.pinned') : '', selectedNews.source, formatRelativeTime(selectedNews.published_at, locale)]
+                  .filter(Boolean)
+                  .join(' · ')}
+              </DialogDescription>
+            </DialogHeader>
+            <DialogBody>
+              <MarkdownRenderer content={selectedNews.content || selectedNews.summary} />
+            </DialogBody>
+            {selectedNews.url && (
+              <div className="flex justify-end">
+                <Button asChild variant="outline" size="sm">
+                  {selectedPluginId ? (
+                    <Link
+                      to="/plugins"
+                      search={{ pluginId: selectedPluginId }}
+                      onClick={onClose}
+                    >
+                      <Package className="mr-2 h-4 w-4" />
+                      {t('home.news.openPlugin')}
+                    </Link>
+                  ) : (
+                    <a href={selectedNews.url} target="_blank" rel="noopener noreferrer">
+                      <ExternalLink className="mr-2 h-4 w-4" />
+                      {t('home.news.openLink')}
+                    </a>
+                  )}
+                </Button>
+              </div>
+            )}
+          </>
+        )}
+      </DialogContent>
+    </Dialog>
   )
 }

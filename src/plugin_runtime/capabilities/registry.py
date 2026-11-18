@@ -1,10 +1,11 @@
 from typing import TYPE_CHECKING
 
 from src.common.logger import get_logger
+from src.files.capability import file_capability
 from src.plugin_runtime.host.capability_service import CapabilityImpl
 from src.plugin_runtime.upload_store import claim_upload
 
-from . import market
+from . import desktop_pet, internal_chat, market, personality, web
 
 if TYPE_CHECKING:
     from src.plugin_runtime.host.supervisor import PluginSupervisor
@@ -17,6 +18,16 @@ def register_capability_impls(manager: "PluginRuntimeManager", supervisor: "Plug
     """向指定 Supervisor 注册主程序提供的能力实现。"""
     cap_service = supervisor.capability_service
     cap_service.register_capability("webui.claim_upload", claim_upload)
+    cap_service.register_capability("internal_chat.identity", internal_chat.identity)
+    cap_service.register_capability("internal_chat.send", internal_chat.send)
+    for action in ("list", "get_current", "switch"):
+        cap_service.register_capability(f"personality.{action}", personality.handle)
+    for action in ("status", "show", "hide", "say", "set_thinking", "refresh_buttons"):
+        cap_service.register_capability(f"desktop_pet.{action}", desktop_pet.control)
+    for action in desktop_pet.ANIMATION_ACTIONS:
+        cap_service.register_capability(f"desktop_pet.{action}", desktop_pet.animation)
+    for name in ("files.list", "files.read_text", "files.download", "files.upload", "files.send"):
+        cap_service.register_capability(name, file_capability)
 
     def _register(name: str, impl: CapabilityImpl) -> None:
         """注册单个能力实现。
@@ -69,6 +80,7 @@ def register_capability_impls(manager: "PluginRuntimeManager", supervisor: "Plug
     _register("maisaka.context.append", manager._cap_maisaka_context_append)
     _register("maisaka.context.resolve_image", manager._cap_maisaka_context_resolve_image)
     _register("maisaka.proactive.trigger", manager._cap_maisaka_proactive_trigger)
+    _register("maisaka.reply.generate", manager._cap_maisaka_reply_generate)
 
     _register("person.get_id", manager._cap_person_get_id)
     _register("person.get_value", manager._cap_person_get_value)
@@ -90,6 +102,7 @@ def register_capability_impls(manager: "PluginRuntimeManager", supervisor: "Plug
     _register("tool.get_definitions", manager._cap_tool_get_definitions)
 
     _register("api.call", manager._cap_api_call)
+    _register("runtime.set_status_badges", manager._cap_runtime_set_status_badges)
     _register("api.get", manager._cap_api_get)
     _register("api.list", manager._cap_api_list)
     _register("api.replace_dynamic", manager._cap_api_replace_dynamic)
@@ -97,7 +110,6 @@ def register_capability_impls(manager: "PluginRuntimeManager", supervisor: "Plug
     _register("component.get_all_plugins", manager._cap_component_get_all_plugins)
     _register("component.get_plugin_info", manager._cap_component_get_plugin_info)
     _register("component.get_plugin_config_schema", manager._cap_component_get_plugin_config_schema)
-    _register("component.update_plugin_config", manager._cap_component_update_plugin_config)
     _register("component.list_loaded_plugins", manager._cap_component_list_loaded_plugins)
     _register("component.list_registered_plugins", manager._cap_component_list_registered_plugins)
     _register("component.enable", manager._cap_component_enable)
@@ -110,6 +122,8 @@ def register_capability_impls(manager: "PluginRuntimeManager", supervisor: "Plug
     _register("market.search", market.search)
     _register("market.get_detail", market.get_detail)
     _register("market.get_readme", market.get_readme)
+    _register("web.search", web.call)
+    _register("web.fetch", web.call)
     _register("statistics.local.models", manager._cap_statistics_local_models)
     _register("statistics.local.model_trend", manager._cap_statistics_local_model_trend)
     _register("statistics.local.token_trend", manager._cap_statistics_local_token_trend)

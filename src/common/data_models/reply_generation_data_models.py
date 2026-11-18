@@ -122,6 +122,14 @@ class ReplyGenerationResult(BaseDataModel):
         default_factory=str,
         metadata={"description": "失败时的错误描述；成功时通常为空字符串。"},
     )
+    error_code: str = field(
+        default="",
+        metadata={"description": "可供调用方区分的失败类型；成功时为空字符串。"},
+    )
+    error_details: Dict[str, Any] = field(
+        default_factory=dict,
+        metadata={"description": "结构化失败详情，例如中止回复的 Hook、处理器和原因。"},
+    )
     monitor_detail: Optional[Dict[str, Any]] = field(
         default=None,
         metadata={"description": "供监控层直接消费的通用 tool 展示详情。"},
@@ -141,6 +149,10 @@ class ReplyGenerationResult(BaseDataModel):
     generation_attempts: List[Dict[str, Any]] = field(
         default_factory=list,
         metadata={"description": "本次 replyer 完整的 Provider 调用诊断链。"},
+    )
+    prompt_html_uri: str = field(
+        default="",
+        metadata={"description": "已保存的推理记录入口，供工具监控复用。"},
     )
 
 def _format_selected_expression_line(expression: Dict[str, Any], fallback_id: Optional[int] = None) -> str:
@@ -225,6 +237,8 @@ def build_reply_monitor_detail(result: ReplyGenerationResult) -> Dict[str, Any]:
         detail["output_items"] = result.output_items
     if result.generation_attempts:
         detail["generation_attempts"] = result.generation_attempts
+    if result.prompt_html_uri:
+        detail["prompt_html_uri"] = result.prompt_html_uri
 
     metrics: Dict[str, Any] = {}
     if result.completion.model_name.strip():

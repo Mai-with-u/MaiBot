@@ -1,0 +1,73 @@
+{
+  "schema_version": 2,
+  "required_capabilities": [
+    "custom_pages"
+  ],
+  "workspace_title": "微信账号管理",
+  "pages": [
+    {
+      "id": "accounts",
+      "title": "微信账号管理",
+      "icon": "settings",
+      "mode": "custom",
+      "entry": "web/accounts.html",
+      "queries": {
+        "accounts": {
+          "api": "accounts"
+        }
+      },
+      "actions": {
+        "add_account": {
+          "api": "add_account",
+          "parameters": {
+            "remark": {
+              "type": "string",
+              "required": true,
+              "max_length": 80
+            }
+          }
+        },
+        "rename_account": {
+          "api": "rename_account",
+          "parameters": {
+            "slot": {
+              "type": "integer",
+              "required": true,
+              "minimum": 0,
+              "maximum": 15
+            },
+            "remark": {
+              "type": "string",
+              "required": true,
+              "max_length": 80
+            }
+          }
+        },
+        "login_account": {
+          "api": "login_account",
+          "parameters": {
+            "slot": {
+              "type": "integer",
+              "required": true,
+              "minimum": 0,
+              "maximum": 15
+            }
+          },
+          "confirmation": "重新扫码将暂时断开这个账号，其他账号不受影响。继续？"
+        },
+        "remove_account": {
+          "api": "remove_account",
+          "parameters": {
+            "slot": {
+              "type": "integer",
+              "required": true,
+              "minimum": 0,
+              "maximum": 15
+            }
+          },
+          "confirmation": "移除这个账号的本地登录态？其他账号不受影响，重新绑定需要扫码。"
+        }
+      }
+    }
+  ]
+}

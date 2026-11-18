@@ -41,6 +41,8 @@ export interface EmojiListResponse {
 export interface EmojiDetailResponse {
   success: boolean
   data: Emoji
+  emotion_tags?: string[] | null
+  content_tags?: string[] | null
 }
 
 /**

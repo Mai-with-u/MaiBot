@@ -81,22 +81,20 @@ describe('validateProvider', () => {
     expect(result.errors.name).toBe('提供商名称已存在，请使用其他名称')
   })
 
-  it('base_url 与 api_key 为空白时分别报对应错误', () => {
+  it('base_url 为空时报错，api_key 允许留空', () => {
     const result = validateProvider(makeProvider({ base_url: ' ', api_key: '' }))
     expect(result.isValid).toBe(false)
     expect(result.errors.base_url).toBe('请输入基础 URL')
-    expect(result.errors.api_key).toBe('请输入 API Key')
     // 名称合法，不应报名称错误
     expect(result.errors.name).toBeUndefined()
   })
 
-  it('三个必填字段同时为空时一次性返回全部错误', () => {
+  it('名称和基础 URL 同时为空时一次性返回全部错误', () => {
     const result = validateProvider(makeProvider({ name: '', base_url: '', api_key: '' }))
     expect(result.isValid).toBe(false)
     expect(result.errors).toEqual({
       name: '请输入提供商名称',
       base_url: '请输入基础 URL',
-      api_key: '请输入 API Key',
     })
   })
 

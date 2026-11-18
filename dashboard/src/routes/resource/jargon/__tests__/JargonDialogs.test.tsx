@@ -8,11 +8,10 @@ import {
   JargonCreateDialog,
   JargonDetailDialog,
   JargonExportDialog,
-  JargonImportDialog,
 } from '../JargonDialogs'
 import * as jargonApi from '@/lib/jargon-api'
 
-import type { Jargon, JargonChatInfo, JargonExportItem } from '@/types/jargon'
+import type { Jargon, JargonChatInfo } from '@/types/jargon'
 
 afterEach(() => {
   cleanup()
@@ -91,18 +90,6 @@ function makeJargon(id: number, overrides: Partial<Jargon> = {}): Jargon {
     created_timestamp: '2026-01-01T00:00:00Z',
     updated_timestamp: '2026-01-02T00:00:00Z',
     ...overrides,
-  }
-}
-
-function makeExportItem(content: string): JargonExportItem {
-  return {
-    content,
-    meaning: `${content}的意思`,
-    count: 1,
-    is_jargon: true,
-    is_complete: false,
-    is_global: false,
-    created_by: 'AI',
   }
 }
 
@@ -460,15 +447,13 @@ describe('JargonCreateDialog', () => {
     const { onSuccess } = renderCreate()
     await user.type(screen.getByLabelText(/内容/), '新词')
     await user.type(screen.getByLabelText('含义'), '解释')
-    await user.click(screen.getByRole('switch', { name: '设为全局黑话' }))
-    await user.click(screen.getByText('ms-add-s1'))
+    await user.click(screen.getByRole('switch', { name: '全局（所有聊天）' }))
     await user.click(screen.getByRole('button', { name: '创建' }))
     await waitFor(() =>
       expect(jargonApi.createJargon).toHaveBeenCalledWith({
         content: '新词',
         meaning: '解释',
-        session_ids: ['s1'],
-        session_id: 's1',
+        session_ids: [],
         is_global: true,
       })
     )
@@ -493,183 +478,6 @@ describe('JargonCreateDialog', () => {
   it('取消按钮回调 onOpenChange(false)', async () => {
     const user = userEvent.setup()
     const { onOpenChange } = renderCreate()
-    await user.click(screen.getByRole('button', { name: '取消' }))
-    expect(onOpenChange).toHaveBeenCalledWith(false)
-  })
-})
-
-describe('JargonImportDialog', () => {
-  function renderImport() {
-    const onSuccess = vi.fn()
-    const onOpenChange = vi.fn()
-    render(
-      <JargonImportDialog
-        open
-        onOpenChange={onOpenChange}
-        chatList={chatList}
-        onSuccess={onSuccess}
-      />
-    )
-    return { onSuccess, onOpenChange }
-  }
-
-  function makeJsonFile(name: string, payload: unknown) {
-    return new File([typeof payload === 'string' ? payload : JSON.stringify(payload)], name, {
-      type: 'application/json',
-    })
-  }
-
-  it('未选文件直接导入时提示请选择文件', async () => {
-    const user = userEvent.setup()
-    renderImport()
-    await user.click(screen.getByRole('button', { name: '导入' }))
-    expect(toastMock).toHaveBeenCalledWith(expect.objectContaining({ title: '请选择文件' }))
-    expect(jargonApi.importJargons).not.toHaveBeenCalled()
-  })
-
-  it('上传数组 JSON 后显示条数；未选聊天先提示，选中后按 skip 策略导入', async () => {
-    const user = userEvent.setup()
-    const items = [makeExportItem('词1'), makeExportItem('词2')]
-    vi.mocked(jargonApi.importJargons).mockResolvedValue({
-      success: true,
-      message: 'ok',
-      imported_count: 2,
-      skipped_count: 1,
-      failed_count: 0,
-    })
-    const { onSuccess, onOpenChange } = renderImport()
-    await user.upload(screen.getByLabelText('JSON 文件'), makeJsonFile('jargons.json', items))
-    expect(await screen.findByText('jargons.json，共 2 条黑话')).toBeInTheDocument()
-
-    // 未选目标聊天时被拦截
-    await user.click(screen.getByRole('button', { name: '导入' }))
-    expect(toastMock).toHaveBeenCalledWith(expect.objectContaining({ title: '请选择聊天' }))
-    expect(jargonApi.importJargons).not.toHaveBeenCalled()
-
-    await user.click(screen.getByText('ms-add-s1'))
-    await user.click(screen.getByRole('button', { name: '导入' }))
-    await waitFor(() =>
-      expect(jargonApi.importJargons).toHaveBeenCalledWith({
-        target_session_ids: ['s1'],
-        jargons: items,
-        conflict_strategy: 'skip',
-      })
-    )
-    expect(toastMock).toHaveBeenCalledWith(
-      expect.objectContaining({
-        title: '导入完成',
-        description: '成功 2 个，跳过 1 个，失败 0 个',
-      })
-    )
-    expect(onSuccess).toHaveBeenCalledTimes(1)
-    expect(onOpenChange).toHaveBeenCalledWith(false)
-  })
-
-  it('支持 maibot.jargon.export 包裹格式（jargons 字段）', async () => {
-    const user = userEvent.setup()
-    renderImport()
-    const payload = { type: 'maibot.jargon.export', jargons: [makeExportItem('词1')] }
-    await user.upload(screen.getByLabelText('JSON 文件'), makeJsonFile('export.json', payload))
-    expect(await screen.findByText('export.json，共 1 条黑话')).toBeInTheDocument()
-  })
-
-  it('JSON 中没有黑话时提示读取失败', async () => {
-    const user = userEvent.setup()
-    renderImport()
-    await user.upload(screen.getByLabelText('JSON 文件'), makeJsonFile('empty.json', {}))
-    await waitFor(() =>
-      expect(toastMock).toHaveBeenCalledWith(
-        expect.objectContaining({ title: '读取失败', description: 'JSON 中没有可导入的黑话' })
-      )
-    )
-  })
-
-  it('非法 JSON 文件提示读取失败', async () => {
-    const user = userEvent.setup()
-    renderImport()
-    await user.upload(screen.getByLabelText('JSON 文件'), makeJsonFile('bad.json', 'not-json'))
-    await waitFor(() =>
-      expect(toastMock).toHaveBeenCalledWith(expect.objectContaining({ title: '读取失败' }))
-    )
-  })
-
-  it('未真正选中文件时忽略 change', () => {
-    renderImport()
-    fireEvent.change(screen.getByLabelText('JSON 文件'), { target: { files: [] } })
-    expect(toastMock).not.toHaveBeenCalled()
-    expect(screen.getByText('支持 maibot.jargon.export 或黑话数组')).toBeInTheDocument()
-  })
-
-  it('关闭后再打开会清空已选文件与冲突策略', async () => {
-    const user = userEvent.setup({ pointerEventsCheck: 0 })
-    const onSuccess = vi.fn()
-    const onOpenChange = vi.fn()
-    const props = { chatList, onSuccess, onOpenChange }
-    const { rerender } = render(<JargonImportDialog open {...props} />)
-    await user.upload(
-      screen.getByLabelText('JSON 文件'),
-      makeJsonFile('jargons.json', [makeExportItem('词1')])
-    )
-    expect(await screen.findByText('jargons.json，共 1 条黑话')).toBeInTheDocument()
-
-    await user.click(screen.getByRole('combobox'))
-    await user.click(await screen.findByRole('option', { name: '覆盖已有黑话' }))
-
-    rerender(<JargonImportDialog open={false} {...props} />)
-    rerender(<JargonImportDialog open {...props} />)
-
-    expect(screen.getByText('支持 maibot.jargon.export 或黑话数组')).toBeInTheDocument()
-    expect(screen.queryByText(/共 1 条黑话/)).not.toBeInTheDocument()
-    expect(screen.getByRole('combobox')).toHaveTextContent('跳过已有黑话')
-  })
-
-  it('冲突策略选覆盖后按 overwrite 导入', async () => {
-    const user = userEvent.setup({ pointerEventsCheck: 0 })
-    const items = [makeExportItem('词1')]
-    vi.mocked(jargonApi.importJargons).mockResolvedValue({
-      success: true,
-      message: 'ok',
-      imported_count: 1,
-      skipped_count: 0,
-      failed_count: 0,
-    })
-    renderImport()
-    await user.upload(screen.getByLabelText('JSON 文件'), makeJsonFile('jargons.json', items))
-    expect(await screen.findByText('jargons.json，共 1 条黑话')).toBeInTheDocument()
-    await user.click(screen.getByText('ms-add-s1'))
-    await user.click(screen.getByRole('combobox'))
-    await user.click(await screen.findByRole('option', { name: '覆盖已有黑话' }))
-    await user.click(screen.getByRole('button', { name: '导入' }))
-    await waitFor(() =>
-      expect(jargonApi.importJargons).toHaveBeenCalledWith({
-        target_session_ids: ['s1'],
-        jargons: items,
-        conflict_strategy: 'overwrite',
-      })
-    )
-  })
-
-  it('导入失败：展示兜底错误信息', async () => {
-    const user = userEvent.setup()
-    vi.mocked(jargonApi.importJargons).mockRejectedValue('导入接口炸了')
-    renderImport()
-    await user.upload(
-      screen.getByLabelText('JSON 文件'),
-      makeJsonFile('jargons.json', [makeExportItem('词1')])
-    )
-    expect(await screen.findByText('jargons.json，共 1 条黑话')).toBeInTheDocument()
-    await user.click(screen.getByText('ms-add-s1'))
-    await user.click(screen.getByRole('button', { name: '导入' }))
-    await waitFor(() =>
-      expect(toastMock).toHaveBeenCalledWith(
-        expect.objectContaining({ title: '导入失败', description: '无法导入黑话' })
-      )
-    )
-  })
-
-  it('取消按钮回调 onOpenChange(false)', async () => {
-    const user = userEvent.setup()
-    const { onOpenChange } = renderImport()
     await user.click(screen.getByRole('button', { name: '取消' }))
     expect(onOpenChange).toHaveBeenCalledWith(false)
   })
@@ -772,9 +580,7 @@ describe('删除确认对话框', () => {
   it('BatchDeleteConfirmDialog 显示数量，确认回调 onConfirm', async () => {
     const user = userEvent.setup()
     const onConfirm = vi.fn()
-    render(
-      <BatchDeleteConfirmDialog open onOpenChange={vi.fn()} onConfirm={onConfirm} count={3} />
-    )
+    render(<BatchDeleteConfirmDialog open onOpenChange={vi.fn()} onConfirm={onConfirm} count={3} />)
     expect(screen.getByRole('alertdialog')).toHaveTextContent('您即将删除 3 个黑话')
     await user.click(screen.getByRole('button', { name: '确认删除' }))
     expect(onConfirm).toHaveBeenCalledTimes(1)

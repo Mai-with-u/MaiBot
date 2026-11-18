@@ -9,15 +9,15 @@ import os
 import re
 import time
 
-from fastapi import APIRouter, Depends, File, Form, Header, HTTPException, Query, UploadFile
+from fastapi import APIRouter, File, Form, Header, HTTPException, Query, UploadFile
 from fastapi.responses import FileResponse, Response
 
 from src.common.paths import get_instance_root
 from src.common.runtime_loop import run_on_main_loop
 from src.platform_io.avatar import avatar_service, validate_avatar_target
-from src.webui.dependencies import require_auth
+from src.webui.routers.chat.service import INTERNAL_CHAT_USER_ID
 
-router = APIRouter(prefix="/avatar", tags=["avatar"], dependencies=[Depends(require_auth)])
+router = APIRouter(prefix="/avatar", tags=["avatar"])
 
 # 浏览器直接复用已下载头像的最长时间；超过后带 ETag 校验，头像未变只返回 304。
 AVATAR_BROWSER_MAX_AGE = 3 * 60 * 60
@@ -26,7 +26,7 @@ PROJECT_ROOT = get_instance_root()
 AVATAR_CACHE_ROOT = (PROJECT_ROOT / "data" / "avatar").resolve()
 MAX_AVATAR_BYTES = 5 * 1024 * 1024
 SUPPORTED_AVATAR_SUFFIXES = {".jpg", ".jpeg", ".png", ".webp", ".gif", ".bmp"}
-WEBUI_AVATAR_PLATFORM = "webui"
+WEBUI_AVATAR_PLATFORM = "internal"
 WEBUI_USER_ID_PATTERN = re.compile(r"^webui_[A-Za-z0-9_-]+$")
 AvatarTargetType = Literal["user", "group"]
 
@@ -122,7 +122,7 @@ def save_webui_user_avatar(user_id: str, content_type: str, image_bytes: bytes) 
     """校验并保存 WebUI 本地用户头像。"""
 
     normalized_user_id = user_id.strip()
-    if not WEBUI_USER_ID_PATTERN.fullmatch(normalized_user_id):
+    if normalized_user_id != INTERNAL_CHAT_USER_ID and not WEBUI_USER_ID_PATTERN.fullmatch(normalized_user_id):
         raise HTTPException(status_code=400, detail="WebUI 用户 ID 不合法")
     if not image_bytes:
         raise HTTPException(status_code=400, detail="头像文件为空")
@@ -210,7 +210,7 @@ async def get_webui_avatar(
         normalized_platform, target_id = validate_avatar_target(platform, target_id, target_type)
     except ValueError as exc:
         raise HTTPException(status_code=400, detail=str(exc)) from exc
-    if normalized_platform == WEBUI_AVATAR_PLATFORM:
+    if normalized_platform in {WEBUI_AVATAR_PLATFORM, "webui"}:
         cache_path = await asyncio.to_thread(_find_cached_avatar_path, normalized_platform, target_id, target_type)
         if cache_path is None:
             return _no_avatar_response("missing", "private, no-cache")

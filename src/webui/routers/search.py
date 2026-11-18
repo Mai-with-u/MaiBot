@@ -1,18 +1,28 @@
 """WebUI 全局 AI 搜索路由。"""
 
 from collections import OrderedDict
+from contextlib import contextmanager, suppress
 from hashlib import sha256
-from typing import Any, AsyncIterator, Dict, List, Tuple
-from uuid import uuid4
+from typing import Any, AsyncIterator, Callable, Coroutine, Dict, Iterator, List, Sequence, Set, Tuple, TypeVar
+from uuid import UUID, uuid4
+
+from fastapi import APIRouter, HTTPException, Response
+from fastapi.responses import StreamingResponse
+
 import asyncio
 import json
 import time
 
-from fastapi import APIRouter, Depends, HTTPException
-from fastapi.responses import StreamingResponse
-
+from src.common.database.database_model import WebUIHelpSession
 from src.common.logger import get_logger
-from src.webui.dependencies import require_auth
+from src.webui.services.ai_help_history import (
+    HelpSessionDetail,
+    begin_help_turn,
+    delete_help_session,
+    finish_help_turn,
+    get_help_session,
+    list_help_sessions,
+)
 from src.webui.services.ai_search_agent import resolve_prompt_locale, run_ai_search_agent
 from src.webui.services.ai_search_models import (
     AISearchCandidate,
@@ -25,12 +35,14 @@ from src.webui.services.ai_search_models import (
 
 logger = get_logger("webui.ai_search")
 
-router = APIRouter(prefix="/search", tags=["Search"], dependencies=[Depends(require_auth)])
+router = APIRouter(prefix="/search", tags=["Search"])
 
 AI_SEARCH_CACHE_TTL_SECONDS = 300.0
 AI_SEARCH_CACHE_MAX_ENTRIES = 128
 
 _AI_SEARCH_CACHE: "OrderedDict[str, Tuple[float, AISearchResponse]]" = OrderedDict()
+_ACTIVE_HELP_SESSIONS: Set[str] = set()
+_WriteResult = TypeVar("_WriteResult")
 
 
 def _build_cache_key(request: AISearchRequest) -> str:
@@ -84,7 +96,7 @@ def _validate_candidate_ids(candidates: List[AISearchCandidate]) -> None:
 def _compact_progress_for_log(event: AISearchProgressEvent) -> Dict[str, Any]:
     """移除进度事件中的空字段，控制检索日志体积。"""
 
-    payload = event.model_dump(exclude={"type"}, exclude_none=True)
+    payload = event.model_dump(exclude={"type", "plan"}, exclude_none=True)
     return {key: value for key, value in payload.items() if value not in ("", [])}
 
 
@@ -136,10 +148,11 @@ def _log_ai_search_record(
 async def _execute_ai_search_request(
     request: AISearchRequest,
     progress_callback: AISearchProgressCallback,
+    *,
+    history: Sequence[Tuple[str, str]] = (),
 ) -> AISearchResponse:
     """执行一次带进度回调的 AI 搜索。"""
 
-    _validate_candidate_ids(request.candidates)
     search_id = uuid4().hex[:12]
     started_at = time.monotonic()
     progress: List[Dict[str, Any]] = []
@@ -159,15 +172,19 @@ async def _execute_ai_search_request(
             error=error,
         )
 
-    cache_key = _build_cache_key(request)
-    cached_response = _get_cached_response(cache_key)
+    cache_key = (
+        await asyncio.to_thread(_build_cache_key, request)
+        if request.help_session_id is None and not request.allow_plugin_config_write
+        else None
+    )
+    cached_response = _get_cached_response(cache_key) if cache_key is not None else None
     if cached_response is not None:
         await record_progress(AISearchProgressEvent(stage="cache_hit"))
         log_record("cached", cached_response)
         return cached_response
 
     try:
-        response = await run_ai_search_agent(request, record_progress)
+        response = await run_ai_search_agent(request, record_progress, history=history)
     except asyncio.CancelledError:
         log_record("cancelled")
         raise
@@ -185,10 +202,81 @@ async def _execute_ai_search_request(
         log_record("grounding_failed", response, response.grounding_error)
         return response
 
-    if not response.used_local_config:
+    if cache_key is not None and not response.used_local_config and not response.used_plugin_market:
         _cache_response(cache_key, response)
     log_record("completed", response)
     return response
+
+
+@contextmanager
+def _reserve_help_session(session_id: str) -> Iterator[None]:
+    if session_id in _ACTIVE_HELP_SESSIONS:
+        raise HTTPException(status_code=409, detail="该答疑会话正在处理，请稍后重试")
+    _ACTIVE_HELP_SESSIONS.add(session_id)
+    try:
+        yield
+    finally:
+        _ACTIVE_HELP_SESSIONS.remove(session_id)
+
+
+async def _complete_help_write(operation: Coroutine[Any, Any, _WriteResult]) -> _WriteResult:
+    """写线程无法撤回，确保它收尾后才释放会话占用。"""
+
+    write = asyncio.create_task(operation)
+    try:
+        return await asyncio.shield(write)
+    except asyncio.CancelledError:
+        await write
+        raise
+
+
+async def _persist_help_turn(turn_id: int, *, response: AISearchResponse | None = None, error: str = "") -> None:
+    await _complete_help_write(asyncio.to_thread(finish_help_turn, turn_id, response=response, error=error))
+
+
+def _stream_error(exc: Exception) -> Tuple[str, int]:
+    if isinstance(exc, HTTPException):
+        return str(exc.detail), exc.status_code
+    return f"AI 搜索失败: {exc}", 500
+
+
+async def _run_help_session(
+    request: AISearchRequest,
+    progress_callback: AISearchProgressCallback,
+    publish_session: Callable[[str], None],
+) -> AISearchResponse:
+    """接管单轮答疑，从登记问题到保存结果期间持有会话占用。"""
+
+    new_session = request.help_session_id == "new"
+    session_id = str(uuid4() if new_session else request.help_session_id)
+    with _reserve_help_session(session_id):
+        opening = asyncio.create_task(
+            asyncio.to_thread(begin_help_turn, session_id, request.query.strip(), new_session=new_session)
+        )
+        try:
+            turn = await asyncio.shield(opening)
+        except asyncio.CancelledError:
+            # 断开时登记事务可能已经提交，等待确认后再结束这轮答疑。
+            turn = await opening
+            if turn is not None:
+                await _persist_help_turn(turn[0], error="答疑已中断")
+            raise
+        if turn is None:
+            raise HTTPException(status_code=404, detail="答疑会话不存在")
+
+        turn_id, history = turn
+        publish_session(session_id)
+        try:
+            response = await _execute_ai_search_request(request, progress_callback, history=history)
+        except asyncio.CancelledError:
+            await _persist_help_turn(turn_id, error="答疑已中断")
+            raise
+        except Exception as exc:
+            error_message, _ = _stream_error(exc)
+            await _persist_help_turn(turn_id, error=error_message)
+            raise
+        await _persist_help_turn(turn_id, response=response)
+        return response
 
 
 async def _stream_ai_search_events(request: AISearchRequest) -> AsyncIterator[str]:
@@ -197,30 +285,28 @@ async def _stream_ai_search_events(request: AISearchRequest) -> AsyncIterator[st
     queue: asyncio.Queue[Dict[str, Any] | None] = asyncio.Queue()
 
     async def publish_progress(event: AISearchProgressEvent) -> None:
-        await queue.put(event.model_dump())
+        queue.put_nowait(event.model_dump())
+
+    def publish_session(session_id: str) -> None:
+        queue.put_nowait({"type": "session", "id": session_id})
 
     async def run_search() -> None:
         try:
-            response = await _execute_ai_search_request(request, publish_progress)
+            _validate_candidate_ids(request.candidates)
+            if request.help_session_id is None:
+                response = await _execute_ai_search_request(request, publish_progress)
+            else:
+                response = await _run_help_session(request, publish_progress, publish_session)
             await publish_progress(AISearchProgressEvent(stage="completed", status="completed"))
-            await queue.put({"type": "result", "response": response.model_dump()})
-        except HTTPException as exc:
-            error_message = str(exc.detail)
-            await publish_progress(
-                AISearchProgressEvent(stage="failed", status="failed", error=error_message)
-            )
-            await queue.put({"type": "error", "message": error_message, "status": exc.status_code})
-        except asyncio.CancelledError:
-            raise
+            queue.put_nowait({"type": "result", "response": response.model_dump()})
         except Exception as exc:
-            logger.error(f"WebUI AI 搜索流式调用失败: {exc}", exc_info=True)
-            error_message = f"AI 搜索失败: {str(exc)}"
-            await publish_progress(
-                AISearchProgressEvent(stage="failed", status="failed", error=error_message)
-            )
-            await queue.put({"type": "error", "message": error_message, "status": 500})
+            if not isinstance(exc, HTTPException):
+                logger.error(f"WebUI AI 搜索流式调用失败: {exc}", exc_info=True)
+            error_message, status_code = _stream_error(exc)
+            await publish_progress(AISearchProgressEvent(stage="failed", status="failed", error=error_message))
+            queue.put_nowait({"type": "error", "message": error_message, "status": status_code})
         finally:
-            await queue.put(None)
+            queue.put_nowait(None)
 
     task = asyncio.create_task(run_search())
     try:
@@ -232,7 +318,30 @@ async def _stream_ai_search_events(request: AISearchRequest) -> AsyncIterator[st
     finally:
         if not task.done():
             task.cancel()
-        await asyncio.gather(task, return_exceptions=True)
+        with suppress(asyncio.CancelledError):
+            await asyncio.shield(task)
+
+
+@router.get("/help/sessions")
+def read_help_sessions() -> List[WebUIHelpSession]:
+    return list_help_sessions()
+
+
+@router.get("/help/sessions/{session_id}")
+def read_help_session(session_id: UUID) -> HelpSessionDetail:
+    session = get_help_session(str(session_id))
+    if session is None:
+        raise HTTPException(status_code=404, detail="答疑会话不存在")
+    return session
+
+
+@router.delete("/help/sessions/{session_id}", status_code=204)
+async def remove_help_session(session_id: UUID) -> Response:
+    key = str(session_id)
+    with _reserve_help_session(key):
+        if not await _complete_help_write(asyncio.to_thread(delete_help_session, key)):
+            raise HTTPException(status_code=404, detail="答疑会话不存在")
+    return Response(status_code=204)
 
 
 @router.post("/ai/stream")

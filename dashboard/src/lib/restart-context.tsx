@@ -18,6 +18,7 @@ import {
   type ReactNode,
 } from 'react'
 import { restartMaiBot } from './system-api'
+import { resolveApiPath } from './api-base'
 
 // ============ 类型定义 ============
 
@@ -158,7 +159,7 @@ export function RestartProvider({
           CONFIG.CHECK_TIMEOUT
         )
 
-        const response = await fetch(healthCheckUrl, {
+        const response = await fetch(await resolveApiPath(healthCheckUrl), {
           method: 'GET',
           headers: { 'Content-Type': 'application/json' },
           credentials: 'include',
@@ -201,7 +202,7 @@ export function RestartProvider({
         // 延迟后跳转
         setTimeout(() => {
           onRestartComplete?.()
-          // 默认跳转到 auth 页面
+          // 重启后重新加载页面，清空旧连接并检查登录状态。
           window.location.href = '/auth'
         }, CONFIG.SUCCESS_REDIRECT_DELAY)
       } else if (currentAttempt >= attemptLimit) {

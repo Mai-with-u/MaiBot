@@ -5,7 +5,10 @@ from typing import Any, Dict, List, Literal, Optional
 from packaging.version import Version
 from pydantic import BaseModel, Field
 
+from src.common.logger import get_logger
 from src.plugin_runtime.runner.manifest_validator import ManifestValidator
+
+logger = get_logger("plugin_market")
 
 
 class PluginRelease(BaseModel):
@@ -33,6 +36,13 @@ class PluginReleaseEntry(BaseModel):
 class PluginReleaseIndex(BaseModel):
     schema_version: Literal[1]
     plugins: List[PluginReleaseEntry]
+
+
+class _ReleaseIndexEnvelope(BaseModel):
+    """只校验版本索引的外层结构，条目留给逐条解析时单独校验。"""
+
+    schema_version: Literal[1]
+    plugins: List[Any]
 
 
 def manifest_compatibility(manifest: Dict[str, Any]) -> List[str]:
@@ -63,23 +73,18 @@ def describe_entry(entry: PluginReleaseEntry) -> Dict[str, Any]:
     return {**entry.model_dump(exclude={"versions"}), "versions": versions, "recommended_version": recommended}
 
 
-def parse_market_release_entry(data: Dict[str, Any], plugin_id: Optional[str] = None) -> PluginReleaseEntry:
-    entry = PluginReleaseEntry.model_validate({
-        "id": data["marketplace_id"], "manifest_id": data["id"],
-        "repositoryUrl": data["repository_url"], "mode": data["install_mode"],
-        "versions": data["versions"], "sync_error": data.get("sync_error"),
-        "rejected_releases": data.get("rejected_releases", []),
-    })
-    if plugin_id is not None and plugin_id.casefold() not in {entry.id.casefold(), (entry.manifest_id or "").casefold()}:
-        raise ValueError("插件中心返回的插件 ID 与请求不一致")
-    _validate_release_entry(entry)
-    return entry
-
-
 def parse_release_index(content: str) -> PluginReleaseIndex:
-    index = PluginReleaseIndex.model_validate_json(content)
+    """解析版本索引：单条无效只跳过该条，插件 ID 冲突仍视为索引整体错误。"""
+    envelope = _ReleaseIndexEnvelope.model_validate_json(content)
     aliases: Dict[str, str] = {}
-    for entry in index.plugins:
+    valid: List[PluginReleaseEntry] = []
+    for raw in envelope.plugins:
+        try:
+            entry = PluginReleaseEntry.model_validate(raw)
+            _validate_release_entry(entry)
+        except ValueError as exc:
+            logger.warning(f"跳过无效的插件版本索引条目：{exc}")
+            continue
         for alias in {entry.id, entry.manifest_id} - {None}:
             if entry.sync_error:
                 continue
@@ -87,8 +92,8 @@ def parse_release_index(content: str) -> PluginReleaseIndex:
             if key in aliases and aliases[key] != entry.id:
                 raise ValueError(f"版本索引插件 ID 冲突：{alias}")
             aliases[key] = entry.id
-        _validate_release_entry(entry)
-    return index
+        valid.append(entry)
+    return PluginReleaseIndex(schema_version=envelope.schema_version, plugins=valid)
 
 
 def _validate_release_entry(entry: PluginReleaseEntry) -> None:

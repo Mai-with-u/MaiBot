@@ -218,12 +218,12 @@ describe('AppearanceTab 主题模式与界面风格', () => {
     const user = userEvent.setup()
     render(<AppearanceTab />)
 
-    expect(screen.getByRole('button', { name: /原版 Dashboard/ })).toHaveAttribute(
+    expect(screen.getByRole('button', { name: /settings\.appearance\.dashboardStyles\.modern\.label/ })).toHaveAttribute(
       'aria-pressed',
       'true'
     )
 
-    await user.click(screen.getByRole('button', { name: /未来复古/ }))
+    await user.click(screen.getByRole('button', { name: /settings\.appearance\.dashboardStyles\.future-retro\.label/ }))
     expect(themeState.updateThemeConfig).toHaveBeenCalledWith({ dashboardStyle: 'future-retro' })
   })
 

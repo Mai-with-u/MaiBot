@@ -5,6 +5,7 @@ from html import escape
 from typing import Optional, Sequence
 
 from src.chat.message_receive.message import SessionMessage
+from src.chat.message_receive.chat_manager import chat_manager
 from src.common.data_models.message_component_data_model import (
     MessageSequence,
     ReplyComponent,
@@ -49,7 +50,10 @@ def build_planner_prefix(
     if include_chat_id:
         normalized_chat_id = str(chat_id or "").strip()
         if normalized_chat_id:
-            message_attrs.append(f'chat_id="{escape(normalized_chat_id, quote=True)}"')
+            message_attrs.append(f'session_id="{escape(normalized_chat_id, quote=True)}"')
+            chat_name = chat_manager.get_session_name(normalized_chat_id)
+            if chat_name:
+                message_attrs.append(f'chat_name="{escape(chat_name, quote=True)}"')
 
     normalized_quote = _format_quote_ids(quote_ids)
     if normalized_quote:

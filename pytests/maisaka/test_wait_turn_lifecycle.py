@@ -8,10 +8,14 @@ import pytest
 
 from src.maisaka.reasoning_engine import MaisakaReasoningEngine
 from src.maisaka.runtime import MaisakaHeartFlowChatting
+from src.maisaka.scenes.private.scheduling import PrivateTurnScheduler
 
 
 def _build_runtime_stub() -> MaisakaHeartFlowChatting:
     runtime = object.__new__(MaisakaHeartFlowChatting)
+    runtime._message_turn_scheduler = PrivateTurnScheduler(runtime)
+    runtime.message_cache = []
+    runtime._last_processed_index = 0
     runtime._agent_state = runtime._STATE_RUNNING
     runtime._pending_wait_tool_call_id = None
     runtime._pending_wait_logical_turn_id = None
@@ -53,6 +57,24 @@ def test_wait_requires_registered_call_and_turn() -> None:
         runtime._enter_wait_state(tool_call_id="wait-call-1", logical_turn_id=None)
     with pytest.raises(RuntimeError, match="不存在可补齐"):
         runtime._consume_pending_wait_state()
+
+
+@pytest.mark.asyncio
+async def test_timed_wait_wakes_thinking_without_new_messages() -> None:
+    runtime = _build_runtime_stub()
+    runtime._running = True
+    runtime.log_prefix = "test"
+    runtime._enter_wait_state(tool_call_id="wait-call", logical_turn_id="turn-wait")
+
+    await runtime._schedule_wait_timeout(seconds=0, tool_call_id="wait-call")
+
+    assert runtime._agent_state == runtime._STATE_RUNNING
+    assert runtime._internal_turn_queue.get_nowait() == "timeout"
+    engine = object.__new__(MaisakaReasoningEngine)
+    engine._runtime = runtime
+    completed = engine._build_wait_completed_message(has_new_messages=False)
+    assert completed.tool_call_id == "wait-call"
+    assert completed.logical_turn_id == "turn-wait"
 
 
 def test_proactive_switch_trigger_carries_source_logical_turn() -> None:

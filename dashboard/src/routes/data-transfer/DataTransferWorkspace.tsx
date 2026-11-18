@@ -1,4 +1,5 @@
 import { Box, Download, RefreshCw, Trash2, Upload, X } from 'lucide-react'
+import type { ReactNode } from 'react'
 
 import { Badge } from '@/components/ui/badge'
 import { Button } from '@/components/ui/button'
@@ -35,7 +36,10 @@ const importOptions: {
 ]
 
 /** 生产页面和设计预览使用同一棵展示组件，数据来源由外部提供。 */
-export function DataTransferWorkspace({ viewModel: model }: { viewModel: DataTransferViewModel }) {
+export function DataTransferWorkspace({ viewModel: model, headerActions }: {
+  viewModel: DataTransferViewModel
+  headerActions?: ReactNode
+}) {
   const exporting = model.exportCreating || isTransferJobRunning(model.exportJob)
   const importing = model.importUploading || isTransferJobRunning(model.importJob)
   const exportSelectedCount = 1 + Object.values(model.exportOptions).filter(Boolean).length
@@ -44,7 +48,10 @@ export function DataTransferWorkspace({ viewModel: model }: { viewModel: DataTra
   return (
     <div className="space-y-5">
       <header className="space-y-1">
-        <h1 className="text-2xl font-normal">数据导入导出</h1>
+        <div className="flex items-center justify-between gap-4">
+          <h1 className="min-w-0 text-2xl font-normal">数据导入导出</h1>
+          {headerActions}
+        </div>
         <p className="text-muted-foreground text-sm">
           备份或迁移 MaiBot：config 与 data 默认包含，插件和日志按需选择
         </p>
@@ -52,7 +59,7 @@ export function DataTransferWorkspace({ viewModel: model }: { viewModel: DataTra
       <div className="grid items-stretch gap-5 lg:grid-cols-2">
         <SectionPanel
           title="导出"
-          description="生成带 manifest.json 的 zip 包"
+          description="暂停当前 Bot 后生成完整快照，完成后恢复原运行状态；其他 Bot 不受影响"
           leading={<Badge className="text-xs font-normal">01</Badge>}
           bodyClassName="flex flex-col gap-4 p-4 sm:p-5"
         >
@@ -198,7 +205,7 @@ export function DataTransferWorkspace({ viewModel: model }: { viewModel: DataTra
         </SectionPanel>
         <SectionPanel
           title="导入"
-          description="仅支持本功能导出的数据包"
+          description="支持 1.3.19 及之后版本的数据包。暂停当前 Bot 后导入并保留原文件备份，不覆盖其他 Bot 或公共设置"
           leading={
             <Badge variant="success" className="text-xs font-normal">
               02

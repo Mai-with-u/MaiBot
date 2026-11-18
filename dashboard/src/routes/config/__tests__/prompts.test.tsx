@@ -50,6 +50,7 @@ const VERSION_STORAGE_PREFIX = 'maibot.promptManagement.selectedVersion'
 function makeFileInfo(overrides: Partial<PromptFileInfo> = {}): PromptFileInfo {
   return {
     name: 'first.prompt',
+    relative_path: `main/${overrides.name ?? 'first.prompt'}`,
     size: 13,
     modified_at: 1,
     display_name: '第一 Prompt',
@@ -97,12 +98,15 @@ function makePromptContent(
 }
 
 function makeCatalog(
-  files: PromptFileInfo[] = [makeFileInfo(), makeFileInfo({
-    name: 'second.prompt',
-    size: 14,
-    modified_at: 2,
-    display_name: '第二 Prompt',
-  })],
+  files: PromptFileInfo[] = [
+    makeFileInfo(),
+    makeFileInfo({
+      name: 'second.prompt',
+      size: 14,
+      modified_at: 2,
+      display_name: '第二 Prompt',
+    }),
+  ],
   overrides: Partial<PromptCatalog> = {}
 ): PromptCatalog {
   return {
@@ -127,7 +131,14 @@ function deferred<T>() {
 
 async function renderReady(expectedDisplay: string | RegExp = 'first.prompt current') {
   const user = userEvent.setup()
+  const previousReads = vi.mocked(promptApi.getPromptFile).mock.calls.length
   const view = render(<PromptManagementPage />)
+  await screen.findByText('请选择提示词')
+  expect(promptApi.getPromptFile).toHaveBeenCalledTimes(previousReads)
+  const search = screen.getByPlaceholderText('搜索')
+  await user.type(search, 'first.prompt')
+  await user.click(await screen.findByRole('button', { name: /first\.prompt/ }))
+  await user.clear(search)
   await screen.findByDisplayValue(expectedDisplay)
   return { user, ...view }
 }
@@ -185,12 +196,132 @@ afterEach(() => {
 })
 
 describe('PromptManagementPage', () => {
+  it('点击双栏后从目录选择第二份模板，就地展示并保留当前未保存内容', async () => {
+    vi.mocked(promptApi.getPromptCatalog).mockResolvedValue(
+      makeCatalog([
+        ...catalog.files['zh-CN'],
+        makeFileInfo({
+          name: 'note.prompt',
+          relative_path: 'instructions/note.prompt',
+          kind: 'instruction',
+          display_name: '说明 Prompt',
+        }),
+      ])
+    )
+    const { user } = await renderReady()
+    setEditorValue('unsaved-first')
+    await user.click(screen.getByRole('button', { name: /双栏查看|promptCompare.title/ }))
+    expect(screen.queryByRole('dialog')).not.toBeInTheDocument()
+    await user.click(screen.getByRole('button', { name: /second\.prompt/ }))
+    expect(await screen.findByDisplayValue('second.prompt current')).toHaveAttribute('readonly')
+    expect(screen.getByDisplayValue('unsaved-first')).toBeInTheDocument()
+    expect(screen.getByRole('heading', { name: /^第一 Prompt/ })).toBeInTheDocument()
+    await user.click(screen.getByRole('tab', { name: /指令片段/ }))
+    await user.click(await screen.findByRole('button', { name: /note\.prompt/ }))
+    expect(await screen.findByDisplayValue('note.prompt current')).toHaveAttribute('readonly')
+    expect(screen.getByDisplayValue('unsaved-first')).toBeInTheDocument()
+    await user.click(screen.getByRole('button', { name: /退出双栏|promptCompare.exit/ }))
+    expect(screen.queryByDisplayValue('second.prompt current')).not.toBeInTheDocument()
+    expect(screen.queryByDisplayValue('note.prompt current')).not.toBeInTheDocument()
+    expect(screen.getByDisplayValue('unsaved-first')).toBeInTheDocument()
+    expect(promptApi.updatePromptFile).not.toHaveBeenCalled()
+  })
+
+  it('目录逐级展开文件，根页签隔离指令片段', async () => {
+    vi.mocked(promptApi.getPromptCatalog).mockResolvedValue(
+      makeCatalog([
+        makeFileInfo({ relative_path: 'main/memory/first.prompt' }),
+        makeFileInfo({
+          name: 'group.prompt',
+          relative_path: 'main/reply/group/group.prompt',
+          display_name: '群聊回复',
+        }),
+        makeFileInfo({
+          name: 'private.prompt',
+          relative_path: 'main/reply/private/private.prompt',
+          display_name: '私聊回复',
+        }),
+        makeFileInfo({
+          name: 'instruction.prompt',
+          relative_path: 'instructions/reply/instruction.prompt',
+          kind: 'instruction',
+          display_name: '回复指令',
+        }),
+      ])
+    )
+    const { user } = await renderReady()
+    await user.click(screen.getByRole('button', { name: /^回复 reply\// }))
+    expect(screen.getByRole('button', { name: /第一 Prompt/ })).toBeInTheDocument()
+    expect(screen.queryByRole('button', { name: /群聊回复/ })).not.toBeInTheDocument()
+    await user.click(screen.getByRole('button', { name: /^群聊 reply\/group/ }))
+    expect(screen.getByRole('button', { name: /群聊回复/ })).toBeInTheDocument()
+    expect(screen.queryByRole('button', { name: /私聊回复/ })).not.toBeInTheDocument()
+    expect(screen.getByTestId('editable-code-editor')).toHaveValue('first.prompt current')
+    await user.click(screen.getByRole('button', { name: /群聊回复/ }))
+    await screen.findByDisplayValue('group.prompt current')
+    await user.click(screen.getByRole('tab', { name: /指令片段/ }))
+    expect(screen.getByText('请选择提示词')).toBeVisible()
+    await user.click(await screen.findByRole('button', { name: /^回复 reply\// }))
+    await user.click(screen.getByRole('button', { name: /回复指令/ }))
+    await screen.findByDisplayValue('instruction.prompt current')
+    expect(screen.getByRole('button', { name: /回复指令/ })).toBeInTheDocument()
+    expect(screen.queryByRole('button', { name: /群聊回复/ })).not.toBeInTheDocument()
+  })
+
+  it('切换分类不会丢失未保存的编辑内容', async () => {
+    vi.mocked(promptApi.getPromptCatalog).mockResolvedValue(
+      makeCatalog([
+        makeFileInfo({ relative_path: 'main/memory/first.prompt' }),
+        makeFileInfo({
+          name: 'reply.prompt',
+          relative_path: 'main/reply/reply.prompt',
+          display_name: '回复模板',
+        }),
+      ])
+    )
+    const { user } = await renderReady()
+    setEditorValue('尚未保存的内容')
+    await user.click(screen.getByRole('button', { name: /^回复 reply\// }))
+    await user.click(screen.getByRole('button', { name: /回复模板/ }))
+    expect(screen.getByTestId('editable-code-editor')).toHaveValue('尚未保存的内容')
+    await user.click(screen.getByRole('tab', { name: /指令片段/ }))
+    expect(screen.getByRole('tab', { name: /主模板/ })).toHaveAttribute('aria-selected', 'true')
+    expect(screen.getByTestId('editable-code-editor')).toHaveValue('尚未保存的内容')
+  })
+
+  it('专注编辑收起目录并保留未保存内容，展开后恢复目录', async () => {
+    const { user } = await renderReady()
+    setEditorValue('未保存的专注编辑内容')
+    await user.click(screen.getByRole('button', { name: '专注编辑' }))
+    expect(screen.queryByRole('navigation', { name: 'Prompt 模板目录' })).not.toBeInTheDocument()
+    expect(screen.getByTestId('editable-code-editor')).toHaveValue('未保存的专注编辑内容')
+    await user.click(screen.getByRole('button', { name: '展开模板目录' }))
+    expect(screen.getByRole('navigation', { name: 'Prompt 模板目录' })).toBeVisible()
+    expect(screen.getByTestId('editable-code-editor')).toHaveValue('未保存的专注编辑内容')
+  })
+
+  it('搜索展开匹配文件的父目录，清空搜索后恢复折叠状态', async () => {
+    vi.mocked(promptApi.getPromptCatalog).mockResolvedValue(
+      makeCatalog([
+        makeFileInfo(),
+        makeFileInfo({
+          name: 'nested.prompt',
+          relative_path: 'main/reply/private/nested.prompt',
+          display_name: '私聊回复',
+        }),
+      ])
+    )
+    const { user } = await renderReady()
+    expect(screen.queryByRole('button', { name: /私聊回复/ })).not.toBeInTheDocument()
+    await user.type(screen.getByPlaceholderText('搜索'), 'reply/private')
+    expect(screen.getByRole('button', { name: /私聊回复/ })).toBeVisible()
+    await user.clear(screen.getByPlaceholderText('搜索'))
+    expect(screen.queryByRole('button', { name: /私聊回复/ })).not.toBeInTheDocument()
+    expect(screen.getByTestId('editable-code-editor')).toHaveValue('first.prompt current')
+  })
+
   it('对比默认模式下切换 Prompt 文件会刷新默认版本面板', async () => {
-    const user = userEvent.setup()
-
-    render(<PromptManagementPage />)
-
-    await screen.findByDisplayValue('first.prompt current')
+    const { user } = await renderReady()
     await user.click(screen.getByRole('button', { name: /对比默认/ }))
 
     await screen.findByDisplayValue('first.prompt default')
@@ -266,16 +397,23 @@ describe('PromptManagementPage', () => {
     await user.click(screen.getByRole('button', { name: /保存为新版本/ }))
 
     await waitFor(() => {
-      expect(promptApi.updatePromptFile).toHaveBeenCalledWith('zh-CN', 'first.prompt', '新版本内容', {
-        versionId: null,
-        createVersion: true,
-      })
+      expect(promptApi.updatePromptFile).toHaveBeenCalledWith(
+        'zh-CN',
+        'first.prompt',
+        '新版本内容',
+        {
+          versionId: null,
+          createVersion: true,
+        }
+      )
     })
     expect(toastMock).toHaveBeenCalledWith({
       title: 'Prompt 已保存',
       description: 'zh-CN/first.prompt',
     })
-    expect(window.localStorage.getItem(`${VERSION_STORAGE_PREFIX}.zh-CN/first.prompt`)).toBe('v-new')
+    expect(window.localStorage.getItem(`${VERSION_STORAGE_PREFIX}.zh-CN/first.prompt`)).toBe(
+      'v-new'
+    )
     expect(promptApi.getPromptCatalog).toHaveBeenCalledTimes(2)
     await waitFor(() => {
       expect(screen.getByRole('button', { name: /^已保存$/ })).toBeDisabled()
@@ -313,17 +451,24 @@ describe('PromptManagementPage', () => {
     const { user } = await renderReady('v1 内容')
 
     await chooseComboboxOption(user, 1, /版本 2/)
-    await waitFor(() => expect(promptApi.getPromptVersionFile).toHaveBeenCalledWith('zh-CN', 'first.prompt', 'v2'))
+    await waitFor(() =>
+      expect(promptApi.getPromptVersionFile).toHaveBeenCalledWith('zh-CN', 'first.prompt', 'v2')
+    )
     await screen.findByDisplayValue('v2 内容')
 
     setEditorValue('改过的 v2')
     await user.click(screen.getByRole('button', { name: /保存修改/ }))
 
     await waitFor(() => {
-      expect(promptApi.updatePromptFile).toHaveBeenCalledWith('zh-CN', 'first.prompt', '改过的 v2', {
-        versionId: 'v2',
-        createVersion: false,
-      })
+      expect(promptApi.updatePromptFile).toHaveBeenCalledWith(
+        'zh-CN',
+        'first.prompt',
+        '改过的 v2',
+        {
+          versionId: 'v2',
+          createVersion: false,
+        }
+      )
     })
     expect(toastMock).toHaveBeenCalledWith({
       title: 'Prompt 已保存',
@@ -415,8 +560,11 @@ describe('PromptManagementPage', () => {
     )
     const { user } = await renderReady('v1 内容')
 
-    await user.click(screen.getByRole('button', { name: '删除版本' }))
-    expect(screen.getByText('删除当前启用的版本后，将恢复使用默认 Prompt。此操作无法撤销。')).toBeInTheDocument()
+    await user.click(screen.getByRole('button', { name: '版本操作' }))
+    await user.click(screen.getByRole('menuitem', { name: '删除版本' }))
+    expect(
+      screen.getByText('删除当前启用的版本后，将恢复使用默认 Prompt。此操作无法撤销。')
+    ).toBeInTheDocument()
     await user.click(screen.getByRole('button', { name: '确认删除' }))
 
     await waitFor(() => {
@@ -449,6 +597,7 @@ describe('PromptManagementPage', () => {
     vi.mocked(promptApi.getPromptCatalog).mockResolvedValue(catalog)
     vi.mocked(promptApi.getPromptFile).mockRejectedValueOnce(new Error('读文件失败'))
     render(<PromptManagementPage />)
+    await userEvent.click(await screen.findByRole('button', { name: /第一 Prompt/ }))
     await waitFor(() => {
       expect(toastMock).toHaveBeenCalledWith({
         title: '读取 Prompt 失败',
@@ -476,7 +625,8 @@ describe('PromptManagementPage', () => {
     })
 
     vi.mocked(promptApi.getDefaultPromptFile).mockRejectedValueOnce(new Error('默认读不出来'))
-    await user.click(screen.getByRole('button', { name: /查看默认/ }))
+    await user.click(screen.getByRole('button', { name: '版本操作' }))
+    await user.click(screen.getByRole('menuitem', { name: /查看默认/ }))
     await waitFor(() => {
       expect(toastMock).toHaveBeenCalledWith({
         title: '读取默认 Prompt 失败',
@@ -561,7 +711,8 @@ describe('PromptManagementPage', () => {
 
   it('查看默认会打开只读对话框，关闭后不影响当前编辑', async () => {
     const { user } = await renderReady()
-    await user.click(screen.getByRole('button', { name: /查看默认/ }))
+    await user.click(screen.getByRole('button', { name: '版本操作' }))
+    await user.click(screen.getByRole('menuitem', { name: /查看默认/ }))
 
     expect(await screen.findByRole('heading', { name: '默认 Prompt' })).toBeInTheDocument()
     expect(screen.getByText(/zh-CN\/first.prompt 的内置模板/)).toBeInTheDocument()
@@ -640,7 +791,10 @@ describe('PromptManagementPage', () => {
     await user.click(getButtonByText(/显示高级/))
     expect(screen.getByRole('button', { name: /高级模板/ })).toBeInTheDocument()
     expect(screen.getByText('高级')).toBeInTheDocument()
-    expect(screen.getByText('2 版')).toBeInTheDocument()
+    expect(screen.getByRole('button', { name: /高级模板/ })).toHaveAttribute(
+      'title',
+      expect.stringContaining('2 个自定义版本')
+    )
 
     await user.click(screen.getByRole('button', { name: /高级模板/ }))
     await screen.findByDisplayValue('adv.prompt current')
@@ -651,10 +805,10 @@ describe('PromptManagementPage', () => {
     await waitFor(() => {
       expect(screen.queryByRole('button', { name: /高级模板/ })).not.toBeInTheDocument()
     })
-    await screen.findByDisplayValue('first.prompt current')
+    expect(screen.getByText('请选择提示词')).toBeVisible()
   })
 
-  it('切换语言会清空搜索并选中目标语言的第一个可见文件', async () => {
+  it('切换语言会清空搜索且不自动选中文件', async () => {
     vi.mocked(promptApi.getPromptCatalog).mockResolvedValue(
       makeCatalog(
         [
@@ -689,32 +843,43 @@ describe('PromptManagementPage', () => {
     await waitFor(() => {
       expect(screen.getByPlaceholderText('搜索')).toHaveValue('')
     })
-    await screen.findByRole('button', { name: /English Prompt/ })
+    const englishFile = await screen.findByRole('button', { name: /English Prompt/ })
+    expect(screen.getByText('请选择提示词')).toBeVisible()
+    await user.click(englishFile)
     await screen.findByDisplayValue('english.prompt current')
     expect(screen.getByText(/en · 2\.0 KB/)).toBeInTheDocument()
   })
 
-  it('刷新目录时会按当前语言回退，并在当前文件消失后改选第一个基础文件', async () => {
+  it('刷新目录时会按当前语言回退，并在当前文件消失后清空选择', async () => {
     const enOnly = makeCatalog(
       [makeFileInfo({ name: 'english.prompt', display_name: 'English Prompt', size: 2097152 })],
       {
         languages: ['en'],
         files: {
-          en: [makeFileInfo({ name: 'english.prompt', display_name: 'English Prompt', size: 2097152 })],
+          en: [
+            makeFileInfo({ name: 'english.prompt', display_name: 'English Prompt', size: 2097152 }),
+          ],
         },
       }
     )
     vi.mocked(promptApi.getPromptCatalog)
-      .mockResolvedValueOnce(makeCatalog(undefined, { languages: ['zh-CN', 'en'], files: {
-        'zh-CN': catalog.files['zh-CN'],
-        en: [makeFileInfo({ name: 'english.prompt', display_name: 'English Prompt' })],
-      } }))
+      .mockResolvedValueOnce(
+        makeCatalog(undefined, {
+          languages: ['zh-CN', 'en'],
+          files: {
+            'zh-CN': catalog.files['zh-CN'],
+            en: [makeFileInfo({ name: 'english.prompt', display_name: 'English Prompt' })],
+          },
+        })
+      )
       .mockResolvedValue(enOnly)
 
     const { user } = await renderReady()
     await user.click(screen.getByRole('button', { name: '刷新' }))
 
-    await screen.findByRole('button', { name: /English Prompt/ })
+    const englishFile = await screen.findByRole('button', { name: /English Prompt/ })
+    expect(screen.getByText('请选择提示词')).toBeVisible()
+    await user.click(englishFile)
     await screen.findByDisplayValue('english.prompt current')
     expect(screen.getByText(/en · 2\.0 MB/)).toBeInTheDocument()
   })
@@ -767,6 +932,8 @@ describe('PromptManagementPage', () => {
 
     const user = userEvent.setup()
     render(<PromptManagementPage />)
+    await user.click(await screen.findByRole('button', { name: /第一 Prompt/ }))
+    await waitFor(() => expect(promptApi.getPromptFile).toHaveBeenCalledTimes(1))
     await screen.findByRole('button', { name: /第二 Prompt/ })
     await user.click(screen.getByRole('button', { name: /第二 Prompt/ }))
     await screen.findByDisplayValue('second.prompt current')
@@ -811,8 +978,8 @@ describe('PromptManagementPage', () => {
     await waitFor(() => {
       expect(screen.getByText('没有可编辑的 Prompt 文件')).toBeInTheDocument()
     })
-    expect(screen.getByText('未选择文件')).toBeInTheDocument()
-    expect(screen.getByRole('button', { name: /^已保存$/ })).toBeDisabled()
+    expect(screen.getByText('请选择提示词')).toBeVisible()
+    expect(screen.queryByRole('button', { name: /^已保存$/ })).not.toBeInTheDocument()
   })
 
   it('保存过程中按钮显示保存中，接口返回空版本信息时回退到默认版本', async () => {
@@ -867,9 +1034,7 @@ describe('PromptManagementPage', () => {
 
   it('未定制文件的默认版本显示已应用，切换到默认版本会拉取默认内容', async () => {
     vi.mocked(promptApi.getPromptCatalog).mockResolvedValue(
-      makeCatalog([
-        makeFileInfo({ customized: false, custom_version_count: 1 }),
-      ])
+      makeCatalog([makeFileInfo({ customized: false, custom_version_count: 1 })])
     )
     vi.mocked(promptApi.getPromptFile).mockResolvedValue(
       makePromptContent('first.prompt', '启用中的版本', {
@@ -919,7 +1084,9 @@ describe('PromptManagementPage', () => {
       expect(screen.getByTestId('readonly-code-editor')).toHaveValue('second.prompt default')
     })
     // 持久化默认版本时，文件加载本身就会取 default，对比面板直接复用，不再多打一次
-    expect(vi.mocked(promptApi.getDefaultPromptFile).mock.calls.length).toBe(callsAfterEnterDiff + 1)
+    expect(vi.mocked(promptApi.getDefaultPromptFile).mock.calls.length).toBe(
+      callsAfterEnterDiff + 1
+    )
     expect(promptApi.getDefaultPromptFile).toHaveBeenLastCalledWith('zh-CN', 'second.prompt')
   })
 
@@ -944,7 +1111,9 @@ describe('PromptManagementPage', () => {
       )
     const { user } = await renderReady()
     await user.click(screen.getByRole('button', { name: '刷新' }))
-    await screen.findByRole('button', { name: /日本語/ })
+    const japaneseFile = await screen.findByRole('button', { name: /日本語/ })
+    expect(screen.getByText('请选择提示词')).toBeVisible()
+    await user.click(japaneseFile)
     await screen.findByDisplayValue('jp.prompt current')
   })
 })

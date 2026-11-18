@@ -51,6 +51,8 @@ class EmojiDetailResponse(BaseModel):
 
     success: bool
     data: EmojiResponse
+    emotion_tags: Optional[List[str]] = None
+    content_tags: Optional[List[str]] = None
 
 
 class EmojiUpdateRequest(BaseModel):

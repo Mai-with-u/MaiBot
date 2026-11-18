@@ -1,0 +1,40 @@
+[webui_help_skill_setup]
+display_name = "Setup and configuration workflow"
+advanced = true
+description = "Locates configuration, checks current values, and gives verifiable setup steps."
+
+[webui_help_skill_troubleshoot]
+display_name = "Troubleshooting workflow"
+advanced = true
+description = "Uses observed errors and settings to narrow the cause and identify the next check."
+
+[webui_help_skill_plugin]
+display_name = "Plugin selection and operations workflow"
+advanced = true
+description = "Checks plugin compatibility and uses the appropriate tools for installation or configuration."
+
+[webui_help_skill_develop]
+display_name = "Plugin development workflow"
+advanced = true
+description = "Uses version-relevant SDK docs for a minimal implementation and verification path."
+
+[webui_ai_search_input]
+display_name = "WebUI Help Conversation Input"
+advanced = true
+description = "Formats the current question and prior answers as untrusted context for the WebUI help agent."
+
+[webui_ai_search_final]
+display_name = "WebUI AI Search Final Instruction"
+advanced = true
+description = "Asks the model to stop researching and return the final JSON when AI search runs out of tool rounds or the answer is not in the required format."
+
+[webui_ai_search_correction]
+display_name = "WebUI AI Search Correction Instruction"
+advanced = true
+description = "Asks the model to remove unsupported content and rewrite the final JSON when an AI search answer fails evidence validation."
+
+[webui_ai_search_evidence]
+display_name = "WebUI AI Search Evidence Message"
+advanced = true
+description = "Wraps read-only tool results from AI search as evidence messages usable in requests without tools."
+

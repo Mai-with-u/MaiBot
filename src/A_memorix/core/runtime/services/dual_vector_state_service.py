@@ -73,7 +73,10 @@ class MemoryDualVectorStateService(KernelServiceBase):
                 and str(manifest.get("generation_reason", "") or "") == "integrity_recovery"
             )
             if not empty_recovery_generation:
-                logger.warning("双池 ready manifest 缺少可校验 embedding 指纹，保持单池降级")
+                if current_fingerprint is None:
+                    logger.debug("当前 embedding 指纹尚不可用，双池校验等待模型探测")
+                else:
+                    logger.warning("双池 ready manifest 缺少可校验 embedding 指纹，保持单池降级")
                 return False
         if (
             current_fingerprint is not None

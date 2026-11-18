@@ -5,6 +5,7 @@
  * 本文件只声明 endpoint 与业务错误文案。请求失败时抛出 ApiError（throw 契约）。
  */
 import { backendApi } from '@/lib/http'
+import { scopeBotResourcePath } from '@/host/state'
 import type {
   EmojiDeleteResponse,
   EmojiDetailResponse,
@@ -113,16 +114,16 @@ export async function banEmoji(id: number): Promise<EmojiUpdateResponse> {
  */
 export function getEmojiThumbnailUrl(id: number, original: boolean = false): string {
   if (original) {
-    return `${API_BASE}/${id}/thumbnail?original=true`
+    return scopeBotResourcePath(`${API_BASE}/${id}/thumbnail?original=true`)
   }
-  return `${API_BASE}/${id}/thumbnail`
+  return scopeBotResourcePath(`${API_BASE}/${id}/thumbnail`)
 }
 
 /**
  * 获取表情包原图 URL
  */
 export function getEmojiOriginalUrl(id: number): string {
-  return `${API_BASE}/${id}/thumbnail?original=true`
+  return scopeBotResourcePath(`${API_BASE}/${id}/thumbnail?original=true`)
 }
 
 /**

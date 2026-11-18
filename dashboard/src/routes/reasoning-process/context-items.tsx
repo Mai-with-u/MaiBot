@@ -38,9 +38,16 @@ const STAGE_LABELS: Record<string, string> = {
   jargon_learner: '黑话抽取',
   jargon_learning_update: '黑话含义推断',
   llm_error: 'LLM 请求异常',
+  imported: '导入',
   planner: '规划器',
-  reply_effect_judge: '回复效果评估',
   replyer: '回复器',
+  replyer_creative: '超级创意回复',
+  replyer_translation: '超级创意翻译',
+  reply_supplement: '回复补充',
+  memory_retrieval: '记忆检索',
+  memory_heuristic: '记忆拉取',
+  memory_profile: '人物画像',
+  memory_image: '图片记忆',
   timing_gate: '时机判断',
 }
 
@@ -266,7 +273,7 @@ function getContextItemContentBlocks(item: ContextItemSnapshot): ContextItemCont
   return blocks
 }
 
-function ContextItemImagePreview({ image, index }: { image: ContextItemImage; index: number }) {
+export function ContextItemImagePreview({ image, index }: { image: ContextItemImage; index: number }) {
   const [src, setSrc] = useState('')
 
   useEffect(() => {

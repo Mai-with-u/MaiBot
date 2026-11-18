@@ -1,0 +1,101 @@
+"""外接 Agent 传话与状态工具。"""
+
+from typing import Any, Dict, List, Optional
+
+import asyncio
+import json
+import traceback
+
+from src.core.local_operator import build_scoped_user_id, normalize_operator_permissions
+from src.core.tooling import ToolAvailabilityContext, ToolExecutionContext, ToolExecutionResult, ToolInvocation, ToolSpec
+
+from . import messaging
+from .service import AgentService, agent_service
+
+CHAT_TOOLS = {"agent_talk", "agent_status"}
+
+
+def tool_specs() -> List[ToolSpec]:
+    definitions = [
+        ("agent_talk", "与独立 Agent 双向图文传话。普通聊天 target 留空；Agent 回信填写 agent_chats 返回的真实 session_id。回执表示入队并触发 Planner，不代表已经向 IM 发言。", {
+            "text": {"type": "string"}, "target": {"type": "string"},
+            "images": {"type": "array", "items": {"type": "string"}, "description": "普通聊天填写当前带图消息 ID 或图片 hash；Agent 填工作目录图片路径。"},
+        }, ["text"]),
+        ("agent_status", "查看 Agent 后端及运行状态。", {}, []),
+        ("agent_chats", "列出已加载的真实聊天流及其名称和最近活跃时间。", {}, []),
+        ("agent_recent", "读取真实聊天流历史，limit 默认 20，0 为全部。", {
+            "target": {"type": "string"}, "limit": {"type": "integer", "minimum": 0, "default": 20},
+        }, ["target"]),
+    ]
+    return [ToolSpec(name=name, description=description, provider_name="agent", provider_type="builtin",
+                     parameters_schema={"type": "object", "properties": properties, "required": required,
+                                        "additionalProperties": False}, metadata={"visibility": "deferred"})
+            for name, description, properties, required in definitions]
+
+
+class AgentToolProvider:
+    provider_name = "agent"
+    provider_type = "builtin"
+
+    def __init__(self, service: AgentService = agent_service) -> None:
+        self.service = service
+
+    def _allowed_chat(self, context: Optional[ToolAvailabilityContext | ToolExecutionContext]) -> bool:
+        """按聊天类型检查白名单，Agent 自身会话始终放行。"""
+        if context is not None and context.session_id and context.session_id == self.service.agent_id:
+            return True
+        users, groups = self.service.config.allow_users, self.service.config.allow_groups
+        if not users and not groups:
+            return True
+        if context is None:
+            return False
+        if context.is_group_chat or context.group_id:
+            target = build_scoped_user_id(context.platform, context.group_id)
+            return bool(target) and target in normalize_operator_permissions(groups)
+        target = build_scoped_user_id(context.platform, context.user_id)
+        return bool(target) and target in normalize_operator_permissions(users)
+
+    async def list_tools(self, context: Optional[ToolAvailabilityContext] = None) -> List[ToolSpec]:
+        if not self.service.config.enabled:
+            return []
+        if not self._allowed_chat(context):
+            return []
+        trusted = context is not None and context.session_id == self.service.agent_id
+        tools = []
+        for spec in tool_specs():
+            if not trusted and spec.name not in CHAT_TOOLS:
+                continue
+            if trusted:
+                spec.metadata["visibility"] = "visible"
+            tools.append(spec)
+        return tools
+
+    async def invoke(self, invocation: ToolInvocation, context: Optional[ToolExecutionContext] = None) -> ToolExecutionResult:
+        try:
+            if context is None:
+                raise PermissionError("Agent 工具需要可信执行上下文。")
+            if not self._allowed_chat(context):
+                raise PermissionError("当前聊天没有指挥外接 Agent 的权限。")
+            self.service.require_agent()
+            name, args = invocation.tool_name, invocation.arguments
+            if name not in CHAT_TOOLS:
+                self.service.require_owner(context.session_id)
+            result: Dict[str, Any]
+            if name == "agent_talk":
+                result = await messaging.tell(self.service, context.session_id, args["text"], args.get("target", ""), args.get("images", []))
+            elif name == "agent_status":
+                result = self.service.status()
+            elif name == "agent_chats":
+                result = {"chats": messaging.chats()}
+            elif name == "agent_recent":
+                result = await messaging.recent(args["target"], args.get("limit", 20))
+            else:
+                raise ValueError(f"未知 Agent 工具：{name}")
+            return ToolExecutionResult(tool_name=name, success=result.get("success", True),
+                                       content=await asyncio.to_thread(json.dumps, result, ensure_ascii=False),
+                                       structured_content=result, error_message=result.get("error", ""))
+        except (OSError, RuntimeError, ValueError, KeyError):
+            return ToolExecutionResult(tool_name=invocation.tool_name, success=False, error_message=traceback.format_exc())
+
+    async def close(self) -> None:
+        """关闭普通聊天不结束独立 Agent。"""

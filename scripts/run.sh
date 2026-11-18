@@ -135,18 +135,6 @@ BRANCH=${BRANCH}
 EOF
 }
 
-compute_md5() {
-    local file_path="$1"
-
-    if command -v md5sum &>/dev/null; then
-        md5sum "$file_path" | awk '{print $1}'
-    elif command -v md5 &>/dev/null; then
-        md5 -q "$file_path"
-    else
-        return 1
-    fi
-}
-
 launchd_label_for_service() {
     local service="$1"
     case "$service" in
@@ -425,49 +413,7 @@ switch_branch() {
 
     BRANCH="${new_branch}"
     save_install_info
-    check_eula
     whiptail --msgbox "✅ 已停止服务并切换到分支 ${new_branch} ！" 10 60
-}
-
-check_eula() {
-    # 首先计算当前EULA的MD5值
-    current_md5=$(compute_md5 "${INSTALL_DIR}/MaiBot/EULA.md")
-
-    # 首先计算当前隐私条款文件的哈希值
-    current_md5_privacy=$(compute_md5 "${INSTALL_DIR}/MaiBot/PRIVACY.md")
-
-    # 如果当前的md5值为空，则直接返回
-    if [[ -z $current_md5 || -z $current_md5_privacy ]]; then
-        whiptail --msgbox "🚫 未找到使用协议\n 请检查PRIVACY.md和EULA.md是否存在" 10 60
-    fi
-
-    # 检查eula.confirmed文件是否存在
-    if [[ -f ${INSTALL_DIR}/MaiBot/eula.confirmed ]]; then
-        # 如果存在则检查其中包含的md5与current_md5是否一致
-        confirmed_md5=$(cat "${INSTALL_DIR}/MaiBot/eula.confirmed")
-    else
-        confirmed_md5=""
-    fi
-
-    # 检查privacy.confirmed文件是否存在
-    if [[ -f ${INSTALL_DIR}/MaiBot/privacy.confirmed ]]; then
-        # 如果存在则检查其中包含的md5与current_md5是否一致
-        confirmed_md5_privacy=$(cat "${INSTALL_DIR}/MaiBot/privacy.confirmed")
-    else
-        confirmed_md5_privacy=""
-    fi
-
-    # 如果EULA或隐私条款有更新，提示用户重新确认
-    if [[ $current_md5 != $confirmed_md5 || $current_md5_privacy != $confirmed_md5_privacy ]]; then
-        whiptail --title "📜 使用协议更新" --yesno "检测到MaiCore EULA或隐私条款已更新。\nhttps://github.com/MaiM-with-u/MaiBot/blob/refactor/EULA.md\nhttps://github.com/MaiM-with-u/MaiBot/blob/refactor/PRIVACY.md\n\n您是否同意上述协议？ \n\n " 12 70
-        if [[ $? -eq 0 ]]; then
-            echo -n "$current_md5" > "${INSTALL_DIR}/MaiBot/eula.confirmed"
-            echo -n "$current_md5_privacy" > "${INSTALL_DIR}/MaiBot/privacy.confirmed"
-        else
-            exit 1
-        fi
-    fi
-
 }
 
 # 测速并选择PyPI源（仅当阿里云更快时使用阿里云）
@@ -593,13 +539,8 @@ run_installation() {
 
     whiptail --title "ℹ️ 提示" --msgbox "如果您没有特殊需求，请优先使用docker方式部署。" 10 60
 
-    # 协议确认
-    if ! (whiptail --title "ℹ️ [1/6] 使用协议" --yes-button "我同意" --no-button "我拒绝" --yesno "使用MaiCore及此脚本前请先阅读EULA协议及隐私协议\nhttps://github.com/MaiM-with-u/MaiBot/blob/refactor/EULA.md\nhttps://github.com/MaiM-with-u/MaiBot/blob/refactor/PRIVACY.md\n\n您是否同意上述协议？" 12 70); then
-        exit 1
-    fi
-
     # 欢迎信息
-    whiptail --title "[2/6] 欢迎使用MaiCore一键安装脚本 by Cookie987" --msgbox "检测到您未安装MaiCore，将自动进入安装流程，安装完成后再次运行此脚本即可进入管理菜单。\n\n项目处于活跃开发阶段，代码可能随时更改\n文档未完善，有问题可以提交 Issue 或者 Discussion\nQQ机器人存在被限制风险，请自行了解，谨慎使用\n由于持续迭代，可能存在一些已知或未知的bug\n由于开发中，可能消耗较多token\n\n本脚本可能更新不及时，如遇到bug请优先尝试手动部署以确定是否为脚本问题" 17 60
+    whiptail --title "[1/5] 欢迎使用MaiCore一键安装脚本 by Cookie987" --msgbox "检测到您未安装MaiCore，将自动进入安装流程，安装完成后再次运行此脚本即可进入管理菜单。\n\n项目处于活跃开发阶段，代码可能随时更改\n文档未完善，有问题可以提交 Issue 或者 Discussion\nQQ机器人存在被限制风险，请自行了解，谨慎使用\n由于持续迭代，可能存在一些已知或未知的bug\n由于开发中，可能消耗较多token\n\n本脚本可能更新不及时，如遇到bug请优先尝试手动部署以确定是否为脚本问题" 17 60
 
     # 系统检查
     check_system() {
@@ -699,7 +640,7 @@ run_installation() {
         done
 
         if [[ ${#missing_packages[@]} -gt 0 ]]; then
-            whiptail --title "📦 [3/6] 依赖检查" --yesno "以下软件包缺失:\n${missing_packages[*]}\n\n是否自动安装？" 10 60
+            whiptail --title "📦 [2/5] 依赖检查" --yesno "以下软件包缺失:\n${missing_packages[*]}\n\n是否自动安装？" 10 60
             if [[ $? -eq 0 ]]; then
                 IS_INSTALL_DEPENDENCIES=true
             else
@@ -712,7 +653,7 @@ run_installation() {
     # 安装NapCat
     install_napcat() {
         [[ $NAPCAT_INSTALLED == true ]] && return
-        whiptail --title "📦 [3/6] 软件包检查" --yesno "检测到未安装NapCat，是否安装？\n如果您想使用远程NapCat，请跳过此步。" 10 60 && {
+        whiptail --title "📦 [2/5] 软件包检查" --yesno "检测到未安装NapCat，是否安装？\n如果您想使用远程NapCat，请跳过此步。" 10 60 && {
             IS_INSTALL_NAPCAT=true
         }
     }
@@ -728,7 +669,7 @@ run_installation() {
     check_python() {
         PYTHON_VERSION=$(python3 -c 'import sys; print(f"{sys.version_info.major}.{sys.version_info.minor}")')
         if ! python3 -c "import sys; exit(0) if sys.version_info >= (3,10) else exit(1)"; then
-            whiptail --title "⚠️ [4/6] Python 版本过低" --msgbox "检测到 Python 版本为 $PYTHON_VERSION，需要 3.10 或以上！\n请升级 Python 后重新运行本脚本。" 10 60
+            whiptail --title "⚠️ [3/5] Python 版本过低" --msgbox "检测到 Python 版本为 $PYTHON_VERSION，需要 3.10 或以上！\n请升级 Python 后重新运行本脚本。" 10 60
             exit 1
         fi
     }
@@ -769,7 +710,7 @@ run_installation() {
 
     # 选择安装路径
     choose_install_dir() {
-        INSTALL_DIR=$(whiptail --title "📂 [6/6] 选择安装路径" --inputbox "请输入MaiCore的安装目录：" 10 60 "$DEFAULT_INSTALL_DIR" 3>&1 1>&2 2>&3)
+        INSTALL_DIR=$(whiptail --title "📂 [5/5] 选择安装路径" --inputbox "请输入MaiCore的安装目录：" 10 60 "$DEFAULT_INSTALL_DIR" 3>&1 1>&2 2>&3)
         [[ -z "$INSTALL_DIR" ]] && {
             whiptail --title "⚠️ 取消输入" --yesno "未输入安装路径，是否退出安装？" 10 60 && exit 1
             INSTALL_DIR="$DEFAULT_INSTALL_DIR"
@@ -863,17 +804,6 @@ run_installation() {
     uv pip install "${UV_PIP_INDEX_OPTION[@]}" -r requirements.txt
     cd ..
 
-    echo -e "${GREEN}同意协议...${RESET}"
-
-    # 首先计算当前EULA的MD5值
-    current_md5=$(compute_md5 "MaiBot/EULA.md")
-
-    # 首先计算当前隐私条款文件的哈希值
-    current_md5_privacy=$(compute_md5 "MaiBot/PRIVACY.md")
-
-    echo -n "$current_md5" > MaiBot/eula.confirmed
-    echo -n "$current_md5_privacy" > MaiBot/privacy.confirmed
-
     if [[ "$IS_MACOS" == true ]]; then
         echo -e "${GREEN}创建 launchctl 服务...${RESET}"
         create_launchd_services
@@ -957,7 +887,6 @@ fi
 # 如果已安装显示菜单，并检查协议是否更新
 if check_installed; then
     load_install_info
-    check_eula
     show_menu
 else
     run_installation

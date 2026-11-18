@@ -28,6 +28,9 @@ ENV_TRUSTED_PLUGIN_DIRS = "MAIBOT_TRUSTED_PLUGIN_DIRS"
 ENV_HOST_VERSION = "MAIBOT_HOST_VERSION"
 """Runner 读取的 Host 应用版本号，用于 manifest 兼容性校验"""
 
+ENV_HOST_PID = "MAIBOT_HOST_PID"
+"""MaiBot Host 进程 PID；独立插件服务可据此绑定主程序生命周期，而非 Runner 重载周期。"""
+
 ENV_FORCE_PLUGIN_COMPATIBILITY = "MAIBOT_FORCE_PLUGIN_COMPATIBILITY"
 """Runner 是否跳过插件 Host / SDK 版本范围校验；值为 ``1`` 表示开启"""
 

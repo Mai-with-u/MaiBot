@@ -1,0 +1,4 @@
+[planner_action_judge]
+display_name = "行動判定"
+advanced = true
+description = "明示的な行動がない計画出力から次の行動を判定する。通常モードと Focus で共用する。"

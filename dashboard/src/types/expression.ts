@@ -21,10 +21,15 @@ export interface Expression {
  * 聊天信息
  */
 export interface ChatInfo {
+  /** 缺少聊天流或账号归属信息的历史记录。 */
+  is_legacy?: boolean
+  /** 归属信息完整，但不属于当前实例有效账号。 */
+  is_other_account?: boolean
   chat_id: string
   chat_name: string
   platform: string | null
   account_id?: string | null
+  target_id?: string | null
   is_group: boolean
   use_expression: boolean
   enable_learning: boolean
@@ -41,6 +46,8 @@ export interface ChatListResponse {
 }
 
 export interface ExpressionGroupInfo {
+  id: string
+  color: string
   index: number
   name: string
   chat_ids: string[]
@@ -124,42 +131,6 @@ export interface ExpressionClearResponse {
   deleted_count: number
 }
 
-export interface LegacyExpressionGroupPreview {
-  old_chat_id: string
-  expression_count: number
-  platform: string | null
-  target_id: string | null
-  chat_type: 'group' | 'private' | null
-  matched_session_id: string | null
-  matched_chat_name: string | null
-  matched: boolean
-  matched_sessions: LegacyExpressionMatchOption[]
-}
-
-export interface LegacyExpressionMatchOption {
-  session_id: string
-  chat_name: string
-  account_id?: string | null
-}
-
-export interface LegacyExpressionImportPreviewResponse {
-  success: boolean
-  db_path: string
-  total_count: number
-  matched_count: number
-  unmatched_count: number
-  groups: LegacyExpressionGroupPreview[]
-}
-
-export interface LegacyExpressionImportResponse {
-  success: boolean
-  message: string
-  imported_count: number
-  skipped_count: number
-  failed_count: number
-  ignored_group_count: number
-}
-
 /**
  * 表达方式列表响应
  */
@@ -185,7 +156,8 @@ export interface ExpressionDetailResponse {
 export interface ExpressionCreateRequest {
   situation: string
   style: string
-  chat_id: string
+  chat_id?: string
+  is_global?: boolean
 }
 
 /**

@@ -3,7 +3,7 @@
 from datetime import datetime
 from typing import Optional
 
-from fastapi import APIRouter, Depends, HTTPException, Response
+from fastapi import APIRouter, HTTPException, Response
 from pydantic import BaseModel
 
 from src.platform_io import DriverKind, get_platform_io_manager
@@ -11,9 +11,8 @@ from src.services.bot_account_service import (
     bot_account_service,
     normalize_platform,
 )
-from src.webui.dependencies import require_auth
 
-router = APIRouter(prefix="/bot-accounts", tags=["Bot Accounts"], dependencies=[Depends(require_auth)])
+router = APIRouter(prefix="/bot-accounts", tags=["Bot Accounts"])
 
 
 class BotPlatformAccountItem(BaseModel):

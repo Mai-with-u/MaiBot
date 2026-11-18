@@ -19,7 +19,7 @@ export function ConversationTransition({
   const direction = mode === 'observe' ? 1 : -1
   return (
     <div className="relative flex min-h-0 min-w-0 flex-1 overflow-hidden" data-conversation-transition="true">
-      <AnimatePresence initial={false} mode="wait" custom={direction}>
+      <AnimatePresence initial={false} mode="sync" custom={direction}>
         <ConversationTransitionPage key={mode} direction={direction} reducedMotion={!!reducedMotion}>
           {children}
         </ConversationTransitionPage>
@@ -36,16 +36,15 @@ function ConversationTransitionPage({ children, direction, reducedMotion }: {
   const present = useIsPresent()
   return (
     <motion.div
-      className="flex min-h-0 min-w-0 w-full flex-1 flex-col"
+      className="absolute inset-0 flex min-h-0 min-w-0 flex-col"
       inert={!present}
-      initial={reducedMotion ? false : { opacity: 0, x: direction * 24, y: 4, scale: 0.992 }}
-      animate={{ opacity: 1, x: 0, y: 0, scale: 1, transition: { duration: reducedMotion ? 0 : 0.26, ease: [0.22, 1, 0.36, 1] } }}
+      initial={reducedMotion ? false : { opacity: 0, x: direction * 24 }}
+      animate={{ opacity: 1, x: 0, transition: { duration: reducedMotion ? 0 : 0.18, ease: [0.22, 1, 0.36, 1] } }}
       exit="leave"
       variants={{
         leave: (nextDirection: number) => ({
           opacity: 0,
           x: reducedMotion ? 0 : -nextDirection * 12,
-          scale: reducedMotion ? 1 : 0.996,
           transition: { duration: reducedMotion ? 0 : 0.1, ease: 'easeIn' },
         }),
       }}
@@ -110,7 +109,7 @@ export function ConversationListItem({
             <strong>{title}</strong>
             {!actions && status}
           </span>
-          <span data-conversation-item-preview="true">{preview}</span>
+          {preview && <span data-conversation-item-preview="true">{preview}</span>}
         </span>
       </button>
       {actions && (

@@ -1,19 +1,24 @@
 """主程序自更新。
 
-Worker（WebUI）只负责检查更新与登记更新请求；真正改动代码与依赖的步骤由 Runner 在
-两次 Worker 之间执行。此时没有业务进程占用文件，失败时也能在新代码运行前回滚。
+宿主负责检查更新与登记请求，停止所有 Bot 并退出后，由独立更新进程执行。
+此时没有业务进程占用文件，失败时也能在新代码运行前回滚。
 
-本模块会被 Runner 加载，只能依赖标准库。
+本模块会被 宿主更新进程 加载，只能依赖标准库。
 """
 
+from concurrent.futures import FIRST_COMPLETED, ThreadPoolExecutor, wait
 from dataclasses import asdict, dataclass, field
 from pathlib import Path
-from typing import Any, Dict, List, Optional, Set, Tuple
+from tempfile import TemporaryDirectory
+from threading import Lock
+from typing import Any, Callable, Dict, List, Optional, Set, Tuple
 from urllib.parse import quote
+from urllib.request import Request, urlopen
 
 import base64
 import importlib.util
 import json
+import logging
 import os
 import re
 import shutil
@@ -46,7 +51,7 @@ OFFICIAL_REPOSITORY_PATH = "Mai-with-u/MaiBot"
 OFFICIAL_REPOSITORY_URL = f"https://github.com/{OFFICIAL_REPOSITORY_PATH}.git"
 OFFICIAL_SOURCE_ID = "github"
 SUPPORTED_BRANCHES: Tuple[str, ...] = ("main", "dev")
-DEPENDENCY_FILES = frozenset({"pyproject.toml", "uv.lock", "requirements.txt"})
+DEPENDENCY_FILES = frozenset({"pyproject.toml", "requirements.txt"})
 
 PENDING_MAX_AGE_SECONDS = 600.0
 GIT_TIMEOUT_SECONDS = 120.0
@@ -62,8 +67,9 @@ _GIT_STALL_OPTIONS = ("-c", "http.lowSpeedLimit=1000", "-c", "http.lowSpeedTime=
 _COMMIT_FIELD_SEPARATOR = "\x1f"
 
 BLOCKER_MESSAGES: Dict[str, str] = {
+    "host_managed": "主程序由宿主统一更新，Bot 内不能直接更新",
     "uv_missing": "未找到 uv，请将 uv 加入 MaiBot 启动环境的 PATH",
-    "not_uv_tool": "当前不是 PyPI 来源的 uv tool 安装，请使用原安装工具更新",
+    "not_uv_tool": "当前安装不符合自动更新条件，请使用原安装方式更新",
     "package_runner_missing": "请通过 maibot run 启动，才能自动更新并重启",
     "other_instances_running": "同一工具环境还有其他实例运行，请先停止它们再更新",
     "package_busy": "工具环境正在更新，请稍后重试",
@@ -89,6 +95,12 @@ class LocalState:
     dirty_files: List[str] = field(default_factory=list)
     dependency_tool: Optional[str] = None
     deployment_type: str = "git"
+    blocker_message: Optional[str] = None  # 环境检查返回的具体原因及处理方式
+
+    def get_blocker_message(self, code: str) -> str:
+        if code == self.blocker and self.blocker_message is not None:
+            return self.blocker_message
+        return BLOCKER_MESSAGES[code]
 
 
 @dataclass
@@ -135,7 +147,7 @@ class UpdateCheck:
 
 @dataclass
 class PendingUpdate:
-    """Worker 登记、等待 Runner 执行的更新请求。"""
+    """Worker 登记、等待 宿主更新进程 执行的更新请求。"""
 
     target_commit: str
     base_commit: str
@@ -147,7 +159,7 @@ class PendingUpdate:
 
 @dataclass
 class UpdateResult:
-    """Runner 执行一次更新后的结果，供 WebUI 展示。"""
+    """宿主更新进程 执行一次更新后的结果，供 WebUI 展示。"""
 
     success: bool
     started_at: float
@@ -205,6 +217,16 @@ def _run_command(command: List[str], root: Path, timeout: float) -> "subprocess.
     )
 
 
+def _timeout_output(exc: subprocess.TimeoutExpired) -> str:
+    """TimeoutExpired 即使启用 text 也可能携带 bytes，保留命令超时前的诊断输出。"""
+    parts: List[str] = []
+    for label, output in (("标准输出", exc.stdout), ("错误输出", exc.stderr)):
+        if output:
+            text = output.decode("utf-8", errors="replace") if isinstance(output, bytes) else output
+            parts.append(f"{label}（末尾最多 4000 字符）：\n{text[-4000:].strip()}")
+    return "\n".join(parts) if parts else "命令超时前没有输出。"
+
+
 def _git(root: Path, *args: str, timeout: float = GIT_TIMEOUT_SECONDS) -> str:
     """执行必须成功的 Git 命令，返回未裁剪的标准输出。"""
 
@@ -212,7 +234,9 @@ def _git(root: Path, *args: str, timeout: float = GIT_TIMEOUT_SECONDS) -> str:
     try:
         result = _run_command(["git", *args], root, timeout)
     except subprocess.TimeoutExpired as exc:
-        raise SelfUpdateError("git_timeout", f"Git 命令超时: {command_text}") from exc
+        raise SelfUpdateError(
+            "git_timeout", f"Git 命令超时（{timeout:g} 秒）: {command_text}\n{_timeout_output(exc)}",
+        ) from exc
     if result.returncode != 0:
         output = result.stderr.strip() or result.stdout.strip()
         raise SelfUpdateError("git_failed", f"Git 命令失败: {command_text}\n{output}")
@@ -272,15 +296,60 @@ def _dependency_command(tool: str) -> List[str]:
     return [sys.executable, "-m", "pip", "install", "--disable-pip-version-check", "-r", "requirements.txt"]
 
 
-def _sync_dependencies(root: Path, tool: str) -> None:
+def _failed_dependency_index(root: Path, output: str) -> Optional[Dict[str, Any]]:
+    """只排除能从网络错误明确定位到的命名索引，不猜测下载 CDN 或依赖冲突的归属。"""
+    if not re.search(
+        r"operation timed out|connection (?:reset|refused|closed)|dns error|"
+        r"failed to lookup address|network is unreachable|connection timed out",
+        output, re.IGNORECASE,
+    ):
+        return None
+    failed = re.search(r"Failed to fetch:\s*`(https?://[^`]+)`", output)
+    if failed is None:
+        return None
+    config_path = root / "uv.toml"
+    if config_path.is_file():
+        config = tomllib.loads(config_path.read_text(encoding="utf-8"))
+    else:
+        config = tomllib.loads((root / "pyproject.toml").read_text(encoding="utf-8")).get("tool", {}).get("uv", {})
+    for index in config.get("index", []):
+        name, url = index.get("name"), index.get("url", "")
+        if name and url and failed.group(1).startswith(url.rstrip("/") + "/"):
+            return index
+    return None
+
+
+def _sync_dependencies(root: Path, tool: str, logger: Any = None) -> None:
     command = _dependency_command(tool)
-    try:
-        result = _run_command(command, root, DEPENDENCY_TIMEOUT_SECONDS)
-    except subprocess.TimeoutExpired as exc:
-        raise SelfUpdateError("dependency_timeout", f"依赖同步超时: {' '.join(command)}") from exc
-    if result.returncode != 0:
-        output = (result.stderr.strip() or result.stdout.strip())[-4000:]
-        raise SelfUpdateError("dependency_failed", f"依赖同步失败: {' '.join(command)}\n{output}")
+    excluded: Set[str] = set()
+    deadline = time.monotonic() + DEPENDENCY_TIMEOUT_SECONDS
+    logger = logger if logger is not None else logging.getLogger(__name__)
+    # uv 没有排除单个索引的开关。用同名的空本地索引覆盖故障源，保留其余配置、
+    # 选版本策略及 sources 的显式绑定；不修改 pyproject，也不把绑定包切到别的源。
+    with TemporaryDirectory(prefix="maibot-update-index-") as empty_index:
+        while True:
+            remaining = deadline - time.monotonic()
+            try:
+                if remaining <= 0:
+                    raise subprocess.TimeoutExpired(command, DEPENDENCY_TIMEOUT_SECONDS)
+                result = _run_command(command, root, remaining)
+            except subprocess.TimeoutExpired as exc:
+                raise SelfUpdateError(
+                    "dependency_timeout",
+                    f"依赖同步超时（{DEPENDENCY_TIMEOUT_SECONDS:g} 秒）: {' '.join(command)}\n{_timeout_output(exc)}",
+                ) from exc
+            if result.returncode == 0:
+                return
+            output = result.stderr.strip() or result.stdout.strip()
+            index = _failed_dependency_index(root, output) if tool == "uv" else None
+            if index is None or index["name"] in excluded:
+                detail = f"\n本次已临时排除故障源：{', '.join(sorted(excluded))}" if excluded else ""
+                raise SelfUpdateError("dependency_failed", f"依赖同步失败: {' '.join(command)}\n{output[-4000:]}{detail}")
+            name = index["name"]
+            excluded.add(name)
+            logger.warning(f"自更新：依赖源 {name} 网络故障，本次临时排除后重试；保留原版本约束和选版本策略")
+            option = "--default-index" if index.get("default", False) else "--index"
+            command.extend([option, f"{name}={Path(empty_index).as_uri()}"])
 
 
 def inspect_local(root: Path = PROJECT_ROOT) -> LocalState:
@@ -293,6 +362,7 @@ def inspect_local(root: Path = PROJECT_ROOT) -> LocalState:
             ensure_other_instances_stopped(environment, root)
         except SelfUpdateError as exc:
             state.blocker = exc.code
+            state.blocker_message = exc.message
         return state
     version, _ = _parse_pyproject((root / "pyproject.toml").read_text(encoding="utf-8"))
     state = LocalState(version=version, dependency_tool=detect_dependency_tool(root))
@@ -391,36 +461,77 @@ def _fetch_branch_head(
     return _git(root, "rev-parse", "FETCH_HEAD^{commit}").strip(), source
 
 
-def _get_update_json(path: str) -> Dict[str, Any]:
-    """只读官方 API；沿用 urllib 的环境/系统代理，不依赖 Git 配置。"""
+def _get_update_json(path: str, api_source: str, deadline: float) -> Dict[str, Any]:
+    """读取选定的公开元数据接口，每次请求共用整轮检查的截止时间。"""
+    remaining = deadline - time.monotonic()
+    if remaining <= 0:
+        raise SelfUpdateError("fetch_failed", "检查更新超时（60 秒）")
+    if api_source == "cnb":
+        url = f"https://cnb.cool/Mai-with-u/maibot/-/git/{path}"
+    else:
+        url = GitSource.select("github").api_url("Mai-with-u", "MaiBot", path)
     try:
-        source = GitSource.select("github")
-        return source.read_json(source.api_url("Mai-with-u", "MaiBot", path), timeout=5)
+        # CNB 需要明确的 JSON Accept，避免返回网页 HTML。
+        request = Request(url, headers={"Accept": "application/json", "User-Agent": "MaiBot"})
+        with urlopen(request, timeout=remaining) as response:
+            payload = json.load(response)
+        if not isinstance(payload, dict):
+            raise ValueError("API 响应不是对象")
+        return payload
     except (OSError, ValueError) as exc:
-        raise SelfUpdateError("fetch_failed", f"GitHub API 检查更新失败：{exc}") from exc
+        raise SelfUpdateError(
+            "fetch_failed", f"请求 {url} 失败（本次请求超时上限 {remaining:.1f} 秒）：{type(exc).__name__}: {exc}",
+        ) from exc
 
 
-def _check_source_api(local: LocalState, root: Path, source: UpdateSource) -> UpdateCheck:
-    """检查只获取元数据；CNB 匿名 API 不可用，下载镜像与官方检查源分离。"""
+def _check_source_api(
+    local: LocalState, root: Path, source: UpdateSource, api_source: str, deadline: float,
+    on_progress: Optional[Callable[[str], None]] = None,
+) -> UpdateCheck:
+    """从单个信息源获取完整检查结果，下载源仍由用户选择。"""
+    started = time.monotonic()
+    stage = "读取分支信息"
+
+    def report(message: str) -> None:
+        nonlocal stage
+        stage = message
+        if on_progress is not None:
+            on_progress(message)
+
+    def read(path: str) -> Dict[str, Any]:
+        return _get_update_json(path, api_source, deadline)
+
     if local.branch is None or local.commit is None:
         raise ValueError("本地仓库状态缺少当前分支或提交")
     try:
-        branch = _get_update_json(f"branches/{quote(local.branch, safe='')}")
+        report(f"读取 {local.branch} 分支信息")
+        branch = read(f"branches/{quote(local.branch, safe='')}")
         target = branch["commit"]["sha"]
         if not isinstance(target, str) or _COMMIT_PATTERN.fullmatch(target) is None:
             raise ValueError("无效的远端提交 SHA")
-        check = UpdateCheck(local=local, checked_at=time.time(), latest_commit=target, source=source)
+        check = UpdateCheck(
+            local=local, checked_at=time.time(), latest_commit=target,
+            source=UpdateSource(source.id, f"{source.name}（版本检查：{api_source}）", source.url),
+        )
         if local.dirty_files:
             check.blockers.append("dirty_worktree")
         if target == local.commit:
             check.latest_version = local.version
             return check
-        comparison = _get_update_json(f"compare/{local.commit}...{target}?per_page=100")
-        check.behind = int(comparison["ahead_by"])
-        check.ahead = int(comparison["behind_by"])
+        report("比较本地与远端提交")
+        comparison = read(f"compare/{local.commit}...{target}?per_page=100")
+        if api_source == "cnb":
+            check.behind = int(comparison["total_commits"])
+            # CNB 没有 behind_by；只有分叉或本地领先时才反向比较。
+            if comparison["merge_base_commit"]["sha"] != local.commit:
+                report("检查分支是否分叉")
+                check.ahead = int(read(f"compare/{target}...{local.commit}")["total_commits"])
+        else:
+            check.behind = int(comparison["ahead_by"])
+            check.ahead = int(comparison["behind_by"])
         if check.ahead:
             check.blockers.append("diverged")
-        changed = {item["filename"] for item in comparison["files"]}
+        changed = {item["path" if api_source == "cnb" else "filename"] for item in comparison["files"]}
         check.dependencies_changed = bool(DEPENDENCY_FILES & changed)
         if check.dependencies_changed and local.dependency_tool is None:
             check.blockers.append("no_dependency_tool")
@@ -428,43 +539,99 @@ def _check_source_api(local: LocalState, root: Path, source: UpdateSource) -> Up
             UpdateCommit(item["sha"][:8], item["commit"]["message"].splitlines()[0], item["commit"]["committer"]["date"])
             for item in comparison["commits"][:MAX_LISTED_COMMITS]
         ]
-        contents = _get_update_json(f"contents/pyproject.toml?ref={target}")
-        project = base64.b64decode(contents["content"]).decode("utf-8")
+        report("读取远端版本与依赖要求")
+        if api_source == "cnb":
+            remaining = deadline - time.monotonic()
+            if remaining <= 0:
+                raise SelfUpdateError("fetch_failed", "检查更新超时（60 秒）")
+            url = GitSource.select("cnb").raw_url("Mai-with-u", "MaiBot", target, "pyproject.toml")
+            try:
+                project = GitSource.read_text(url, timeout=remaining)
+            except (OSError, ValueError) as exc:
+                raise SelfUpdateError("fetch_failed", f"请求 {url} 失败：{type(exc).__name__}: {exc}") from exc
+        else:
+            contents = read(f"contents/pyproject.toml?ref={target}")
+            project = base64.b64decode(contents["content"]).decode("utf-8")
         check.latest_version, requires_python = _parse_pyproject(project)
         if _parse_pyproject((root / "pyproject.toml").read_text(encoding="utf-8"))[1] != requires_python:
             check.blockers.append("python_requirement_changed")
         return check
-    except (KeyError, TypeError, ValueError) as exc:
-        raise SelfUpdateError("fetch_failed", f"更新 API 数据不完整：{exc}") from exc
+    except (SelfUpdateError, OSError, KeyError, TypeError, ValueError) as exc:
+        raise SelfUpdateError(
+            "fetch_failed",
+            f"{api_source} 检查失败（{stage}，已耗时 {time.monotonic() - started:.1f} 秒）：{type(exc).__name__}: {exc}",
+        ) from exc
 
 
 def check_for_update(
-    root: Path = PROJECT_ROOT, source_id: Optional[str] = None, custom_prefix: str = ""
+    root: Path = PROJECT_ROOT, source_id: Optional[str] = None, custom_prefix: str = "",
+    on_progress: Optional[Callable[[str], None]] = None,
 ) -> UpdateCheck:
     """联网检查官方仓库是否有新版本。"""
 
+    if on_progress is not None:
+        on_progress("检查本地安装与仓库状态")
     local = inspect_local(root)
     if local.blocker is not None:
         return UpdateCheck(local=local, blockers=[local.blocker])
     if local.deployment_type == "package":
         selected = source_id or "pypi"
         index = package_index(selected)
+        if on_progress is not None:
+            on_progress(f"{PACKAGE_INDEXES[selected][0]}：读取正式版本列表")
         check = evaluate_update(local, latest_release(local.version, selected), time.time(), root)
         check.source = UpdateSource(selected, PACKAGE_INDEXES[selected][0], index)
         return check
     if local.branch is None:
         raise ValueError("本地仓库状态缺少当前分支，无法检查更新")
     source = select_update_source(source_id or "github", custom_prefix)
-    source.name = f"{source.name}（版本检查：GitHub API）"
-    return _check_source_api(local, root, source)
+    # 两个源同时检查，失败的一路不掩盖另一路的有效结果；不等待慢源退出。
+    deadline = time.monotonic() + 60
+    executor = ThreadPoolExecutor(max_workers=2, thread_name_prefix="update-check")
+    progress = {name: "等待查询" for name in ("github", "cnb")}
+    progress_lock = Lock()
+
+    def report(name: str, message: str) -> None:
+        # 两路并行查询共享诊断快照，超时时保留失败原因和仍在等待的阶段。
+        with progress_lock:
+            progress[name] = message
+        if on_progress is not None:
+            on_progress(f"{name}：{message}")
+
+    def check_source(name: str) -> UpdateCheck:
+        try:
+            result = _check_source_api(local, root, source, name, deadline, lambda message: report(name, message))
+        except (SelfUpdateError, OSError, ValueError, KeyError, TypeError) as exc:
+            report(name, f"失败：{exc}")
+            raise
+        report(name, "检查完成")
+        return result
+
+    pending = {executor.submit(check_source, name) for name in progress}
+    errors: List[str] = []
+    try:
+        while pending:
+            done, pending = wait(pending, timeout=max(0, deadline - time.monotonic()), return_when=FIRST_COMPLETED)
+            if not done:
+                with progress_lock:
+                    details = "；".join(f"{name}：{message}" for name, message in progress.items())
+                raise SelfUpdateError("fetch_failed", f"检查更新超时（60 秒）。各源最后状态：{details}")
+            for future in done:
+                try:
+                    return future.result()
+                except (SelfUpdateError, OSError, ValueError, KeyError, TypeError) as exc:
+                    errors.append(str(exc))
+        raise SelfUpdateError("fetch_failed", "GitHub 和 CNB 检查均失败：" + "；".join(errors))
+    finally:
+        executor.shutdown(wait=False, cancel_futures=True)
 
 
 def request_update(
     expected_commit: str, root: Path = PROJECT_ROOT, source_id: Optional[str] = None, custom_prefix: str = ""
 ) -> PendingUpdate:
-    """登记更新请求，等待 Runner 在下次重启时执行。
+    """登记更新请求，等待 宿主更新进程 在下次重启时执行。
 
-    expected_commit 是用户在界面上确认过的目标提交；Runner 只会更新到这个提交。
+    expected_commit 是用户在界面上确认过的目标提交；宿主更新进程 只会更新到这个提交。
     """
 
     if PACKAGED_INSTALL:
@@ -472,7 +639,7 @@ def request_update(
         package_index(selected)
         local = inspect_local(root)
         if local.blocker:
-            raise SelfUpdateError(local.blocker, BLOCKER_MESSAGES[local.blocker])
+            raise SelfUpdateError(local.blocker, local.get_blocker_message(local.blocker))
         if version_tuple(expected_commit) <= version_tuple(local.version):
             raise SelfUpdateError("already_up_to_date", "目标版本必须高于当前版本")
         if not release_exists(fetch_releases(selected), expected_commit):
@@ -493,13 +660,13 @@ def request_update(
 
     local = inspect_local(root)
     if local.blocker is not None:
-        raise SelfUpdateError(local.blocker, BLOCKER_MESSAGES[local.blocker])
+        raise SelfUpdateError(local.blocker, local.get_blocker_message(local.blocker))
     if local.branch is None or local.commit is None:
         raise ValueError("本地仓库状态缺少当前分支或提交，无法登记更新")
     if expected_commit == local.commit:
         raise SelfUpdateError("already_up_to_date", "当前已经是这个版本")
 
-    # 用户确认更新后才拉取对象；Runner 重启后仍会重新验证来源与快进条件。
+    # 用户确认更新后才拉取对象；宿主更新进程 重启后仍会重新验证来源与快进条件。
     _fetch_branch_head(root, local.branch, selected, custom_prefix)
     object_check = _run_command(["git", "cat-file", "-e", f"{expected_commit}^{{commit}}"], root, GIT_TIMEOUT_SECONDS)
     if object_check.returncode != 0:
@@ -543,7 +710,7 @@ def _execute_update(pending: PendingUpdate, result: UpdateResult, logger: Any, r
         raise SelfUpdateError("request_expired", "更新请求已过期，请重新发起")
     local = inspect_local(root)
     if local.blocker is not None:
-        raise SelfUpdateError(local.blocker, BLOCKER_MESSAGES[local.blocker])
+        raise SelfUpdateError(local.blocker, local.get_blocker_message(local.blocker))
     if local.branch != pending.branch or local.commit != pending.base_commit:
         raise SelfUpdateError("state_changed", "登记更新之后本地仓库已发生变化，请重新检查更新")
     result.from_version = local.version
@@ -577,7 +744,7 @@ def _execute_update(pending: PendingUpdate, result: UpdateResult, logger: Any, r
         result.stage = "dependencies"
         logger.info(f"自更新：正在同步依赖（{local.dependency_tool}），可能需要几分钟")
         try:
-            _sync_dependencies(root, local.dependency_tool)
+            _sync_dependencies(root, local.dependency_tool, logger)
         except SelfUpdateError:
             _rollback(pending, local.dependency_tool, result, logger, root)
             raise
@@ -601,7 +768,7 @@ def _rollback(
         # precheck 已确认没有未提交的已跟踪改动，这里丢弃的只有本次更新写入的内容。
         _git(root, "reset", "--hard", pending.base_commit)
         if dependency_tool is not None:
-            _sync_dependencies(root, dependency_tool)
+            _sync_dependencies(root, dependency_tool, logger)
     except SelfUpdateError as exc:
         result.rollback_error = exc.message
         logger.error(f"自更新：回滚失败，请手动检查仓库与依赖状态: {exc.message}")
@@ -610,10 +777,10 @@ def _rollback(
 
 
 def apply_pending_update(logger: Any, root: Path = PROJECT_ROOT) -> Optional[UpdateResult]:
-    """由 Runner 在两次 Worker 之间调用：执行已登记的更新并记录结果。
+    """在没有任何进程使用程序时调用：执行已登记的更新并记录结果。
 
     没有待执行的请求时返回 None。无论成功与否，请求都只会被执行一次。
-    更新成功后，调用方应让新代码的 Runner 接手（见 process_runner.run_runner）。
+    更新成功后，调用方应以新代码重新启动进程。
     """
 
     pending_path = _pending_path(root)

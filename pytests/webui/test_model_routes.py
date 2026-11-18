@@ -30,16 +30,90 @@ def load_model_routes(monkeypatch: pytest.MonkeyPatch):
     config_module.__dict__["config_manager"] = DummyConfigManager()
     monkeypatch.setitem(sys.modules, "src.config.config", config_module)
 
-    dependencies_module = ModuleType("src.webui.dependencies")
-
-    async def require_auth():
-        return "test-token"
-
-    dependencies_module.__dict__["require_auth"] = require_auth
-    monkeypatch.setitem(sys.modules, "src.webui.dependencies", dependencies_module)
-
     sys.modules.pop("src.webui.routers.model", None)
     return importlib.import_module("src.webui.routers.model")
+
+
+@pytest.mark.asyncio
+@pytest.mark.parametrize("identifier", ["v2p1-raw", "mai_replier_v6", "mai_replier_v7", "mai_replier", "mai_replier_today"])
+@pytest.mark.parametrize("response, expected_success", [("我也想出去走走了", True), ("  ", False)])
+async def test_replyer_model_uses_chat_reply_instead_of_tools(
+    monkeypatch: pytest.MonkeyPatch, identifier: str, response: str, expected_success: bool
+) -> None:
+    """专用回复模型应使用真实回复模板，正文为空才判失败，不要求工具调用。"""
+    model_routes = load_model_routes(monkeypatch)
+    monkeypatch.setattr(model_routes, "_get_model_config", lambda name: {
+        "model_type": "llm", "model_identifier": identifier, "visual": True,
+    })
+    captured = {}
+
+    class FakeOrchestrator:
+        def __init__(self, model_name: str, *, replyer_test: bool = False) -> None:
+            captured["replyer_test"] = replyer_test
+
+        async def generate_response_with_context_async(self, **kwargs: Any):
+            captured.update(kwargs)
+            return model_routes.LLMResponseResult.from_portable_output(response=response, model_name="V麦回复")
+
+    monkeypatch.setattr(model_routes, "_SingleModelTestOrchestrator", FakeOrchestrator)
+    result = await model_routes.test_model_capability(model_routes.ModelTestRequest(model_name="V麦回复"))
+
+    assert result.success is expected_success
+    assert result.test_kind == "replyer"
+    assert result.visual_tested is False
+    assert result.tool_call_ok is False
+    assert captured["replyer_test"] is True
+    assert captured["tools"] is None
+    messages = captured["context_factory"](None)
+    from src.llm_models.payload_content.context_item import get_item_text
+
+    assert len(messages) == 2
+    assert "麦麦" in get_item_text(messages[0])
+    assert "散步" in get_item_text(messages[1])
+    assert "{" not in get_item_text(messages[1])
+    if not expected_success:
+        assert result.error == "模拟 replyer 任务未返回回复正文"
+
+
+@pytest.mark.asyncio
+async def test_replyer_provider_connection_runs_reply_task(monkeypatch: pytest.MonkeyPatch, tmp_path) -> None:
+    """提供商连接按钮也通过实际回复验证，优先使用 mai_replier，不走通用网络探测。"""
+    model_routes = load_model_routes(monkeypatch)
+    (tmp_path / "model_config.toml").write_text(
+        '''
+[[api_providers]]
+name = "renamed-provider"
+base_url = "https://openzako.ai/v1/"
+[[models]]
+name = "mai_replier_today"
+api_provider = "renamed-provider"
+model_identifier = "mai_replier_today"
+model_type = "llm"
+[[models]]
+name = "mai_replier"
+api_provider = "renamed-provider"
+model_identifier = "mai_replier"
+model_type = "llm"
+''', encoding="utf-8",
+    )
+    monkeypatch.setattr(model_routes, "CONFIG_DIR", str(tmp_path))
+
+    async def fake_model_test(request):
+        assert request.model_name == "mai_replier"
+        return model_routes.ModelTestResponse(
+            success=True, model_name=request.model_name, visual_tested=False,
+            tool_call_ok=False, test_kind="replyer", latency_ms=12.0,
+        )
+
+    async def unexpected_generic_test(**kwargs):
+        pytest.fail("麦麦特调回复不应执行通用连接测试")
+
+    monkeypatch.setattr(model_routes, "test_model_capability", fake_model_test)
+    monkeypatch.setattr(model_routes, "_test_provider_connection", unexpected_generic_test)
+    result = await model_routes.test_provider_connection_by_name(provider_name="renamed-provider")
+    assert result["network_ok"] is True
+    assert result["api_key_valid"] is True
+    assert result["latency_ms"] == 12.0
 
 
 class FakeResponse:
@@ -123,8 +197,10 @@ async def test_test_provider_connection_uses_query_api_key_for_gemini(
 
 
 @pytest.mark.asyncio
+@pytest.mark.parametrize("base_url", ["https://example.com/v1", "http://localhost:11434/v1", "http://192.168.1.10:8000/v1"])
 async def test_test_provider_connection_uses_bearer_auth_for_openai_compatible(
     monkeypatch: pytest.MonkeyPatch,
+    base_url: str,
 ) -> None:
     """非 Gemini 提供商连接测试应继续使用 Bearer 认证。"""
     model_routes = load_model_routes(monkeypatch)
@@ -136,7 +212,7 @@ async def test_test_provider_connection_uses_bearer_auth_for_openai_compatible(
     monkeypatch.setattr(model_routes.httpx, "AsyncClient", fake_client_class)
 
     result = await model_routes.test_provider_connection(
-        base_url="https://example.com/v1",
+        base_url=base_url,
         api_key="valid-openai-key",
         client_type="openai",
     )
@@ -147,10 +223,27 @@ async def test_test_provider_connection_uses_bearer_auth_for_openai_compatible(
 
     validation_call = calls[1]
 
-    assert validation_call["url"] == "https://example.com/v1/models"
+    assert validation_call["url"] == f"{base_url}/models"
     assert validation_call["params"] == {}
     assert validation_call["headers"]["Content-Type"] == "application/json"
     assert validation_call["headers"]["Authorization"] == "Bearer valid-openai-key"
+
+
+@pytest.mark.asyncio
+@pytest.mark.parametrize("api_key", ["", " "])
+@pytest.mark.parametrize("auth_type", ["bearer", "header", "query", "none"])
+async def test_empty_provider_key_fetches_models_without_authentication(monkeypatch, api_key, auth_type):
+    model_routes = load_model_routes(monkeypatch)
+    calls = []
+    response = SimpleNamespace(raise_for_status=lambda: None, json=lambda: {"data": [{"id": "local-model"}]})
+    monkeypatch.setattr(model_routes.httpx, "AsyncClient", build_async_client_factory([response], calls))
+    monkeypatch.setattr(model_routes, "_get_provider_config", lambda name: {
+        "name": name, "base_url": "http://localhost:11434/v1", "api_key": api_key, "auth_type": auth_type,
+    })
+    result = await model_routes.get_provider_models(provider_name="local", parser="openai", endpoint="/models")
+    assert result["models"][0]["id"] == "local-model"
+    assert calls[0]["headers"] == {}
+    assert calls[0]["params"] == {}
 
 
 @pytest.mark.asyncio
@@ -196,7 +289,6 @@ client_type = "gemini"
         "base_url": "https://generativelanguage.googleapis.com/v1beta",
         "api_key": "valid-gemini-key",
         "client_type": "gemini",
-        "allow_configured_private_network": True,
     }
 
 
@@ -213,6 +305,7 @@ async def test_test_model_capability_requires_tool_call_and_keeps_visual_flag(
 [[models]]
 name = "vision-model"
 model_identifier = "vision-model-id"
+model_type = "llm"
 api_provider = "Fake"
 visual = true
 """.strip(),
@@ -269,6 +362,7 @@ async def test_test_model_capability_tests_embedding_task_model_via_embedding(
 [[models]]
 name = "embed-model"
 model_identifier = "embed-model-id"
+model_type = "embedding"
 api_provider = "Fake"
 
 [model_task_config.embedding]
@@ -305,24 +399,15 @@ model_list = ["embed-model"]
 
 
 @pytest.mark.asyncio
-@pytest.mark.parametrize(
-    ("model_identifier", "image_task_config"),
-    [
-        ("Qwen/Qwen3-VL-Embedding-8B", ""),
-        ("custom-vector-model", '[model_task_config.image_embedding]\nmodel_list = ["my-vector"]'),
-    ],
-)
 async def test_test_model_capability_tests_visual_embedding_via_images(
     monkeypatch: pytest.MonkeyPatch,
     tmp_path,
-    model_identifier: str,
-    image_task_config: str,
 ) -> None:
-    """模型标识或图片嵌入任务应让模型测试发送图片，而非走对话或文本嵌入。"""
+    """model_type 为 image_embedding 的模型应发送图片测试，而非走对话或文本嵌入。"""
     model_routes = load_model_routes(monkeypatch)
     (tmp_path / "model_config.toml").write_text(
-        f'[[models]]\nname = "my-vector"\nmodel_identifier = "{model_identifier}"\n'
-        f'api_provider = "Fake"\n\n{image_task_config}',
+        '[[models]]\nname = "my-vector"\nmodel_identifier = "custom-vector-model"\n'
+        'model_type = "image_embedding"\napi_provider = "Fake"\n',
         encoding="utf-8",
     )
     monkeypatch.setattr(model_routes, "CONFIG_DIR", str(tmp_path))
@@ -368,6 +453,7 @@ async def test_test_model_capability_keeps_chat_test_for_non_embedding_model(
 [[models]]
 name = "chat-model"
 model_identifier = "chat-model-id"
+model_type = "llm"
 api_provider = "Fake"
 
 [model_task_config.embedding]

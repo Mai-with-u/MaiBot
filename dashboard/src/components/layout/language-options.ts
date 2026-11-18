@@ -1,4 +1,4 @@
-// 界面语言选项：顶栏语言菜单与手机端设置页共用
+// 界面语言选项：通用设置中的桌面端与手机端共用
 export const LANGUAGE_CODES = ['zh', 'en', 'ja', 'ko'] as const
 
 export type LanguageCode = (typeof LANGUAGE_CODES)[number]

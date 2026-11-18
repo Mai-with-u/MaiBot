@@ -13,6 +13,7 @@ import {
 } from '@/components/ui/dialog'
 import { Input } from '@/components/ui/input'
 import { Label } from '@/components/ui/label'
+import '@/styles/form-section.css'
 import {
   Select,
   SelectContent,
@@ -40,6 +41,17 @@ const ADAPTER_LABELS: Record<WebAdapter, string> = {
   deepseek: 'DeepSeek',
   tavily: 'Tavily',
   stepsearch_mcp: 'StepSearch MCP',
+  anysearch: 'AnySearch',
+  exa: 'Exa',
+  firecrawl: 'Firecrawl',
+}
+
+const HTTP_BASE_URLS: Record<Exclude<WebAdapter, 'stepsearch_mcp'>, string> = {
+  deepseek: 'https://api.deepseek.com',
+  tavily: 'https://api.tavily.com',
+  anysearch: 'https://api.anysearch.com',
+  exa: 'https://api.exa.ai',
+  firecrawl: 'https://api.firecrawl.dev',
 }
 
 function isDeepSeekProvider(provider: APIProvider, models: ModelInfo[]): boolean {
@@ -246,7 +258,7 @@ export function WebSearchDialog({
             保存连接后，需在“功能分配 → 联网搜索”中选用才能使用。
           </DialogDescription>
         </DialogHeader>
-        <DialogBody viewportClassName="max-h-[65vh] pr-3">
+        <DialogBody type="auto" data-form-scroll="true" className="max-h-[65vh]" viewportClassName="pr-0">
           <fieldset disabled={saving} className="space-y-4 py-1">
             <div className="grid gap-2">
               <Label htmlFor="web-service-name">服务名称</Label>
@@ -372,11 +384,7 @@ export function WebSearchDialog({
                       id="web-service-url"
                       value={service.base_url ?? ''}
                       onChange={(event) => patch({ base_url: event.target.value })}
-                      placeholder={
-                        service.adapter === 'deepseek'
-                          ? 'https://api.deepseek.com'
-                          : 'https://api.tavily.com'
-                      }
+                      placeholder={HTTP_BASE_URLS[service.adapter]}
                     />
                     <p className="text-muted-foreground text-xs">留空使用官方地址。</p>
                   </div>

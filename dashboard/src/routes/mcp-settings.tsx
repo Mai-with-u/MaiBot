@@ -987,17 +987,6 @@ export function MCPSettingsPage({ onBack }: { onBack?: () => void }) {
                             ? Object.fromEntries(
                                 Object.entries(nestedSchema.nested)
                                   .filter(([nestedKey]) => nestedKey !== 'elicitation')
-                                  .map(([nestedKey, clientNestedSchema]) => [
-                                    nestedKey,
-                                    nestedKey === 'sampling'
-                                      ? {
-                                          ...clientNestedSchema,
-                                          fields: clientNestedSchema.fields.filter(
-                                            (field) => field.name !== 'include_context_support'
-                                          ),
-                                        }
-                                      : clientNestedSchema,
-                                  ])
                               )
                             : undefined,
                         },

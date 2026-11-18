@@ -1,3 +1,4 @@
+import { TargetSelect, type ConfigTarget } from '@/components/TargetSelect'
 import { DataPanel, PageFrame } from '@/components/ui/surface'
 import { SegmentedMeter } from '@/components/ui/segmented-meter'
 import { type CSSProperties, useEffect, useRef, useState } from 'react'
@@ -9,6 +10,7 @@ import { Button } from '@/components/ui/button'
 import { Progress } from '@/components/ui/progress'
 import { DraftNumberInput } from '@/components/ui/draft-number-input'
 import { Input } from '@/components/ui/input'
+import { KeyValueEditor } from '@/components/ui/key-value-editor'
 import { DropdownMenu, DropdownMenuContent, DropdownMenuItem, DropdownMenuSeparator, DropdownMenuTrigger } from '@/components/ui/dropdown-menu'
 import { Label } from '@/components/ui/label'
 import { Switch } from '@/components/ui/switch'
@@ -18,10 +20,12 @@ import { Badge } from '@/components/ui/badge'
 import { Tabs, TabsContent, TabsList, TabsTrigger } from '@/components/ui/tabs'
 import { Collapsible, CollapsibleContent, CollapsibleTrigger } from '@/components/ui/collapsible'
 import { ListFieldEditor } from '@/components/ListFieldEditor'
+import { ChatStreamSelect } from '@/components/ChatStreamSelect'
 import { MultiSelect } from '@/components/ui/multi-select'
 import { Alert, AlertDescription } from '@/components/ui/alert'
 import { CodeEditor } from '@/components/CodeEditor'
 import { useTheme } from '@/components/use-theme'
+import { useMediaQuery } from '@/hooks/use-media-query'
 import {
   Select,
   SelectContent,
@@ -61,6 +65,7 @@ import {
   BookOpen,
   FileText,
   GripHorizontal,
+  Star,
   Trash2,
   Wrench,
   Terminal,
@@ -79,6 +84,7 @@ import type {
   InstalledPlugin,
   ConfigFieldSchema,
   ConfigSectionSchema,
+  ConfigTabSchema,
   ItemFieldDefinition,
   PluginRuntimeComponent,
   PluginRuntimeComponentType,
@@ -86,6 +92,7 @@ import type {
 import { PluginIcon } from './plugins/PluginIcon'
 import { ZipInstallDialog } from './plugins/ZipInstallDialog'
 import { getPluginType, getPluginTypeLabel } from './plugins/types'
+import { ConfigWidgetsPanel } from './plugin-config/ConfigWidgetsPanel'
 import { AdapterHostPolicyPanel } from './plugin-config/AdapterHostPolicyPanel'
 import { AdapterManagementView } from './plugin-config/AdapterManagementView'
 import { AdapterPolicyDefaultsCard } from './plugin-config/AdapterPolicyDefaultsCard'
@@ -94,6 +101,7 @@ import { getNestedRecord, getPluginMarketplaceRoutePath, isAdapterManagementPath
 import { usePluginList } from './plugin-config/hooks/usePluginList'
 import { usePluginLifecycle } from './plugin-config/hooks/usePluginLifecycle'
 import { usePluginConfigEditor } from './plugin-config/hooks/usePluginConfigEditor'
+import { usePluginReviewPrompts } from './plugin-config/hooks/usePluginReviewPrompts'
 import { MCPExtensionList, MCPSettingsPage } from './mcp-settings'
 
 // 字段渲染组件
@@ -190,6 +198,41 @@ function FieldRenderer({ field, value, onChange }: FieldRendererProps) {
 
   // 根据 ui_type 渲染不同的控件
   switch (field.ui_type) {
+    case 'target': {
+      const targetType = field.item_fields?.type?.default
+      const targetPlatform = field.item_fields?.platform?.default
+      if (targetType !== 'group' && targetType !== 'user') {
+        return <p role="alert" className="text-sm text-destructive">目标字段必须声明 group 或 user 类型</p>
+      }
+      const selected = (value ?? field.default ?? []) as ConfigTarget[]
+      return <div className="space-y-2">
+        <Label>{label}</Label>
+        <TargetSelect value={selected} onChange={onChange} type={targetType}
+          platform={typeof targetPlatform === 'string' && targetPlatform ? targetPlatform : undefined}
+          label={label} disabled={field.disabled} />
+        {hint && <p className="text-xs text-muted-foreground">{hint}</p>}
+      </div>
+    }
+
+    case 'chat-stream': {
+      const current = value ?? field.default
+      const multiple = field.type === 'array'
+      const selected = Array.isArray(current) ? current.map(String) : current ? [String(current)] : []
+      return (
+        <div className="space-y-2">
+          <Label>{label}</Label>
+          <ChatStreamSelect
+            value={selected}
+            onChange={ids => onChange(multiple ? ids : ids[0] ?? '')}
+            multiple={multiple}
+            disabled={field.disabled}
+            placeholder={placeholder}
+          />
+          {hint && <p className="text-muted-foreground text-xs">{hint}</p>}
+        </div>
+      )
+    }
+
     case 'switch':
       return (
         <div className="flex items-center justify-between">
@@ -244,7 +287,11 @@ function FieldRenderer({ field, value, onChange }: FieldRendererProps) {
         </div>
       )
 
-    case 'select':
+    case 'select': {
+      const choiceLabel = (choice: unknown) => {
+        const optionValue = String(choice)
+        return resolveLocalizedText(undefined, language, optionValue, field.i18n, `choice:${optionValue}`)
+      }
       if (field.multiple) {
         const selectedValues = Array.isArray(value)
           ? value.map(v => String(v))
@@ -257,7 +304,7 @@ function FieldRenderer({ field, value, onChange }: FieldRendererProps) {
             <Label>{label}</Label>
             <MultiSelect
               options={(field.choices ?? []).map((choice) => ({
-                label: String(choice),
+                label: choiceLabel(choice),
                 value: String(choice),
               }))}
               selected={selectedValues}
@@ -286,7 +333,7 @@ function FieldRenderer({ field, value, onChange }: FieldRendererProps) {
             <SelectContent>
               {field.choices?.map((choice) => (
                 <SelectItem key={String(choice)} value={String(choice)}>
-                  {String(choice)}
+                  {choiceLabel(choice)}
                 </SelectItem>
               ))}
             </SelectContent>
@@ -294,6 +341,7 @@ function FieldRenderer({ field, value, onChange }: FieldRendererProps) {
           {hint && <p className="text-muted-foreground text-xs">{hint}</p>}
         </div>
       )
+    }
 
     case 'textarea':
       return (
@@ -355,6 +403,19 @@ function FieldRenderer({ field, value, onChange }: FieldRendererProps) {
         </div>
       )
 
+    case 'json':
+      return (
+        <fieldset disabled={field.disabled} className="min-w-0 space-y-2">
+          <Label>{label}</Label>
+          <KeyValueEditor
+            value={(value ?? field.default ?? {}) as Record<string, unknown>}
+            onChange={onChange}
+            placeholder={placeholder || undefined}
+          />
+          {hint && <p className="text-muted-foreground text-xs">{hint}</p>}
+        </fieldset>
+      )
+
     case 'text':
     default:
       return (
@@ -380,22 +441,34 @@ interface SectionRendererProps {
   section: ConfigSectionSchema
   config: Record<string, unknown>
   onChange: (sectionName: string, fieldName: string, value: unknown) => void
+  initiallyExpanded?: boolean
 }
 
 function getFieldGridClassName(field: ConfigFieldSchema): string {
-  if (field.ui_type === 'textarea' || field.ui_type === 'list' || field.ui_type === 'slider') {
-    return 'lg:col-span-2'
+  if (field.ui_type === 'textarea' || field.ui_type === 'list' || field.ui_type === 'slider' || field.ui_type === 'chat-stream' || field.ui_type === 'target' || field.ui_type === 'json') {
+    return 'min-w-0 lg:col-span-2'
   }
 
   return 'min-w-0'
 }
 
-function SectionRenderer({ sectionName, section, config, onChange }: SectionRendererProps) {
-  const [isOpen, setIsOpen] = useState(!section.collapsed)
+function getVisibleSectionFields(sectionName: string, section: ConfigSectionSchema) {
+  const isPluginSection = (section.name || sectionName) === 'plugin'
+  return Object.entries(section.fields).filter(([name, field]) => (
+    !field.hidden && !(isPluginSection && (name === 'enabled' || name === 'config_version'))
+  ))
+}
+
+function SectionRenderer({ sectionName, section, config, onChange, initiallyExpanded = false }: SectionRendererProps) {
+  const resolvedSectionName = section.name || sectionName
+  // SDK 把顶层标量配置归入 general 展示，实际值仍保存在配置根部。
+  const configPath = resolvedSectionName === 'general' && !getNestedRecord(config, 'general') ? '' : resolvedSectionName
+  const [isOpen, setIsOpen] = useState(
+    resolvedSectionName === 'plugin' || initiallyExpanded || !section.collapsed
+  )
   const { i18n } = useTranslation()
   const language = i18n.resolvedLanguage || i18n.language || 'zh'
-  const resolvedSectionName = section.name || sectionName
-  const sectionConfig = getNestedRecord(config, resolvedSectionName)
+  const sectionConfig = configPath ? getNestedRecord(config, configPath) : config
   const title = resolveLocalizedText(section.title, language, sectionName, section.i18n, 'title')
   const description = resolveLocalizedText(
     section.description,
@@ -406,9 +479,15 @@ function SectionRenderer({ sectionName, section, config, onChange }: SectionRend
   )
 
   // 按 order 排序字段
-  const sortedFields = Object.entries(section.fields)
-    .filter(([, field]) => !field.hidden)
+  const sortedFields = getVisibleSectionFields(sectionName, section)
     .sort(([, a], [, b]) => (a.order ?? 0) - (b.order ?? 0))
+  const fieldGroups = new Map<string, typeof sortedFields>()
+  for (const entry of sortedFields) {
+    const group = resolveLocalizedText(entry[1].group, language, '', entry[1].i18n, 'group')
+    const fields = fieldGroups.get(group) ?? []
+    fields.push(entry)
+    fieldGroups.set(group, fields)
+  }
 
   return (
     <Collapsible open={isOpen} onOpenChange={setIsOpen}>
@@ -430,14 +509,21 @@ function SectionRenderer({ sectionName, section, config, onChange }: SectionRend
         </CollapsibleTrigger>
         <CollapsibleContent>
           <CardContent className="grid grid-cols-1 gap-4 pt-0 lg:grid-cols-2">
-            {sortedFields.map(([fieldName, field]) => (
-              <div key={fieldName} className={getFieldGridClassName(field)}>
-                <FieldRenderer
-                  field={field}
-                  value={sectionConfig?.[fieldName]}
-                  onChange={(value) => onChange(resolvedSectionName, fieldName, value)}
-                  sectionName={resolvedSectionName}
-                />
+            {Array.from(fieldGroups, ([group, fields]) => (
+              <div key={group} className="space-y-3 lg:col-span-2">
+                {group && <h3 className="border-b pb-2 text-sm font-medium">{group}</h3>}
+                <div className="grid grid-cols-1 gap-4 lg:grid-cols-2">
+                  {fields.map(([fieldName, field]) => (
+                    <div key={fieldName} className={getFieldGridClassName(field)}>
+                      <FieldRenderer
+                        field={field}
+                        value={sectionConfig?.[fieldName]}
+                        onChange={(value) => onChange(configPath, fieldName, value)}
+                        sectionName={resolvedSectionName}
+                      />
+                    </div>
+                  ))}
+                </div>
               </div>
             ))}
           </CardContent>
@@ -460,7 +546,6 @@ interface PluginDetailsPanelProps {
   repositoryUrl?: string
   documentationUrl?: string
   issuesUrl?: string
-  changelog?: string | null
 }
 
 type ComponentDisplayGroup = 'tool' | 'command'
@@ -471,12 +556,11 @@ const COMPONENT_GROUP_LABELS: Record<ComponentDisplayGroup, string> = {
 }
 
 const COMPONENT_GROUP_DESCRIPTIONS: Record<ComponentDisplayGroup, string> = {
-  tool: '包含 Tool 与旧版本兼容的 Action',
+  tool: '可供主程序调用的插件工具',
   command: '通过命令文本触发的组件',
 }
 
 const COMPONENT_TYPE_LABELS: Record<PluginRuntimeComponentType, string> = {
-  action: '旧版动作',
   command: '命令',
   tool: '工具',
 }
@@ -547,7 +631,7 @@ function PluginRuntimeComponentsPanel({ pluginId }: { pluginId: string }) {
         <div className="flex flex-wrap items-center justify-between gap-2">
           <div>
             <CardTitle>注册组件</CardTitle>
-            <CardDescription>当前插件运行时已注册的 Tool、旧版 Action 和 Command。</CardDescription>
+            <CardDescription>当前插件运行时已注册的 Tool 和 Command。</CardDescription>
           </div>
           <Badge variant="secondary">{componentCount} 个组件</Badge>
         </div>
@@ -613,21 +697,6 @@ function PluginRuntimeComponentsPanel({ pluginId }: { pluginId: string }) {
                               {COMPONENT_TYPE_LABELS[component.component_type]}
                             </Badge>
 
-                            {component.component_type === 'action' && (
-                              <div className="text-muted-foreground space-y-1 text-xs">
-                                {component.activation_type && <div>触发方式：{component.activation_type}</div>}
-                                {component.activation_keywords && component.activation_keywords.length > 0 && (
-                                  <div className="flex flex-wrap gap-1">
-                                    {component.activation_keywords.map((keyword) => (
-                                      <Badge key={keyword} variant="outline" className="text-[0.68rem]">
-                                        {keyword}
-                                      </Badge>
-                                    ))}
-                                  </div>
-                                )}
-                              </div>
-                            )}
-
                             {component.component_type === 'tool' && schemaProperties.length > 0 && (
                               <div className="mt-2 flex flex-wrap gap-1">
                                 {schemaProperties.map((propertyName) => (
@@ -660,17 +729,22 @@ function PluginDetailsPanel({
   repositoryUrl,
   documentationUrl,
   issuesUrl,
-  changelog,
 }: PluginDetailsPanelProps) {
   const [readme, setReadme] = useState('')
   const [readmeLoading, setReadmeLoading] = useState(true)
   const [readmeError, setReadmeError] = useState('')
+  const [changelog, setChangelog] = useState('')
+  const [changelogLoading, setChangelogLoading] = useState(true)
+  const [changelogError, setChangelogError] = useState('')
   const [loadedPluginId, setLoadedPluginId] = useState(plugin.id)
   if (loadedPluginId !== plugin.id) {
     setLoadedPluginId(plugin.id)
     setReadme('')
     setReadmeLoading(true)
     setReadmeError('')
+    setChangelog('')
+    setChangelogLoading(true)
+    setChangelogError('')
   }
 
   useEffect(() => {
@@ -691,6 +765,17 @@ function PluginDetailsPanel({
         if (!cancelled) {
           setReadmeLoading(false)
         }
+      })
+
+    fetchPluginDocument(plugin.id, 'changelog', { preferLocal: true })
+      .then((content) => {
+        if (!cancelled) setChangelog(content)
+      })
+      .catch((error) => {
+        if (!cancelled) setChangelogError(error instanceof Error ? error.message : '更新日志加载失败')
+      })
+      .finally(() => {
+        if (!cancelled) setChangelogLoading(false)
       })
 
     return () => {
@@ -823,7 +908,11 @@ function PluginDetailsPanel({
               <CardDescription>插件作者提供的版本变更记录。</CardDescription>
             </CardHeader>
             <CardContent className="p-3 pt-0 sm:p-3 sm:pt-0">
-              {changelog ? (
+              {changelogLoading ? (
+                <Loader2 className="text-muted-foreground h-5 w-5 animate-spin" />
+              ) : changelogError ? (
+                <p className="text-destructive text-sm">{changelogError}</p>
+              ) : changelog ? (
                 <ScrollArea className="h-[min(48vh,540px)] pr-4">
                   <MarkdownRenderer content={changelog} />
                 </ScrollArea>
@@ -875,7 +964,7 @@ interface PluginDocumentFloatingPanelProps {
 function PluginDocumentFloatingPanel({ plugin, onClose }: PluginDocumentFloatingPanelProps) {
   const [mode, setMode] = useState<PluginDocumentMode>('readme')
   const [readme, setReadme] = useState('')
-  const [changelog, setChangelog] = useState(plugin.changelog ?? '')
+  const [changelog, setChangelog] = useState('')
   const [loading, setLoading] = useState(true)
   const [error, setError] = useState('')
   const [dragging, setDragging] = useState(false)
@@ -902,9 +991,7 @@ function PluginDocumentFloatingPanel({ plugin, onClose }: PluginDocumentFloating
           return
         }
 
-        const localChangelog = plugin.changelog?.trim()
-          ? plugin.changelog
-          : await fetchPluginDocument(plugin.id, 'changelog', { preferLocal: true })
+        const localChangelog = await fetchPluginDocument(plugin.id, 'changelog', { preferLocal: true })
         if (!cancelled) {
           setChangelog(localChangelog ?? '')
         }
@@ -924,7 +1011,7 @@ function PluginDocumentFloatingPanel({ plugin, onClose }: PluginDocumentFloating
     return () => {
       cancelled = true
     }
-  }, [mode, plugin.changelog, plugin.id])
+  }, [mode, plugin.id])
 
   const movePanel = (clientX: number, clientY: number) => {
     const dragState = dragRef.current
@@ -1158,9 +1245,10 @@ interface PluginConfigEditorProps {
 
 function PluginConfigEditor({ plugin, onBack, initialTab }: PluginConfigEditorProps) {
   const { i18n } = useTranslation()
+  const isMobile = useMediaQuery('(max-width: 639px)')
   const language = i18n.resolvedLanguage || i18n.language || 'zh'
   const [documentPanelOpen, setDocumentPanelOpen] = useState(false)
-  const [hostPolicyToolbar, setHostPolicyToolbar] = useState<HTMLDivElement | null>(null)
+  const [configTabToolbar, setConfigTabToolbar] = useState<HTMLDivElement | null>(null)
 
   const {
     editMode,
@@ -1214,13 +1302,48 @@ function PluginConfigEditor({ plugin, onBack, initialTab }: PluginConfigEditorPr
   }
 
   // 按 order 排序 sections
-  const sortedSections = Object.entries(schema?.sections ?? {}).sort(
-    ([, a], [, b]) => (a.order ?? 0) - (b.order ?? 0)
-  )
-  const schemaTabs = schema?.layout.type === 'tabs' ? schema.layout.tabs : []
-  const selectedConfigTab = schemaTabs.some((tab) => tab.id === activeConfigTab)
+  const sortedSections = Object.entries(schema?.sections ?? {})
+    .filter(([name, section]) => (
+      (section.name || name) !== 'plugin' || getVisibleSectionFields(name, section).length > 0
+    ))
+    .sort(([, a], [, b]) => (a.order ?? 0) - (b.order ?? 0))
+  const visibleSectionNames = new Set(sortedSections.map(([name]) => name))
+  // 同时移除已隐藏的节及空标签页，避免手机端或自定义布局留下空白入口。
+  const schemaTabs = schema?.layout.type === 'tabs'
+    ? schema.layout.tabs
+        .map((tab) => ({ ...tab, sections: tab.sections.filter((name) => visibleSectionNames.has(name)) }))
+        .filter((tab) => tab.sections.length > 0)
+    : []
+  // 保留插件声明的布局；仅移动端为未分组的多节配置生成横向切换标签。
+  const configTabs: ConfigTabSchema[] = schemaTabs.length > 0
+    ? schemaTabs
+    : isMobile && sortedSections.length > 1
+      ? sortedSections.map(([sectionName, section]) => ({
+          id: sectionName,
+          title: section.title,
+          i18n: section.i18n,
+          sections: [sectionName],
+          order: section.order,
+        }))
+      : []
+  const selectedConfigTab = configTabs.some((tab) => tab.id === activeConfigTab)
     ? activeConfigTab
-    : schemaTabs[0]?.id
+    : configTabs[0]?.id
+  const showConfigTabs = pluginPageTab === 'settings' && editMode === 'visual' && configTabs.length > 0
+  const configTabList = (
+    <TabsList aria-label="配置分组" className={cn(isMobile && 'h-auto w-max justify-start')}>
+      {configTabs.map((tab) => (
+        <TabsTrigger key={tab.id} value={tab.id} className={cn(isMobile && 'shrink-0')}>
+          {resolveLocalizedText(tab.title, language, tab.id, tab.i18n, 'title')}
+          {tab.badge && (
+            <Badge variant="secondary" className="ml-2 text-xs">
+              {tab.badge}
+            </Badge>
+          )}
+        </TabsTrigger>
+      ))}
+    </TabsList>
+  )
 
   // 获取当前启用状态
   const isEnabled = !configError && (config.plugin as Record<string, unknown>)?.enabled !== false
@@ -1267,18 +1390,28 @@ function PluginConfigEditor({ plugin, onBack, initialTab }: PluginConfigEditorPr
             <ArrowLeft className="h-4 w-4" />
           </Button>
           <div className="flex min-w-0 flex-wrap items-center gap-2 lg:flex-nowrap">
-            <h1 className="min-w-0 truncate text-lg font-semibold sm:text-xl" data-plugin-config-title>
+            <h1 className="min-w-0 truncate text-base font-semibold sm:text-lg" data-plugin-config-title>
               {pluginName}
             </h1>
-            <Badge variant={isEnabled ? 'default' : 'secondary'} className="shrink-0">
-              {configError ? '配置错误，业务暂停' : isEnabled ? '已启用' : '已禁用'}
-            </Badge>
+            {(configError || !isEnabled) && (
+              <Badge variant="secondary" className="shrink-0">
+                {configError ? '配置错误，业务暂停' : '已禁用'}
+              </Badge>
+            )}
             <span className="text-muted-foreground shrink-0 text-sm">
               v{schema?.plugin_info.version || plugin.manifest.version}
             </span>
           </div>
         </div>
         <div className="grid min-w-0 auto-cols-fr grid-flow-col items-center gap-1 whitespace-nowrap max-lg:[&>*]:min-w-0 max-lg:[&>button]:!px-1 max-lg:[&>button]:!text-xs max-lg:[&>button>svg]:hidden lg:flex lg:shrink-0 lg:gap-3">
+          <Button
+            variant="outline"
+            size="sm"
+            className="h-8"
+            onClick={() => setPluginPageTab(pluginPageTab === 'settings' ? 'details' : 'settings')}
+          >
+            {pluginPageTab === 'settings' ? '查看详情' : '查看设置'}
+          </Button>
           {pluginPageTab !== 'details' && (
             <Button
               variant="outline"
@@ -1324,16 +1457,14 @@ function PluginConfigEditor({ plugin, onBack, initialTab }: PluginConfigEditorPr
             />
             <span className="text-xs">启用</span>
           </div>
-          {pluginPageTab !== 'host-policy' && (
-            <Button size="sm" className="h-8" onClick={handleSave} disabled={!hasChanges || saving}>
-              {saving ? (
-                <Loader2 className="mr-2 h-4 w-4 animate-spin" />
-              ) : (
-                <Save className="mr-2 h-4 w-4" />
-              )}
-              保存
-            </Button>
-          )}
+          <Button size="sm" className="h-8" onClick={handleSave} disabled={!hasChanges || saving}>
+            {saving ? (
+              <Loader2 className="mr-2 h-4 w-4 animate-spin" />
+            ) : (
+              <Save className="mr-2 h-4 w-4" />
+            )}
+            保存
+          </Button>
         </div>
       </div>
 
@@ -1351,127 +1482,128 @@ function PluginConfigEditor({ plugin, onBack, initialTab }: PluginConfigEditorPr
 
       <Tabs
         value={pluginPageTab}
-        onValueChange={(value) => setPluginPageTab(value as 'settings' | 'host-policy' | 'details')}
+        onValueChange={(value) => setPluginPageTab(value as 'settings' | 'details')}
+        className="min-w-0"
       >
-        <div className="flex flex-wrap items-center gap-3">
-          <TabsList>
-            <TabsTrigger value="settings">设置</TabsTrigger>
-            {showHostPolicy && <TabsTrigger value="host-policy">黑白名单规则</TabsTrigger>}
-            <TabsTrigger value="details">详情</TabsTrigger>
-          </TabsList>
-          {/* 黑白名单页的账号、分组操作与保存工具栏渲染到页签同一行，节省纵向空间 */}
-          {showHostPolicy && <div ref={setHostPolicyToolbar} className="min-w-0 flex-1" />}
-        </div>
+        {/* 移动端配置标签保留横向滚动区域；桌面端按插件原始布局展示配置。 */}
+        {isMobile && showConfigTabs && (
+          <div className="min-w-0 overflow-x-auto overflow-y-hidden overscroll-x-contain">
+            <div ref={setConfigTabToolbar} className="w-max px-1 py-1" />
+          </div>
+        )}
         <TabsContent value="settings" className="mt-4">
-          {configError && (
-            <Alert variant="destructive" className="mb-4">
-              <AlertCircle className="h-4 w-4" />
-              <AlertDescription>
-                <p>配置校验失败，工具和调度已暂停。请修正下方原始 TOML 并保存，校验通过后恢复运行。</p>
-                <pre className="mt-2 whitespace-pre-wrap break-words text-xs">{configError}</pre>
-              </AlertDescription>
-            </Alert>
-          )}
-          {/* 源代码模式 */}
-          {editMode === 'source' && (
-            <div className="space-y-4">
-              <Alert>
-                <AlertCircle className="h-4 w-4" />
-                <AlertDescription>
-                  <strong>文件模式：</strong>直接编辑原始配置文件。此功能仅适用于熟悉
-                  TOML语法的用户。只有格式完全正确才能保存。
-                  {hasTomlError && (
-                    <span className="text-destructive ml-2 font-semibold">
-                      ⚠️ 上次保存失败，请检查 TOML 格式
-                    </span>
-                  )}
-                </AlertDescription>
-              </Alert>
-
-              <CodeEditor
-                value={sourceCode}
-                onChange={handleSourceCodeChange}
-                language="toml"
-                height="calc(100vh - 350px)"
-                minHeight="500px"
-                placeholder="TOML 配置内容"
-              />
-            </div>
-          )}
-
-          {/* 可视化模式 */}
-          {editMode === 'visual' && schema && (
-            <>
-              {/* 配置区域 */}
-              {schema.layout.type === 'tabs' && schemaTabs.length > 0 ? (
-                // 标签页布局
-                <Tabs value={selectedConfigTab} onValueChange={handleConfigTabChange}>
-                  <TabsList>
-                    {schemaTabs.map((tab) => (
-                      <TabsTrigger key={tab.id} value={tab.id}>
-                        {resolveLocalizedText(tab.title, language, tab.id, tab.i18n, 'title')}
-                        {tab.badge && (
-                          <Badge variant="secondary" className="ml-2 text-xs">
-                            {tab.badge}
-                          </Badge>
-                        )}
-                      </TabsTrigger>
-                    ))}
-                  </TabsList>
-                  {schemaTabs.map((tab) => (
-                    <TabsContent key={tab.id} value={tab.id} className="mt-4 space-y-4">
-                      {tab.sections.map((sectionName) => {
-                        const section = schema.sections[sectionName]
-                        if (!section) return null
-                        return (
-                          <SectionRenderer
-                            key={sectionName}
-                            sectionName={sectionName}
-                            section={section}
-                            config={config}
-                            onChange={handleFieldChange}
-                          />
-                        )
-                      })}
-                    </TabsContent>
-                  ))}
-                </Tabs>
-              ) : (
-                // 自动布局
+          <div className={cn(showHostPolicy && 'grid min-w-0 grid-cols-1 items-start gap-6 xl:grid-cols-2')}>
+            {showHostPolicy && (
+              <section className="min-w-0 space-y-4 xl:order-2" aria-label="黑白名单规则">
+                <h2 className="text-base font-medium">黑白名单规则</h2>
+                <AdapterHostPolicyPanel pluginId={plugin.id} />
+              </section>
+            )}
+            <div className="min-w-0 xl:order-1">
+              {showHostPolicy && <h2 className="mb-4 text-base font-medium">设置</h2>}
+              {/* 运行时控件由已加载实例提供，未启用、加载失败或未运行时没有可轮询的实例 */}
+              {plugin.load_status === 'success' && !!schema?.runtime_widgets?.length && (
+                <ConfigWidgetsPanel key={plugin.id} pluginId={plugin.id} />
+              )}
+              {configError && (
+                <Alert variant="destructive" className="mb-4">
+                  <AlertCircle className="h-4 w-4" />
+                  <AlertDescription>
+                    <p>配置校验失败，工具和调度已暂停。请修正下方原始 TOML 并保存，校验通过后恢复运行。</p>
+                    <pre className="mt-2 whitespace-pre-wrap break-words text-xs">{configError}</pre>
+                  </AlertDescription>
+                </Alert>
+              )}
+              {/* 源代码模式 */}
+              {editMode === 'source' && (
                 <div className="space-y-4">
-                  {sortedSections.map(([sectionName, section]) => (
-                    <SectionRenderer
-                      key={sectionName}
-                      sectionName={sectionName}
-                      section={section}
-                      config={config}
-                      onChange={handleFieldChange}
-                    />
-                  ))}
+                  <Alert>
+                    <AlertCircle className="h-4 w-4" />
+                    <AlertDescription>
+                      <strong>文件模式：</strong>直接编辑原始配置文件。此功能仅适用于熟悉
+                      TOML语法的用户。只有格式完全正确才能保存。
+                      {hasTomlError && (
+                        <span className="text-destructive ml-2 font-semibold">
+                          ⚠️ 上次保存失败，请检查 TOML 格式
+                        </span>
+                      )}
+                    </AlertDescription>
+                  </Alert>
+
+                  <CodeEditor
+                    value={sourceCode}
+                    onChange={handleSourceCodeChange}
+                    language="toml"
+                    height="calc(100vh - 350px)"
+                    minHeight="500px"
+                    placeholder="TOML 配置内容"
+                  />
                 </div>
               )}
-            </>
-          )}
-          <div className="mt-6">
-            <PluginRuntimeComponentsPanel key={plugin.id} pluginId={plugin.id} />
-          </div>
-          <div className="mt-6 border-t pt-4">
-            <Button
-              variant="outline"
-              size="sm"
-              className="text-destructive hover:text-destructive"
-              onClick={() => setResetDialogOpen(true)}
-            >
-              <RotateCcw className="mr-2 h-4 w-4" />
-              重置
-            </Button>
+
+              {/* 可视化模式 */}
+              {editMode === 'visual' && schema && (
+                <>
+                  {/* 配置区域 */}
+                  {configTabs.length > 0 ? (
+                    // 标签页布局
+                    <Tabs value={selectedConfigTab} onValueChange={handleConfigTabChange}>
+                      {/* 移动端通过 Portal 并排显示，保留独立的配置 Tabs 上下文。 */}
+                      {isMobile
+                        ? configTabToolbar && createPortal(configTabList, configTabToolbar)
+                        : configTabList}
+                      {configTabs.map((tab) => (
+                        <TabsContent key={tab.id} value={tab.id} className="mt-0 space-y-4 sm:mt-4">
+                          {tab.sections.map((sectionName) => {
+                            const section = schema.sections[sectionName]
+                            if (!section) return null
+                            return (
+                              <SectionRenderer
+                                key={sectionName}
+                                sectionName={sectionName}
+                                section={section}
+                                config={config}
+                                onChange={handleFieldChange}
+                                initiallyExpanded={isMobile && schemaTabs.length === 0}
+                              />
+                            )
+                          })}
+                        </TabsContent>
+                      ))}
+                    </Tabs>
+                  ) : (
+                    // 自动布局
+                    <div className="space-y-4">
+                      {sortedSections.map(([sectionName, section]) => (
+                        <SectionRenderer
+                          key={sectionName}
+                          sectionName={sectionName}
+                          section={section}
+                          config={config}
+                          onChange={handleFieldChange}
+                        />
+                      ))}
+                    </div>
+                  )}
+                </>
+              )}
+              <div className="mt-6">
+                <PluginRuntimeComponentsPanel key={plugin.id} pluginId={plugin.id} />
+              </div>
+              <div className="mt-6 border-t pt-4">
+                <Button
+                  variant="outline"
+                  size="sm"
+                  className="text-destructive hover:text-destructive"
+                  onClick={() => setResetDialogOpen(true)}
+                >
+                  <RotateCcw className="mr-2 h-4 w-4" />
+                  重置
+                </Button>
+              </div>
+            </div>
           </div>
         </TabsContent>
-        {showHostPolicy && (
-          <TabsContent value="host-policy" className="mt-4">
-            <AdapterHostPolicyPanel pluginId={plugin.id} toolbarContainer={hostPolicyToolbar} />
-          </TabsContent>
-        )}
         <TabsContent value="details" className="mt-4">
           <PluginDetailsPanel
             plugin={plugin}
@@ -1481,7 +1613,6 @@ function PluginConfigEditor({ plugin, onBack, initialTab }: PluginConfigEditorPr
             repositoryUrl={pluginRepositoryUrl}
             documentationUrl={manifestUrls?.documentation}
             issuesUrl={manifestUrls?.issues}
-            changelog={plugin.changelog}
           />
         </TabsContent>
       </Tabs>
@@ -1582,6 +1713,7 @@ function PluginConfigPageContent() {
     setActingPluginId,
     performTogglePlugin,
     checkingUpdates,
+    marketPluginsById,
     getPluginUpdateState,
     getPluginRepositoryUrl,
     isPluginDisabled,
@@ -1602,6 +1734,13 @@ function PluginConfigPageContent() {
     modernLoadSummaryLabel,
     futureRetroPluginSummaryLabel,
   } = usePluginList()
+
+  const { reviewPrompts, markReviewed } = usePluginReviewPrompts(plugins, marketPluginsById)
+  const [reviewingPlugin, setReviewingPlugin] = useState<{
+    id: string
+    name: string
+    storageKey: string
+  } | null>(null)
 
   const {
     deleteDialogOpen,
@@ -1739,6 +1878,7 @@ function PluginConfigPageContent() {
 
         {adapterManagement ? (
           <AdapterManagementView
+            onInstalled={() => void loadPlugins()}
             groups={visiblePluginGroups}
             defaults={<AdapterPolicyDefaultsCard />}
             loading={loading}
@@ -1876,6 +2016,7 @@ function PluginConfigPageContent() {
               const pluginActing = actingPluginId === plugin.id
               const pluginDisabled = plugin.enabled === false
               const updateState = getPluginUpdateState(plugin)
+              const reviewPrompt = reviewPrompts[plugin.id]
               const pluginLoadFailed = isPluginLoadFailed(plugin)
               const pluginVersionIncompatible = isPluginVersionIncompatible(plugin)
               const {
@@ -1953,6 +2094,11 @@ function PluginConfigPageContent() {
                       <p className="text-muted-foreground line-clamp-2 text-sm leading-relaxed sm:truncate sm:leading-normal">
                         {plugin.manifest.description || '暂无描述'}
                       </p>
+                      {plugin.load_status === 'timed_out' && (
+                        <div role="status" className="rounded-md border border-amber-300 bg-amber-50/80 px-3 py-2 text-xs text-amber-800 dark:border-amber-900 dark:bg-amber-950/25 dark:text-amber-300">
+                          {plugin.load_error || '插件尚未完成加载，仍在后台等待；不会因加载超时停止整组插件。'}
+                        </div>
+                      )}
                       {pluginLoadFailed && (
                         <div className="flex min-w-0 flex-col gap-2 rounded-md border border-red-200 bg-red-50/80 px-3 py-2 text-xs text-red-700 dark:border-red-900 dark:bg-red-950/25 dark:text-red-300 sm:flex-row sm:items-center">
                           <div className="flex min-w-0 flex-1 items-start gap-1.5">
@@ -1963,7 +2109,7 @@ function PluginConfigPageContent() {
                             </div>
                           </div>
                           <div className="flex shrink-0 items-center gap-2">
-                            {pluginNeedsUpdate && (
+                            {!plugin.builtin && pluginNeedsUpdate && (
                               <Button
                                 type="button"
                                 size="sm"
@@ -2005,7 +2151,29 @@ function PluginConfigPageContent() {
                       )}
                     </div>
                   </div>
-                  <div className="flex items-center justify-end gap-2 border-t pt-2 sm:flex-shrink-0 sm:border-t-0 sm:pt-0">
+                  <div className="flex flex-wrap items-center justify-end gap-2 border-t pt-2 sm:flex-shrink-0 sm:border-t-0 sm:pt-0">
+                    {reviewPrompt && (
+                      <Button
+                        type="button"
+                        variant="outline"
+                        size="sm"
+                        className="mr-auto gap-1.5 text-primary sm:mr-2"
+                        disabled={pluginActing}
+                        title={`评价 ${plugin.manifest.name}`}
+                        onClick={(event) => {
+                          event.stopPropagation()
+                          setReviewingPlugin({
+                            id: reviewPrompt.marketPluginId,
+                            name: plugin.manifest.name,
+                            storageKey: reviewPrompt.storageKey,
+                          })
+                        }}
+                        onKeyDown={(event) => event.stopPropagation()}
+                      >
+                        <Star className="h-4 w-4" />
+                        {reviewPrompt.label}
+                      </Button>
+                    )}
                     <div
                       className="flex h-9 min-w-11 items-center justify-center"
                       title={pluginDisabled ? '启动插件' : '关闭插件'}
@@ -2020,44 +2188,48 @@ function PluginConfigPageContent() {
                         onCheckedChange={() => void performTogglePlugin(plugin)}
                       />
                     </div>
-                    <Button
-                      variant="outline"
-                      size="icon"
-                      data-plugin-update-button="true"
-                      className={`relative ${checkingUpdates ? 'text-primary disabled:opacity-100' : ''}`}
-                      disabled={pluginActing || !updateState.canUpdate}
-                      aria-busy={checkingUpdates || pluginActing}
-                      title={updateState.title}
-                      aria-label={updateState.title || '更新/升级'}
-                      onClick={(event) => openUpdatePluginDialog(plugin, event)}
-                    >
-                      {updateState.hasUpdate && (
-                        <span
-                          className="ring-background absolute -top-1 -right-1 h-3 w-3 rounded-sm bg-yellow-400 ring-2"
-                          aria-hidden="true"
-                        />
-                      )}
-                      {pluginActing || checkingUpdates ? (
-                        <Loader2 className="h-4 w-4 animate-spin" />
-                      ) : (
-                        <ArrowUp className="h-4 w-4" />
-                      )}
-                    </Button>
-                    <Button
-                      variant="destructive"
-                      size="icon"
-                      disabled={pluginActing}
-                      aria-busy={pluginActing}
-                      title="删除"
-                      aria-label="删除"
-                      onClick={(event) => openDeletePluginDialog(plugin, event)}
-                    >
-                      {pluginActing ? (
-                        <Loader2 className="h-4 w-4 animate-spin" />
-                      ) : (
-                        <Trash2 className="h-4 w-4" />
-                      )}
-                    </Button>
+                    {!plugin.builtin && (
+                      <>
+                        <Button
+                          variant="outline"
+                          size="icon"
+                          data-plugin-update-button="true"
+                          className={`relative ${checkingUpdates ? 'text-primary disabled:opacity-100' : ''}`}
+                          disabled={pluginActing || !updateState.canUpdate}
+                          aria-busy={checkingUpdates || pluginActing}
+                          title={updateState.title}
+                          aria-label={updateState.title || '更新/升级'}
+                          onClick={(event) => openUpdatePluginDialog(plugin, event)}
+                        >
+                          {updateState.hasUpdate && (
+                            <span
+                              className="ring-background absolute -top-1 -right-1 h-3 w-3 rounded-sm bg-yellow-400 ring-2"
+                              aria-hidden="true"
+                            />
+                          )}
+                          {pluginActing || checkingUpdates ? (
+                            <Loader2 className="h-4 w-4 animate-spin" />
+                          ) : (
+                            <ArrowUp className="h-4 w-4" />
+                          )}
+                        </Button>
+                        <Button
+                          variant="destructive"
+                          size="icon"
+                          disabled={pluginActing}
+                          aria-busy={pluginActing}
+                          title="删除"
+                          aria-label="删除"
+                          onClick={(event) => openDeletePluginDialog(plugin, event)}
+                        >
+                          {pluginActing ? (
+                            <Loader2 className="h-4 w-4 animate-spin" />
+                          ) : (
+                            <Trash2 className="h-4 w-4" />
+                          )}
+                        </Button>
+                      </>
+                    )}
                   </div>
                 </div>
               )
@@ -2071,6 +2243,16 @@ function PluginConfigPageContent() {
 
         <PluginWebUIManagerPanel />
         </>
+        )}
+
+        {reviewingPlugin && (
+          <PluginStats
+            pluginId={reviewingPlugin.id}
+            pluginName={reviewingPlugin.name}
+            ratingOnly
+            onRatingDialogClose={() => setReviewingPlugin((current) => current === reviewingPlugin ? null : current)}
+            onRated={() => markReviewed(reviewingPlugin.storageKey)}
+          />
         )}
 
         <Dialog
