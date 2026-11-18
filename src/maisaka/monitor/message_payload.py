@@ -10,9 +10,12 @@ from src.common.data_models.message_component_data_model import (
     ImageComponent,
     MessageSequence,
     ReplyComponent,
+    VoiceComponent,
 )
 from src.common.logger import get_logger
 from src.maisaka.visual.mode_utils import resolve_enable_visual_planner
+
+from .voice_media import monitor_voice_item
 
 logger = get_logger("maisaka_monitor_message_payload")
 
@@ -75,7 +78,7 @@ def has_monitor_message_media(message: SessionMessage) -> bool:
 
 
 def build_monitor_message_media(message: SessionMessage, *, log_prefix: str = "") -> list[dict[str, Any]]:
-    """构造监控面板可切换展示的原始图片或表情。"""
+    """构造监控面板的图片、表情和语音播放资源。"""
 
     try:
         default_original = resolve_enable_visual_planner()
@@ -85,6 +88,10 @@ def build_monitor_message_media(message: SessionMessage, *, log_prefix: str = ""
 
     media_items: list[dict[str, Any]] = []
     for index, component in enumerate(message.raw_message.components):
+        if isinstance(component, VoiceComponent):
+            if component.binary_hash:
+                media_items.append(monitor_voice_item(component.binary_hash, component.content, index))
+            continue
         if isinstance(component, ImageComponent):
             media_kind = "image"
             label = "[图片，识别中.....]"

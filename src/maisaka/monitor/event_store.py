@@ -14,11 +14,12 @@ import time
 from src.common.database.database import get_db_session
 from src.common.database.database_model import ImageType, Images, MaisakaMonitorEventRecord
 from src.common.logger import get_logger
-from src.maisaka.monitor.planner_delta import PLANNER_EVENTS
+from .planner_delta import PLANNER_EVENTS
+from .voice_media import VOICE_MEDIA_SCHEMA_VERSION, restore_legacy_voice_media
 
 logger = get_logger("maisaka_monitor_event_store")
 
-MONITOR_EVENT_SCHEMA_VERSION = 1
+MONITOR_EVENT_SCHEMA_VERSION = VOICE_MEDIA_SCHEMA_VERSION
 MAX_MONITOR_EVENT_RECORDS = 10000
 MAX_MONITOR_EVENT_AGE_HOURS = 72
 DEFAULT_REPLAY_LIMIT = 1000
@@ -111,7 +112,8 @@ def replay_monitor_events(*, since_event_id: int = 0, limit: int = DEFAULT_REPLA
             )
             records = list(reversed(session.exec(statement).all()))
 
-    events = [_record_to_replay_event(record) for record in records]
+        events = [_record_to_replay_event(record) for record in records]
+        restore_legacy_voice_media(session, events)
     valid_events = [event for event in events if _is_replayable_event(event)]
     skipped_count = len(events) - len(valid_events)
     if skipped_count > 0:
@@ -136,9 +138,10 @@ def load_session_event_page(
         statement = statement.order_by(MaisakaMonitorEventRecord.event_id.desc()).limit(normalized_limit + 1)
         records = list(session.exec(statement).all())
 
-    has_more = len(records) > normalized_limit
-    page_records = list(reversed(records[:normalized_limit]))
-    events = [_record_to_replay_event(record) for record in page_records]
+        has_more = len(records) > normalized_limit
+        page_records = list(reversed(records[:normalized_limit]))
+        events = [_record_to_replay_event(record) for record in page_records]
+        restore_legacy_voice_media(session, events)
     return MonitorEventPage(
         events=[event for event in events if _is_replayable_event(event)],
         oldest_event_id=int(page_records[0].event_id or 0) if page_records else 0,
@@ -203,6 +206,7 @@ def load_session_summaries() -> list[dict[str, Any]]:
             for record in session.exec(statement).all():
                 if record.event_id is not None:
                     detail_events[record.event_id] = _record_to_replay_event(record)
+            restore_legacy_voice_media(session, list(detail_events.values()))
 
     summaries: list[dict[str, Any]] = []
     for row in rows:

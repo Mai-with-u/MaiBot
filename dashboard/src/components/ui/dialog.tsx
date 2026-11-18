@@ -94,6 +94,7 @@ const DialogContent = React.forwardRef<
           onKeyDownCapture?.(event)
           if (
             !confirmOnEnter ||
+            !event.currentTarget.contains(event.target as Node) ||
             event.defaultPrevented ||
             !matchesShortcut(event, ['enter']) ||
             event.nativeEvent.isComposing ||

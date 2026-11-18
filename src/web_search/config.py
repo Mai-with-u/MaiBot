@@ -15,7 +15,10 @@ class WebSearchConfigError(WebSearchError):
 
 
 class WebServiceConfig(ConfigBase):
-    adapter: Literal["deepseek", "tavily", "stepsearch_mcp", "anysearch", "exa", "firecrawl"] = "deepseek"
+    adapter: str = Field(
+        default="deepseek",
+        pattern=r"^(deepseek|tavily|stepsearch_mcp|anysearch|exa|firecrawl|plugin:[^/\s]+/\S(?:.*\S)?)$",
+    )
     """服务协议类型，不需要配置模型列表。"""
 
     base_url: str = ""
@@ -84,6 +87,8 @@ def require_web_service(config: WebConfig, name: str) -> WebServiceConfig:
     service = config.services.get(name)
     if service is None:
         raise WebSearchConfigError(f"web_search 引用了不存在的联网服务：{name}，请修正或取消该功能分配")
+    if service.adapter.startswith("plugin:"):
+        return service
     if service.adapter == "stepsearch_mcp":
         field, value = "server_ref", service.server_ref
     else:

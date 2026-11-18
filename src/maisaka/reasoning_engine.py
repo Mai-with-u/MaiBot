@@ -856,6 +856,14 @@ class MaisakaReasoningEngine:
         silence_triggered = self._runtime._message_turn_scheduler.consume_silence_trigger()
         silent_reply_frequency = self._runtime._is_reply_frequency_silent()
 
+        if timeout_triggered and not (
+            self._runtime._has_pending_wait_tool_call() and self._runtime._message_turn_scheduler.allows_timed_wakeup
+        ):
+            # 定时信号入队后，最后一轮可能才完成记账或结束 wait。
+            timeout_triggered = False
+            if not (message_triggered or proactive_triggered or silence_triggered):
+                return TurnStartContext([], None, False, False, silent_reply_frequency)
+
         if (
             self._runtime._agent_state == self._runtime._STATE_WAIT
             and not (timeout_triggered or proactive_triggered or silence_triggered)
@@ -923,6 +931,7 @@ class MaisakaReasoningEngine:
                 logger.warning(f"{self._runtime.log_prefix} wait 超时后没有可复用的触发消息，跳过本轮")
                 return TurnStartContext([], None, timeout_triggered, proactive_triggered, silent_reply_frequency)
             logger.info(f"{self._runtime.log_prefix} 等待结束，再看一眼！")
+            self._runtime._enter_running_state()
             wait_message = self._build_wait_completed_message(has_new_messages=False)
             continuation_logical_turn_id = wait_message.logical_turn_id
             self._runtime._chat_history.append(wait_message)
@@ -954,11 +963,20 @@ class MaisakaReasoningEngine:
             "cycle_error", "cancelled",
         }:
             self._runtime._message_turn_scheduler.record_planner_run()
-        if round_index + 1 >= self._runtime._max_internal_rounds and cycle_end.reason in {
-            "continue",
-            "tool_continue",
-        }:
-            cycle_end = self._cycle_end_for_max_rounds(self._runtime._max_internal_rounds)
+        if round_index + 1 >= self._runtime._max_internal_rounds:
+            if (
+                cycle_end.reason == "tool_pause:wait" and self._runtime.scene.is_group
+                and self._runtime._has_pending_wait_tool_call()
+            ):
+                # 在最后一轮闭合 wait 回执，避免超时后重新领取一整回合的额度。
+                self._runtime._chat_history.append(
+                    self._build_wait_completed_message(has_new_messages=self._runtime._has_pending_messages())
+                )
+                self._runtime._end_planner_continuation()
+                self._runtime._enter_stop_state()
+                cycle_end = self._cycle_end_for_max_rounds(self._runtime._max_internal_rounds)
+            elif cycle_end.reason in {"continue", "tool_continue"}:
+                cycle_end = self._cycle_end_for_max_rounds(self._runtime._max_internal_rounds)
 
         response = state.response
         # 记录先在线程中保存并回填监控数据，终端开关仅影响后续打印。
@@ -1034,13 +1052,12 @@ class MaisakaReasoningEngine:
 
                 trace_token = reasoning_trace_id.set(uuid.uuid4().hex)
                 try:
-                    self._runtime._message_turn_scheduler.start_planner_turn()
                     self._turn_passive_replyer = global_config.experimental.passive_replyer
                     self._runtime._chat_loop_service.passive_replyer_override = self._turn_passive_replyer
                     self._active_logical_turn_id = turn_start_context.logical_turn_id or uuid.uuid4().hex
+                    round_index = self._runtime._message_turn_scheduler.start_planner_turn(self._active_logical_turn_id)
                     if force_continue_reason := self._runtime._consume_forced_turn_reason():
                         logger.info(f"{self._runtime.log_prefix} {force_continue_reason}")
-                    round_index = 0
                     while round_index < self._runtime._max_internal_rounds:
                         # 工具执行或整理上下文期间收到的消息，在下一次模型请求前补齐。
                         pending_round_messages = await self._ingest_pending_messages() if round_index > 0 else []

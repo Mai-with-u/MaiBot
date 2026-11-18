@@ -1,6 +1,7 @@
 from datetime import datetime
 from typing import Any, Dict, List
 
+import asyncio
 import base64
 import uuid
 
@@ -15,6 +16,7 @@ from src.llm_models.model_client.base_client import (
     EmbeddingRequest,
     ImageEmbeddingRequest,
     ResponseRequest,
+    SpeechAudio,
     UsageRecord,
 )
 from src.llm_models.payload_content.context_item import (
@@ -33,6 +35,7 @@ from src.llm_models.request_snapshot import (
     serialize_image_embedding_request_snapshot,
     serialize_response_request_snapshot,
 )
+from src.plugin_runtime.provider_formats import ProviderFormats
 
 logger = get_logger("plugin_llm_client")
 
@@ -46,6 +49,7 @@ class PluginLLMClient(BaseClient):
         supervisor: Any,
         plugin_id: str,
         client_type: str,
+        formats: ProviderFormats | None = None,
     ) -> None:
         """初始化插件 LLM Provider 客户端代理。
 
@@ -54,11 +58,36 @@ class PluginLLMClient(BaseClient):
             supervisor: 拥有目标插件的 Supervisor。
             plugin_id: 目标插件 ID。
             client_type: 目标客户端类型。
+            formats: 插件对外提供的语音和联网能力。
         """
         super().__init__(api_provider)
         self._supervisor = supervisor
         self._plugin_id = plugin_id
         self._client_type = client_type
+        self.formats = formats or ProviderFormats()
+
+    async def synthesize_speech(self, model: str, text: str, voice_id: str | None) -> SpeechAudio:
+        preset = self.formats.tts.get(model)
+        if preset is None:
+            raise ValueError(f"{self._client_type} 没有声明语音合成模型 {model}")
+        if voice_id is None:
+            voice_id = next(iter(preset.voices), "")
+        if voice_id not in (preset.voices or ("",)):
+            raise ValueError("所选音色不在插件声明的音色列表中")
+        result = await self._invoke_provider(
+            "audio_synthesis", {"model_identifier": model, "text": text, "voice_id": voice_id},
+        )
+        mime = result.get("media_type")
+        encoded = result.get("audio_base64")
+        if mime not in ("audio/wav", "audio/mpeg", "audio/ogg", "audio/flac", "audio/mp4", "audio/webm"):
+            raise ValueError("插件返回了不支持的音频 media_type")
+        if not isinstance(encoded, str) or not encoded:
+            raise ValueError("插件必须返回非空 audio_base64")
+        audio = await asyncio.to_thread(base64.b64decode, encoded, validate=True)
+        return SpeechAudio(audio, mime)
+
+    async def invoke_web(self, operation: str, arguments: Dict[str, Any]) -> Dict[str, Any]:
+        return await self._invoke_provider(operation, arguments)
 
     async def get_response(self, request: ResponseRequest) -> APIResponse:
         """获取对话响应。

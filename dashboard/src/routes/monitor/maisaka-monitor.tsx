@@ -2,6 +2,7 @@ import { ConversationAvatar, MessageBubble, TraceRound, TraceStep } from '@/comp
 import { DataPanel } from '@/components/ui/surface'
 import { ChatStreamSettingsDialog, type ChatStreamSettingsTarget } from '@/components/chat-stream-settings-dialog'
 import { StatusIndicator } from '@/components/ui/data-browser'
+import { VoicePlayer } from '@/components/VoicePlayer'
 /**
  * MaiSaka 聊天流实时监控组件
  *
@@ -397,6 +398,7 @@ function buildMessageMediaKey(media: MaisakaMessageMedia, index: number) {
 
 /** 可放大查看的媒体对应的图库条目；内联数据直接显示，远端原文件需带登录态读取。 */
 function toGalleryImage(item: MaisakaMessageMedia): GalleryImage | null {
+  if (item.kind === 'voice') return null
   const inlineSource = item.data_url?.trim() ?? ''
   const remoteSource = item.url.trim()
   if (!inlineSource && !remoteSource) return null
@@ -427,14 +429,14 @@ function MessageMediaItemBody({
   const remoteSource = item.url.trim()
   const canShowOriginal = Boolean(inlineSource || remoteSource)
   const [showOriginal, setShowOriginal] = useState(
-    canShowOriginal && Boolean(item.default_original)
+    canShowOriginal && (item.kind === 'voice' || Boolean(item.default_original))
   )
   const [resolvedSource, setResolvedSource] = useState(inlineSource)
   const [loadState, setLoadState] = useState<'idle' | 'loading' | 'error'>(
     showOriginal && !inlineSource ? 'loading' : 'idle'
   )
   const [loadRequestId, setLoadRequestId] = useState(showOriginal && !inlineSource ? 1 : 0)
-  const label = item.kind === 'emoji' ? '表情包' : '图片'
+  const label = { image: '图片', emoji: '表情包', voice: '语音' }[item.kind]
 
   useEffect(() => {
     if (loadRequestId <= 0 || inlineSource || !remoteSource) {
@@ -471,6 +473,19 @@ function MessageMediaItemBody({
       }
     }
   }, [inlineSource, label, loadRequestId, remoteSource])
+
+  if (item.kind === 'voice') {
+    if (resolvedSource) return <VoicePlayer key={resolvedSource} src={resolvedSource} />
+    if (loadState === 'error') {
+      return (
+        <Button variant="ghost" size="sm" onClick={() => {
+          setLoadState('loading')
+          setLoadRequestId((id) => id + 1)
+        }}>语音读取失败，点击重试</Button>
+      )
+    }
+    return <span role="status" className="text-muted-foreground text-xs">正在读取语音…</span>
+  }
 
   return (
     <>
@@ -746,6 +761,19 @@ function PlannerInterruptedCard({ data }: { data: PlannerFinalizedEvent }) {
   )
 }
 
+function ModelReasoning({ text, durationMs }: { text?: string | null; durationMs: number }) {
+  if (!text?.trim()) return null
+
+  return (
+    <details className="text-muted-foreground text-xs">
+      <summary className="hover:text-foreground w-full cursor-pointer" data-maisaka-expand title="按本次模型请求耗时计算">
+        已思考{durationMs > 0 && ` ${(durationMs / 1000).toLocaleString('zh-CN', { maximumFractionDigits: 2 })} 秒`}
+      </summary>
+      <p className="mt-1 border-l-2 pl-3 leading-relaxed wrap-break-word whitespace-pre-wrap">{text}</p>
+    </details>
+  )
+}
+
 function PlannerResponseCard({ data }: { data: PlannerResponseEvent }) {
   return (
     <div className="flex items-start gap-3">
@@ -761,7 +789,7 @@ function PlannerResponseCard({ data }: { data: PlannerResponseEvent }) {
             {data.prompt_tokens}+{data.completion_tokens} tokens
           </Badge>
         </div>
-        {data.content && <CollapsibleText text={data.content} maxLines={6} />}
+        <ModelReasoning text={data.content} durationMs={data.duration_ms} />
         <ToolCallBadges toolCalls={data.tool_calls} />
       </div>
     </div>
@@ -773,7 +801,7 @@ function ModelNameBadge({ modelName }: { modelName?: string | null }) {
 
   return (
     <Badge variant="outline" className="text-muted-foreground min-w-0 max-w-full text-[10px] font-normal opacity-65" title={modelName}>
-      <span className="max-w-64 truncate">模型: {modelName}</span>
+      <span className="max-w-64 truncate">{modelName}</span>
     </Badge>
   )
 }
@@ -820,12 +848,7 @@ function PlannerFinalizedCard({
         </div>
 
         {/* 没有文本内容时只保留标题行，后面直接跟工具 */}
-        {planner?.reasoning?.trim() && (
-          <div className="border-muted-foreground/30 bg-muted/40 space-y-1 rounded-r-md border-l-2 px-3 py-2">
-            <div className="text-muted-foreground text-xs font-medium">模型思考</div>
-            <CollapsibleText text={planner.reasoning} maxLines={6} className="text-muted-foreground text-xs" />
-          </div>
-        )}
+        {planner && <ModelReasoning text={planner.reasoning} durationMs={planner.duration_ms} />}
         {planner?.content && (
           <div className="space-y-1">
             <CollapsibleText text={planner.content} maxLines={6} className="text-foreground/90" />
@@ -934,16 +957,17 @@ function ReplySentLine({ tool }: { tool: DisplayTool }) {
   const failed = !tool.success
   const reason = tool.error_message || tool.summary || '未返回失败原因'
   return (
-    <div className="space-y-1.5 py-1">
-      <div className="flex items-start gap-3">
-        <span className="mt-2 flex shrink-0">
+    <div className="flex flex-wrap items-start gap-x-2 gap-y-1">
+      <div className="flex min-w-0 flex-1 items-start gap-2">
+        <span className="mt-1.5 flex shrink-0">
           <StatusLight status={failed ? 'error' : 'on'} label={failed ? '未送达' : '发送成功'} />
         </span>
-        <p className={cn('min-w-0 text-[15px] leading-7 font-medium break-words whitespace-pre-wrap', failed && 'text-destructive')}>
+        <p className={cn('min-w-0 text-[15px] leading-5 font-medium break-words whitespace-pre-wrap', failed && 'text-destructive')}>
           {failed ? sent || '回复未发出' : sent || tool.summary || '未返回结果摘要。'}
         </p>
       </div>
-      {failed && <p className="text-destructive pl-5 text-xs break-words">未送达 · {reason}</p>}
+      <ToolFullJsonBlock tool={tool} />
+      {failed && <p className="text-destructive w-full pl-4 text-xs break-words">未送达 · {reason}</p>}
     </div>
   )
 }
@@ -987,8 +1011,8 @@ function ReplyToolArguments({
 
   return (
     // 内边距交给 DataPanel 的主题默认值，避免内容贴到粗描边上。
-    <DataPanel className="space-y-5 text-xs">
-      <div className="flex flex-wrap items-center gap-2">
+    <DataPanel className="space-y-1.5 text-xs">
+      <div className="flex flex-wrap items-center gap-1.5 empty:hidden">
         {messageId && (
           <Button
             type="button"
@@ -1020,12 +1044,11 @@ function ReplyToolArguments({
           )
         })}
         {args.set_quote === true && <Badge variant="outline">引用</Badge>}
-        {!tool.status && <ToolFullJsonBlock tool={tool} />}
       </div>
       {!tool.status && <ReplySentLine tool={tool} />}
       {(args.expression_intent != null || chatAnalysisText || replyStyle) && (
         <FoldSection title="回复依据" open={basisOpen} onOpenChange={setBasisOpen}>
-          <div className="space-y-4 pt-3 leading-6">
+          <div className="space-y-2 pt-1.5 leading-6">
             {replyStyle && (
               <div className="space-y-1">
                 <div className="text-muted-foreground">表达力度</div>
@@ -1779,21 +1802,10 @@ function ReplierResponseCard({ data }: { data: ReplierResponseEvent }) {
         {data.content && (
           <CollapsibleText text={data.content} maxLines={6} className="text-foreground/90" />
         )}
-        {data.reasoning && (
-          <details className="mt-1">
-            <summary className="text-muted-foreground hover:text-foreground cursor-pointer text-xs">
-              思考过程
-            </summary>
-            <CollapsibleText
-              text={data.reasoning}
-              maxLines={8}
-              className="text-muted-foreground mt-1"
-            />
-          </details>
-        )}
+        <ModelReasoning text={data.reasoning} durationMs={data.duration_ms} />
         {(data.prompt_tokens > 0 || data.completion_tokens > 0) && (
           <div className="text-muted-foreground mt-1 flex gap-3 text-xs">
-            {data.model_name && <span>模型: {data.model_name}</span>}
+            {data.model_name && <span>{data.model_name}</span>}
             <span>输入: {data.prompt_tokens}</span>
             <span>输出: {data.completion_tokens}</span>
             <span>总计: {data.total_tokens}</span>

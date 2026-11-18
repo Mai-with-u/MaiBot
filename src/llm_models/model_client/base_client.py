@@ -12,6 +12,7 @@ from src.common.logger import get_logger
 from src.common.startup_diagnostics import diagnostic_stage
 from src.config.config import config_manager
 from src.config.model_configs import APIProvider, ModelInfo, validate_provider_for_request
+from src.plugin_runtime.provider_formats import ProviderFormats
 from src.llm_models.payload_content.context_item import (
     ContextItem,
     ModelOutputItem,
@@ -354,12 +355,21 @@ ClientRequest = ResponseRequest | EmbeddingRequest | ImageEmbeddingRequest | Aud
 """统一客户端请求类型。"""
 
 
+@dataclass(frozen=True)
+class SpeechAudio:
+    data: bytes
+    media_type: str
+
+
 class BaseClient(ABC):
     """
     基础客户端
     """
 
     api_provider: APIProvider
+
+    async def synthesize_speech(self, model: str, text: str, voice_id: str | None) -> SpeechAudio:
+        raise ValueError(f"客户端类型 {self.api_provider.client_type} 未实现语音合成")
 
     def __init__(self, api_provider: APIProvider) -> None:
         """初始化基础客户端。
@@ -456,6 +466,7 @@ class ClientProviderRegistration:
 
     builtin: bool = False
     """是否为主程序内置 Provider。"""
+    formats: ProviderFormats = field(default_factory=ProviderFormats)
 
 
 class ClientRegistry:
@@ -548,6 +559,7 @@ class ClientRegistry:
             version=registration.version,
             description=registration.description,
             builtin=registration.builtin,
+            formats=registration.formats,
         )
         if registration.owner_plugin_id:
             self._owner_client_types.setdefault(registration.owner_plugin_id, set()).add(client_type)
@@ -611,6 +623,7 @@ class ClientRegistry:
                     version=registration.version,
                     description=registration.description,
                     builtin=False,
+                    formats=registration.formats,
                 )
             )
 

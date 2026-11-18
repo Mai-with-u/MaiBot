@@ -1,4 +1,17 @@
 /* 模型 · 模型库：厂商列表、联网服务、模型列表工具栏和表格操作。 */
+/* 工具栏靠右，默认向左提示；子菜单翻到右侧时跟随 Radix 的实际落点。 */
+[data-other-models-trigger] > svg {
+  order: -1;
+  margin-left: 0;
+  transform: scaleX(-1);
+}
+
+body:has([data-other-models-menu][data-side='right']) [data-other-models-trigger] > svg {
+  order: 1;
+  margin-left: auto;
+  transform: none;
+}
+
 [data-library-label] {
   display: flex;
   align-items: center;

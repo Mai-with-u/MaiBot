@@ -198,7 +198,7 @@ export async function updateModelConfig(
 }
 
 /**
- * 模型配置文件副本信息
+ * 分工方案信息
  */
 export interface ModelConfigVersionInfo {
   id: string
@@ -213,7 +213,7 @@ export interface ModelConfigVersionInfo {
 }
 
 /**
- * 模型配置文件副本列表
+ * 分工方案列表
  */
 export interface ModelConfigVersionListResponse {
   success: boolean
@@ -222,12 +222,12 @@ export interface ModelConfigVersionListResponse {
 }
 
 /**
- * 获取模型配置文件副本列表
+ * 获取分工方案列表
  */
 export async function getModelConfigVersions(): Promise<ModelConfigVersionListResponse> {
   return backendApi.get<ModelConfigVersionListResponse>(`${API_BASE}/model/versions`, {
     cache: 'no-store',
-    errorMessage: '获取模型配置副本失败',
+    errorMessage: '获取分工方案失败',
   })
 }
 
@@ -239,21 +239,21 @@ export async function createModelConfigVersion(label: string): Promise<ModelConf
     `${API_BASE}/model/versions`,
     {
       body: { label },
-      errorMessage: '创建模型配置副本失败',
+      errorMessage: '创建分工方案失败',
     }
   )
   return result.version
 }
 
 /**
- * 切换当前启用的模型配置文件副本
+ * 切换当前启用的分工方案
  */
 export async function switchModelConfigVersion(versionId: string): Promise<ModelConfigVersionInfo> {
   const result = await backendApi.post<{ version: ModelConfigVersionInfo }>(
     `${API_BASE}/model/versions/${encodeURIComponent(versionId)}/activate`,
     {
       body: { archive_current: true },
-      errorMessage: '切换模型配置副本失败',
+      errorMessage: '切换分工方案失败',
     }
   )
   invalidateConfigDataCache('model')
@@ -261,7 +261,7 @@ export async function switchModelConfigVersion(versionId: string): Promise<Model
 }
 
 /**
- * 更新模型配置副本名称
+ * 更新分工方案名称
  */
 export async function updateModelConfigVersionLabel(
   versionId: string,
@@ -271,18 +271,18 @@ export async function updateModelConfigVersionLabel(
     `${API_BASE}/model/versions/${encodeURIComponent(versionId)}`,
     {
       body: { label },
-      errorMessage: '更新模型配置副本失败',
+      errorMessage: '更新分工方案失败',
     }
   )
   return result.version
 }
 
 /**
- * 删除模型配置副本
+ * 删除分工方案
  */
 export async function deleteModelConfigVersion(versionId: string): Promise<void> {
   await backendApi.delete(`${API_BASE}/model/versions/${encodeURIComponent(versionId)}`, {
-    errorMessage: '删除模型配置副本失败',
+    errorMessage: '删除分工方案失败',
   })
 }
 
@@ -353,6 +353,11 @@ export interface ModelClientType {
   version: string
   description: string
   builtin: boolean
+  formats?: {
+    asr: Record<string, { label: string; voices: Record<string, string> }>
+    tts: Record<string, { label: string; voices: Record<string, string> }>
+    web: ('web_search' | 'web_fetch')[]
+  }
 }
 
 /**
@@ -467,6 +472,15 @@ export async function testModelCapability(modelName: string): Promise<ModelTestR
   return backendApi.post<ModelTestResult>('/api/webui/models/test-model', {
     body: { model_name: modelName },
     errorMessage: '测试模型能力失败',
+  })
+}
+
+export function previewSpeech(
+  model: string, voice: string, connection: { api_provider: string } | { draft_api_key: string }, signal: AbortSignal,
+) {
+  return backendApi.post<Blob>('/api/webui/models/preview-speech', {
+    body: { model_identifier: model, voice_id: voice, ...connection },
+    parse: 'blob', signal, errorMessage: '语音试听失败',
   })
 }
 

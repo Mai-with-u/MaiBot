@@ -854,9 +854,9 @@ class ChatConfig(ConfigBase):
 
     max_context_size: int = Field(
         default=50,
-        ge=30,
-        le=300,
         json_schema_extra={
+            "minValue": 30,
+            "maxValue": 300,
             "x-chat-settings": {"scope": "group", "row": 10, "quick": True},
             "label": {
                 "zh_CN": "群聊上下文",
@@ -871,9 +871,9 @@ class ChatConfig(ConfigBase):
 
     max_private_context_size: int = Field(
         default=75,
-        ge=30,
-        le=300,
         json_schema_extra={
+            "minValue": 30,
+            "maxValue": 300,
             "x-chat-settings": {"scope": "private", "row": 10, "quick": True},
             "label": {
                 "zh_CN": "私聊上下文",

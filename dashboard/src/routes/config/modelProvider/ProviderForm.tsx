@@ -40,6 +40,7 @@ interface ProviderFormProps {
   editingProvider: APIProvider | null
   editingIndex: number | null
   providers: APIProvider[]
+  fixedProtocol?: boolean
   onSave: (provider: APIProvider, index: number | null, templateId?: string) => Promise<void> | void
   tourState: { isRunning: boolean }
 }
@@ -50,6 +51,7 @@ export function ProviderForm({
   editingProvider,
   editingIndex,
   providers,
+  fixedProtocol = false,
   onSave,
   tourState,
 }: ProviderFormProps) {
@@ -106,6 +108,11 @@ export function ProviderForm({
     setShowApiKey(false)
     setAdvancedOpen(false)
 
+    if (fixedProtocol) {
+      setSelectedTemplate('custom')
+      return
+    }
+
     // 编辑时匹配已有配置；新增时默认使用 DeepSeek 模板。
     if (editingIndex !== null && editingProvider) {
       const matchedTemplate = PROVIDER_TEMPLATES.find(
@@ -136,7 +143,7 @@ export function ProviderForm({
           : null
       )
     }
-  }, [open, editingProvider, editingIndex])
+  }, [open, editingProvider, editingIndex, fixedProtocol])
 
   const isUsingTemplate = useMemo(() => selectedTemplate !== 'custom', [selectedTemplate])
   const isMaiReplier = selectedTemplate === 'mai_replier'
@@ -145,7 +152,7 @@ export function ProviderForm({
     [selectedTemplate]
   )
   const isClientTypeLocked = Boolean(
-    isUsingTemplate && !selectedTemplateConfig?.allowed_client_types?.length
+    fixedProtocol || (isUsingTemplate && !selectedTemplateConfig?.allowed_client_types?.length)
   )
   const clientTypeOptions = useMemo(() => {
     const options = [...clientTypes]
@@ -272,7 +279,7 @@ export function ProviderForm({
           <DialogBody type="auto" data-form-scroll="true" viewportClassName="pr-0">
           <div className="grid gap-5 py-3">
             <FormSection title="连接">
-              <FormRow
+              {!fixedProtocol && <FormRow
                 label="模板"
                 htmlFor="template"
                 data-tour="provider-template-select"
@@ -350,7 +357,7 @@ export function ProviderForm({
                     {`已自动配置连接信息，保存后添加全部 ${selectedTemplateConfig.models.length} 个预设模型，仅用于回复模型。`}
                   </p>
                 )}
-              </FormRow>
+              </FormRow>}
 
               <FormRow
                 label="名称"

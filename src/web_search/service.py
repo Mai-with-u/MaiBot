@@ -12,6 +12,7 @@ from .adapters.anysearch import AnySearchAdapter
 from .adapters.deepseek import DeepSeekAdapter
 from .adapters.exa import ExaAdapter
 from .adapters.firecrawl import FirecrawlAdapter
+from .adapters.plugin import PluginWebAdapter
 from .adapters.stepsearch import MCPCaller, StepSearchAdapter
 from .adapters.tavily import TavilyAdapter
 from .config import WebRuntimeConfig, require_web_service
@@ -59,8 +60,10 @@ class WebSearchService:
             adapter = ExaAdapter(settings, self.transport)
         elif settings.adapter == "firecrawl":
             adapter = FirecrawlAdapter(settings, self.transport)
-        else:
+        elif settings.adapter == "stepsearch_mcp":
             adapter = StepSearchAdapter(settings, self.mcp, invocation, context)
+        else:
+            adapter = PluginWebAdapter(name, settings)
         arguments = invocation.arguments
         try:
             async with asyncio.timeout(settings.timeout):

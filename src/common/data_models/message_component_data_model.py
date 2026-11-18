@@ -145,15 +145,15 @@ class VoiceComponent(BaseMessageComponentModel, ByteComponent):
             from src.common.utils.utils_file import FileUtils
 
             try:
-                file_path = FileUtils.get_file_path_by_hash(self.binary_hash)
-                self.binary_data = await asyncio.to_thread(file_path.read_bytes)
+                self.binary_data = await asyncio.to_thread(FileUtils.read_voice, self.binary_hash)
             except Exception as e:
                 raise ValueError(f"通过 voice_hash 加载语音二进制数据时发生错误: {e}") from e
 
     async def to_seg(self) -> Seg:
         if not self.binary_data:
             await self.load_voice_binary()
-        return Seg(type="voice", data=base64.b64encode(self.binary_data).decode())
+        encoded = await asyncio.to_thread(lambda: base64.b64encode(self.binary_data).decode("ascii"))
+        return Seg(type="voice", data=encoded)
 
 
 class FileComponent(BaseMessageComponentModel):

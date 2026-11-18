@@ -20,6 +20,10 @@ export const TASK_META: Record<string, TaskMeta> = {
   memory: { name: '记忆', desc: '总结并写回长期记忆', fallback: '用工具模型' },
   learner: { name: '学习', desc: '学习表达方式和黑话', fallback: '用工具模型' },
   voice: { name: '语音识别', desc: '把语音消息转成文字', hideTemperature: true, hideMaxTokens: true },
+  tts: {
+    name: '语音合成', desc: '把回复正文作为语音附件发送',
+    hideTemperature: true, hideMaxTokens: true, hideStrategy: true, singleModel: true,
+  },
   web_search: { name: '联网搜索', desc: '搜索网页、读取链接', singleModel: true },
   embedding: {
     name: '文本嵌入', desc: '给记忆和表达建立索引',

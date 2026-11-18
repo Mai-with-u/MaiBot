@@ -43,6 +43,7 @@ export const PROVIDER_TEMPLATES: ProviderTemplate[] = [
     id: 'deepseek',
     name: 'DeepSeek',
     base_url: 'https://api.deepseek.com',
+    baseUrlPattern: /^https:\/\/api\.deepseek\.com\/v1$/,
     client_type: 'openai',
     allowed_client_types: ['openai', 'openai_responses'],
     display_name: 'DeepSeek',

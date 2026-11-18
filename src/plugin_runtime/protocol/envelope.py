@@ -13,6 +13,7 @@ import time
 from pydantic import BaseModel, Field, field_validator, model_validator
 
 from src.plugin_runtime.desktop_pet_buttons import DesktopPetButton
+from src.plugin_runtime.provider_formats import ProviderFormats
 from src.plugin_runtime.webui_schema import WebUIExtension
 
 
@@ -233,6 +234,8 @@ class ComponentDeclaration(BaseModel):
 
 class LLMProviderDeclaration(BaseModel):
     """单个 LLM Provider 声明。"""
+
+    formats: ProviderFormats = Field(default_factory=ProviderFormats)
 
     client_type: str = Field(description="客户端类型标识，对应模型配置中的 api_providers[].client_type")
     """客户端类型标识。"""

@@ -25,7 +25,7 @@ import type {
 } from './types'
 
 interface ModelInfo {
-  model_type: 'llm' | 'embedding' | 'image_embedding'
+  model_type: 'llm' | 'embedding' | 'image_embedding' | 'asr' | 'tts'
   model_identifier: string
   name: string
   api_provider: string

@@ -499,7 +499,7 @@ def _create_model_config_version_id() -> str:
 
 
 def _default_model_config_version_label() -> str:
-    return f"模型配置副本 {time.strftime('%Y-%m-%d %H:%M:%S')}"
+    return f"分工方案 {time.strftime('%Y-%m-%d %H:%M:%S')}"
 
 
 def _default_model_config_archive_label() -> str:

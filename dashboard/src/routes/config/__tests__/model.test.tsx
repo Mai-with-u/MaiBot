@@ -5,6 +5,7 @@ import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest'
 import { ModelConfigPage } from '../model'
 import { modelListCache } from '../model/constants'
 import type { ModelInfo } from '../model/types'
+import { WebSearchDialog } from '../webSearch/WebSearchDialog'
 import * as configApi from '@/lib/config-api'
 import * as configSearchNavigation from '@/lib/config-search-navigation'
 import * as expressionApi from '@/lib/expression-api'
@@ -58,6 +59,7 @@ vi.mock('@/lib/config-api', () => ({
   updateModelConfigSection: vi.fn(),
   testProviderConnection: vi.fn(),
   testModelCapability: vi.fn(),
+  previewSpeech: vi.fn(),
   fetchProviderModels: vi.fn(),
   fetchModelClientTypes: vi.fn(),
 }))
@@ -65,10 +67,13 @@ vi.mock('@/lib/config-api', () => ({
 vi.mock('@/lib/expression-api', () => ({ getExpressionVectorBuildProgress: vi.fn() }))
 vi.mock('@/lib/memory-api', () => ({ getMemoryRuntimeConfig: vi.fn() }))
 
-vi.mock('../modelProvider/ProviderForm', () => ({
-  ProviderForm: ({ open }: { open: boolean }) =>
-    open ? <div data-testid="provider-form">厂商表单</div> : null,
-}))
+vi.mock('../modelProvider/ProviderForm', async (importActual) => {
+  const { ProviderForm } = await importActual<typeof import('../modelProvider/ProviderForm')>()
+  return {
+    ProviderForm: (props: React.ComponentProps<typeof ProviderForm>) => props.fixedProtocol
+      ? <ProviderForm {...props} /> : props.open ? <div data-testid="provider-form">厂商表单</div> : null,
+  }
+})
 
 function baseConfig() {
   return {
@@ -122,6 +127,7 @@ function schemaWithTasks() {
             { name: 'embedding', type: 'object', advanced: false, description: '嵌入模型' },
             { name: 'vlm', type: 'object', advanced: false, description: '视觉' },
             { name: 'voice', type: 'object', advanced: true, description: '语音' },
+            { name: 'tts', type: 'object', advanced: true, description: '语音合成' },
           ],
         },
       },
@@ -276,6 +282,7 @@ beforeEach(() => {
   window.history.replaceState(null, '', '/config/model')
   localStorage.removeItem('maibot-model-task-guide-dismissed')
   installPointerCaptureStub()
+  vi.mocked(configApi.fetchModelClientTypes).mockResolvedValue([])
   vi.mocked(configApi.getModelConfigCached).mockResolvedValue(baseConfig() as never)
   vi.mocked(configApi.getModelConfig).mockResolvedValue(baseConfig() as never)
   vi.mocked(configApi.getModelConfigSchema).mockResolvedValue(baseSchema() as never)
@@ -344,7 +351,7 @@ async function openAddModel(user: ReturnType<typeof userEvent.setup>) {
 }
 
 async function openVersionAction(user: ReturnType<typeof userEvent.setup>, name: string) {
-  await user.click(screen.getByRole('button', { name: 'Bot 任务配置副本' }))
+  await user.click(screen.getByRole('button', { name: '分工方案' }))
   await user.click(screen.getByRole('menuitem', { name }))
 }
 
@@ -364,11 +371,231 @@ async function selectTaskModel(user: ReturnType<typeof userEvent.setup>, editor:
 }
 
 describe('ModelConfigPage 特征化', () => {
+  const mediaPlugin: configApi.ModelClientType = {
+    client_type: 'fixture.media', owner_plugin_id: 'fixture.plugin', version: '1', description: '',
+    builtin: false, formats: {
+      asr: {}, tts: { 'deepseek-tts': { label: '插件朗读', voices: { soft: '轻声' } } }, web: ['web_search'],
+    },
+  }
+
+  it('同标识符的插件合成模板使用自己的账号和音色', async () => {
+    const user = userEvent.setup()
+    const config = { ...baseConfig(), models: [], api_providers: [
+      { name: '官方账号', client_type: 'openai', api_key: 'a', base_url: 'https://api.deepseek.com' },
+      { name: '插件账号', client_type: 'fixture.media', api_key: 'b', base_url: 'https://example.org' },
+    ] }
+    vi.mocked(configApi.getModelConfigCached).mockResolvedValue(config as never)
+    vi.mocked(configApi.getModelConfig).mockResolvedValue(config as never)
+    vi.mocked(configApi.fetchModelClientTypes).mockResolvedValueOnce([mediaPlugin])
+    await renderModelPage()
+    await openConfigurationTab(user)
+    await user.click(document.querySelector<HTMLButtonElement>('[data-tour="add-model-button"]')!)
+    await user.click(screen.getByRole('menuitem', { name: '其他模型' }))
+    fireEvent.click(await screen.findByRole('menuitem', { name: '语音合成模型' }))
+    const dialog = within(await screen.findByRole('dialog', { name: '添加语音合成模型' }))
+    await user.click(dialog.getByLabelText(/语音类型/))
+    await user.click(await screen.findByRole('option', { name: 'fixture.media' }))
+    await user.click(dialog.getByLabelText(/合成模型/))
+    await user.click(await screen.findByRole('option', { name: /插件朗读/ }))
+    expect(dialog.getByLabelText(/连接方式/)).toHaveTextContent('插件账号')
+    expect(dialog.getByLabelText(/音色/)).toHaveTextContent('轻声')
+    expect(dialog.getByRole('button', { name: '试听' })).toBeEnabled()
+    await user.click(dialog.getByRole('button', { name: '保存' }))
+    await waitFor(() => expect(configApi.updateModelConfig).toHaveBeenCalled())
+    expect(vi.mocked(configApi.updateModelConfig).mock.calls.at(-1)![0].models).toContainEqual(
+      expect.objectContaining({ model_identifier: 'deepseek-tts', model_type: 'tts',
+        api_provider: '插件账号', extra_params: { voice_id: 'soft' } })
+    )
+  })
+
+  it('从语音表单新建插件连接，保存后继续设置模型名称', async () => {
+    const user = userEvent.setup()
+    vi.mocked(configApi.fetchModelClientTypes).mockResolvedValue([mediaPlugin])
+    await renderModelPage()
+    await openConfigurationTab(user)
+    await user.click(document.querySelector<HTMLButtonElement>('[data-tour="add-model-button"]')!)
+    await user.click(screen.getByRole('menuitem', { name: '其他模型' }))
+    fireEvent.click(await screen.findByRole('menuitem', { name: '语音合成模型' }))
+    const form = within(await screen.findByRole('dialog', { name: '添加语音合成模型' }))
+    await user.click(form.getByLabelText(/语音类型/))
+    await user.click(await screen.findByRole('option', { name: 'fixture.media' }))
+    expect(form.queryByLabelText(/合成模型/)).not.toBeInTheDocument()
+    expect(form.getByRole('button', { name: '保存' })).toBeDisabled()
+    await user.click(form.getByLabelText(/连接方式/))
+    await user.click(await screen.findByRole('option', { name: /填写其他连接信息/ }))
+    const connection = within(await screen.findByRole('dialog', { name: '添加提供商' }))
+    await user.type(connection.getByLabelText(/基础 URL/), 'https://example.org/v1')
+    await user.click(connection.getByRole('button', { name: '保存' }))
+    await waitFor(() => expect(screen.queryByRole('dialog', { name: '添加提供商' })).not.toBeInTheDocument())
+    expect(form.getByLabelText(/连接方式/)).toHaveTextContent('fixture.media')
+    await user.click(form.getByLabelText(/合成模型/))
+    await user.click(await screen.findByRole('option', { name: '插件朗读' }))
+    expect(form.getByRole('button', { name: '试听' })).toBeEnabled()
+    await user.clear(form.getByLabelText(/名称/))
+    await user.type(form.getByLabelText(/名称/), '轻声朗读')
+    await user.click(form.getByRole('button', { name: '保存' }))
+    await waitFor(() => expect(configApi.updateModelConfig).toHaveBeenCalled())
+    expect(vi.mocked(configApi.updateModelConfig).mock.calls.at(-1)![0].models).toContainEqual(
+      expect.objectContaining({ name: '轻声朗读', api_provider: 'fixture.media', model_identifier: 'deepseek-tts' })
+    )
+  })
+
+  it('可以保存由插件自行鉴权的联网服务', async () => {
+    const user = userEvent.setup()
+    const onSave = vi.fn().mockResolvedValue(undefined)
+    vi.mocked(configApi.fetchModelClientTypes).mockResolvedValueOnce([mediaPlugin])
+    render(<WebSearchDialog config={{ services: {}, preview_chars: 4000 }} models={[]} providers={[]}
+      editingName={null} assignedService="" onClose={vi.fn()} onSave={onSave} />)
+    await user.type(screen.getByLabelText('服务名称'), '插件搜索')
+    await user.click(screen.getByLabelText('服务商'))
+    await user.click(await screen.findByRole('option', { name: /fixture\.media/ }))
+    await user.click(screen.getByRole('button', { name: '保存' }))
+    await waitFor(() => expect(onSave).toHaveBeenCalledWith(expect.objectContaining({
+      services: { 插件搜索: expect.objectContaining({ adapter: 'plugin:fixture.plugin/fixture.media', api_key: '' }) },
+    })))
+  })
+
   it('初始加载调用 getModelConfigCached + getModelConfigSchema 并渲染', async () => {
     await renderModelPage()
     expect(configApi.getModelConfigCached).toHaveBeenCalled()
     expect(configApi.getModelConfigSchema).toHaveBeenCalled()
     expect(screen.getByRole('tab', { name: /^模型库/ })).toBeInTheDocument()
+  })
+
+  it.each([true, false])('从模板保存 DeepSeek ASR（复用现有厂商 %s）', async (reuse) => {
+    const user = userEvent.setup()
+    const config = {
+      ...baseConfig(),
+      api_providers: reuse ? [{
+        name: '语音账号', base_url: 'https://api.deepseek.com/v1/', api_key: 'saved-key', client_type: 'openai_responses',
+      }] : [],
+      models: [],
+    }
+    vi.mocked(configApi.getModelConfigCached).mockResolvedValue(config as never)
+    vi.mocked(configApi.getModelConfig).mockResolvedValue(config as never)
+    await renderModelPage()
+    await openConfigurationTab(user)
+    await user.click(document.querySelector<HTMLButtonElement>('[data-tour="add-model-button"]')!)
+    await user.click(screen.getByRole('menuitem', { name: '其他模型' }))
+    fireEvent.click(await screen.findByRole('menuitem', { name: '语音识别模型' }))
+    const dialog = within(await screen.findByRole('dialog', { name: '添加语音识别' }))
+    await user.click(dialog.getByLabelText(/语音类型/))
+    await user.click(await screen.findByRole('option', { name: 'DeepSeek' }))
+    if (!reuse) await user.type(dialog.getByLabelText(/API Key/), 'new-key')
+    await user.click(dialog.getByLabelText(/识别模型/))
+    await user.click(await screen.findByRole('option', { name: 'DeepSeek ASR' }))
+    await user.click(dialog.getByRole('button', { name: '保存' }))
+    const provider = reuse ? '语音账号' : 'DeepSeek'
+    await waitFor(() => expect(configApi.updateModelConfig).toHaveBeenCalled())
+    const saved = vi.mocked(configApi.updateModelConfig).mock.calls.at(-1)![0]
+    expect(saved.models).toEqual([expect.objectContaining({
+      name: 'DeepSeek ASR', model_identifier: 'deepseek-asr', model_type: 'asr', api_provider: provider,
+    })])
+    if (!reuse) expect(saved.api_providers).toEqual([expect.objectContaining({
+      name: provider, base_url: 'https://api.deepseek.com', api_key: 'new-key',
+    })])
+  })
+
+  it.each([
+    ['DeepSeek TTS', 'deepseek-tts', 'DeepSeek', '海星', '暗潮（男声）', 'tide'],
+    ['StepAudio 3 TTS', 'stepaudio-3-tts', 'StepFun', '自信男声', '气质温婉', 'elegantgentle-female'],
+  ])('从模型库试听 %s 并保存所选音色', async (label, identifier, provider, initial, selected, voice) => {
+    const user = userEvent.setup()
+    await renderModelPage()
+    await openConfigurationTab(user)
+    await user.click(document.querySelector<HTMLButtonElement>('[data-tour="add-model-button"]')!)
+    await user.click(screen.getByRole('menuitem', { name: '其他模型' }))
+    fireEvent.click(await screen.findByRole('menuitem', { name: '语音合成模型' }))
+    const dialog = within(await screen.findByRole('dialog', { name: '添加语音合成模型' }))
+    expect(dialog.queryByLabelText(/连接方式/)).not.toBeInTheDocument()
+    await user.click(dialog.getByLabelText(/语音类型/))
+    await user.click(await screen.findByRole('option', { name: new RegExp(provider) }))
+    expect(dialog.queryByLabelText(/合成模型/)).not.toBeInTheDocument()
+    await user.type(dialog.getByLabelText(/API Key/), 'test-key')
+    await user.click(dialog.getByLabelText(/合成模型/))
+    await user.click(await screen.findByRole('option', { name: label }))
+    expect(dialog.getByLabelText(/音色/)).toHaveTextContent(initial)
+    expect(dialog.getByRole('button', { name: '试听' })).toBeEnabled()
+    await user.click(dialog.getByLabelText(/音色/))
+    await user.click(await screen.findByRole('option', { name: selected }))
+    vi.mocked(configApi.previewSpeech).mockResolvedValue(new Blob([], { type: 'audio/wav' }))
+    vi.stubGlobal('URL', class extends URL {
+      static createObjectURL = vi.fn(() => 'blob:preview')
+      static revokeObjectURL = vi.fn()
+    })
+    const play = vi.spyOn(HTMLMediaElement.prototype, 'play').mockResolvedValue(undefined)
+    const pause = vi.spyOn(HTMLMediaElement.prototype, 'pause').mockImplementation(() => {})
+    try {
+      await user.click(dialog.getByRole('button', { name: '试听' }))
+      expect(configApi.previewSpeech).toHaveBeenCalledWith(identifier, voice, { draft_api_key: 'test-key' }, expect.any(AbortSignal))
+      expect(play).toHaveBeenCalledOnce()
+      expect(configApi.updateModelConfig).not.toHaveBeenCalled()
+      await user.click(dialog.getByRole('button', { name: '停止' }))
+      await user.click(dialog.getByRole('button', { name: '试听' }))
+      expect(configApi.previewSpeech).toHaveBeenCalledTimes(1)
+      await user.click(dialog.getByLabelText(/音色/))
+      await user.click(await screen.findByRole('option', { name: new RegExp(initial) }))
+      await waitFor(() => expect(URL.revokeObjectURL).toHaveBeenCalledWith('blob:preview'))
+      expect(dialog.getByRole('button', { name: '试听' })).toBeEnabled()
+      await user.click(dialog.getByLabelText(/音色/))
+      await user.click(await screen.findByRole('option', { name: selected }))
+      await user.click(dialog.getByRole('button', { name: '保存' }))
+    } finally {
+      play.mockRestore()
+      pause.mockRestore()
+      vi.unstubAllGlobals()
+    }
+    await waitFor(() => expect(configApi.updateModelConfig).toHaveBeenCalled())
+    const saved = vi.mocked(configApi.updateModelConfig).mock.calls.at(-1)![0]
+    expect(saved.models).toContainEqual(expect.objectContaining({
+      name: label, model_identifier: identifier, model_type: 'tts',
+      api_provider: provider, extra_params: { voice_id: voice },
+    }))
+  })
+
+  it('从语音分工跳转到模型库添加语音识别模型', async () => {
+    const user = userEvent.setup()
+    const config = baseConfig()
+    vi.mocked(configApi.getModelConfigCached).mockResolvedValue({
+      ...config, model_task_config: { ...config.model_task_config, voice: { model_list: [] } },
+    } as never)
+    vi.mocked(configApi.getModelConfigSchema).mockResolvedValue(schemaWithTasks() as never)
+    await renderModelPage()
+    await user.click(screen.getByRole('tab', { name: /^分工/ }))
+    await user.click(screen.getByRole('button', { name: /MORE/ }))
+    const row = document.querySelector<HTMLElement>('[data-config-field-path="model_task_config.voice"]')!
+    await user.click(within(row).getByRole('button', { name: /设置|安排模型|开启/ }))
+    await user.click(screen.getByRole('button', { name: '添加语音识别模型' }))
+    const form = within(await screen.findByRole('dialog', { name: '添加语音识别' }))
+    await user.click(form.getByLabelText(/语音类型/))
+    await user.click(await screen.findByRole('option', { name: 'OpenAI' }))
+    await user.click(form.getByLabelText(/识别模型/))
+    await user.click(await screen.findByRole('option', { name: 'OpenAI GPT Transcribe' }))
+    await user.click(form.getByRole('button', { name: '保存' }))
+    expect(await screen.findByRole('tab', { name: /^模型库/, selected: true })).toBeInTheDocument()
+    expect(screen.queryByRole('dialog')).not.toBeInTheDocument()
+  })
+
+  it('语音合成分工只列出合成模型，并能打开模型库的添加卡片', async () => {
+    const user = userEvent.setup()
+    const config = baseConfig()
+    vi.mocked(configApi.getModelConfigCached).mockResolvedValue({
+      ...config,
+      models: [...config.models, { name: '朗读', model_type: 'tts', model_identifier: 'deepseek-tts', api_provider: 'openai' }],
+      model_task_config: { ...config.model_task_config, tts: { model_list: [] } },
+    } as never)
+    vi.mocked(configApi.getModelConfigSchema).mockResolvedValue(schemaWithTasks() as never)
+    await renderModelPage()
+    await user.click(screen.getByRole('button', { name: /MORE/ }))
+    const row = document.querySelector<HTMLElement>('[data-config-field-path="model_task_config.tts"]')!
+    await user.click(within(row).getByRole('button', { name: /设置|安排模型|开启/ }))
+    await user.click(within(await screen.findByRole('dialog')).getByRole('combobox', { name: '添加模型' }))
+    expect(await screen.findByRole('option', { name: /朗读/ })).toBeInTheDocument()
+    expect(screen.queryByRole('option', { name: /gpt-4/ })).not.toBeInTheDocument()
+    await user.keyboard('{Escape}')
+    await user.click(screen.getByRole('button', { name: '添加语音合成模型' }))
+    expect(await screen.findByRole('dialog', { name: '添加语音合成模型' })).toBeInTheDocument()
+    expect(window.location.search).toBe('?tab=configuration')
   })
 
   it('加载未完成时展示加载状态', async () => {
@@ -403,6 +630,7 @@ describe('ModelConfigPage 特征化', () => {
     const dialog = await screen.findByRole('dialog')
     expect(within(dialog).getByRole('heading', { name: '添加 LLM 模型' })).toBeInTheDocument()
     expect(within(dialog).queryByText('支持缓存')).not.toBeInTheDocument()
+    fireEvent.change(within(dialog).getByLabelText(/模型标识符/), { target: { value: 'deepseek-v4-pro' } })
     const thinkingSwitch = within(dialog).getByRole('switch', { name: '启用思考' })
     const effortSelect = within(dialog).getByRole('combobox', { name: '思考力度' })
     const webSearchSwitch = within(dialog).getByRole('switch', { name: '启用联网搜索' })
@@ -964,9 +1192,10 @@ describe('ModelConfigPage 特征化', () => {
     await waitFor(() =>
       expect(screen.getByRole('tab', { name: /^模型库/ })).toHaveAttribute('data-state', 'active')
     )
+    expect(screen.queryByRole('button', { name: '分工方案' })).not.toBeInTheDocument()
   })
 
-  it('保存并管理配置副本：空态、时间格式化、切换与删除', async () => {
+  it('保存并管理分工方案：空态、时间格式化、切换与删除', async () => {
     const user = userEvent.setup()
     const versions = {
       ...baseVersions(),
@@ -998,15 +1227,15 @@ describe('ModelConfigPage 特征化', () => {
     vi.mocked(configApi.getModelConfigVersions).mockResolvedValue(versions as never)
 
     await renderModelPage()
-    await openVersionAction(user, '保存当前配置副本')
-    const createDialog = await screen.findByRole('dialog', { name: '保存Bot 任务配置副本' })
-    await user.type(within(createDialog).getByLabelText('副本名称'), '备份-A')
-    await user.click(within(createDialog).getByRole('button', { name: '保存副本' }))
+    await openVersionAction(user, '保存当前分工方案')
+    const createDialog = await screen.findByRole('dialog', { name: '保存分工方案' })
+    await user.type(within(createDialog).getByLabelText('方案名称'), '备份-A')
+    await user.click(within(createDialog).getByRole('button', { name: '保存方案' }))
     await waitFor(() => expect(configApi.createModelConfigVersion).toHaveBeenCalledWith('备份-A'))
-    expect(screen.queryByRole('dialog', { name: '保存Bot 任务配置副本' })).not.toBeInTheDocument()
+    expect(screen.queryByRole('dialog', { name: '保存分工方案' })).not.toBeInTheDocument()
 
-    await openVersionAction(user, '管理配置副本')
-    const manageDialog = await screen.findByRole('dialog', { name: 'Bot 任务配置副本' })
+    await openVersionAction(user, '管理分工方案')
+    const manageDialog = await screen.findByRole('dialog', { name: '分工方案' })
     expect(within(manageDialog).getByText('夜间副本')).toBeInTheDocument()
     expect(within(manageDialog).getByText('无时间副本')).toBeInTheDocument()
     expect(within(manageDialog).getByText('-')).toBeInTheDocument()
@@ -1036,18 +1265,18 @@ describe('ModelConfigPage 特征化', () => {
     await user.click(switchButtons.find((button) => !(button as HTMLButtonElement).disabled)!)
     await waitFor(() => expect(configApi.switchModelConfigVersion).toHaveBeenCalledWith('v1'))
 
-    const reopened = await screen.findByRole('dialog', { name: 'Bot 任务配置副本' })
-    await user.click(within(reopened).getByRole('button', { name: '删除副本 夜间副本' }))
-    expect(await screen.findByText('删除Bot 任务配置副本')).toBeInTheDocument()
+    const reopened = await screen.findByRole('dialog', { name: '分工方案' })
+    await user.click(within(reopened).getByRole('button', { name: '删除方案 夜间副本' }))
+    expect(await screen.findByText('删除分工方案')).toBeInTheDocument()
     await user.click(screen.getByRole('button', { name: '删除' }))
     await waitFor(() => expect(configApi.deleteModelConfigVersion).toHaveBeenCalledWith('v1'))
   })
 
-  it('管理副本在没有任何未启用副本时展示空态', async () => {
+  it('管理方案在没有任何未启用副本时展示空态', async () => {
     const user = userEvent.setup()
     await renderModelPage()
-    await openVersionAction(user, '管理配置副本')
-    expect(await screen.findByText('暂无未启用副本')).toBeInTheDocument()
+    await openVersionAction(user, '管理分工方案')
+    expect(await screen.findByText('暂无其他分工方案')).toBeInTheDocument()
   })
 
   it('搜索字段参数会切到对应标签并滚动定位', async () => {
@@ -1118,7 +1347,7 @@ describe('ModelConfigPage 特征化', () => {
     expect(screen.queryByText('模型类别')).not.toBeInTheDocument()
     expect(document.querySelector('[data-task-board]')).toBeNull()
 
-    expect(screen.getByRole('button', { name: 'Bot 任务配置副本' })).toHaveTextContent('默认配置')
+    expect(screen.getByRole('button', { name: '分工方案' })).toHaveTextContent('默认配置')
   })
 
   it('空 embedding 首次分配不弹警告，Esc 关闭警告会放弃变更', async () => {
@@ -1157,13 +1386,13 @@ describe('ModelConfigPage 特征化', () => {
     vi.mocked(configApi.switchModelConfigVersion).mockRejectedValue(new Error('副本损坏'))
 
     await renderModelPage()
-    await user.click(screen.getByRole('button', { name: 'Bot 任务配置副本' }))
+    await user.click(screen.getByRole('button', { name: '分工方案' }))
     expect(screen.getByRole('menuitemradio', { name: /损坏副本/ })).toHaveAttribute('data-disabled')
     await user.click(screen.getByRole('menuitemradio', { name: /夜间副本/ }))
 
     await waitFor(() => expect(configApi.switchModelConfigVersion).toHaveBeenCalledWith('v1'))
     expect(toastMock).toHaveBeenCalledWith(
-      expect.objectContaining({ title: '切换副本失败', description: '副本损坏', variant: 'destructive' })
+      expect.objectContaining({ title: '切换分工方案失败', description: '副本损坏', variant: 'destructive' })
     )
     await openConfigurationTab(user)
     expectTableHasModel('gpt-4')
@@ -1318,38 +1547,38 @@ describe('ModelConfigPage 特征化', () => {
     expectTableHasModel('model-00')
   })
 
-  it('创建与管理副本对话框可取消，创建失败仍关闭弹窗', async () => {
+  it('创建与管理方案对话框可取消，创建失败仍关闭弹窗', async () => {
     const user = userEvent.setup()
     vi.mocked(configApi.getModelConfigVersions).mockResolvedValue(extraVersions() as never)
     vi.mocked(configApi.createModelConfigVersion).mockRejectedValue(new Error('磁盘满'))
 
     await renderModelPage()
-    await openVersionAction(user, '保存当前配置副本')
-    const createDialog = await screen.findByRole('dialog', { name: '保存Bot 任务配置副本' })
+    await openVersionAction(user, '保存当前分工方案')
+    const createDialog = await screen.findByRole('dialog', { name: '保存分工方案' })
     await user.click(within(createDialog).getByRole('button', { name: '取消' }))
-    expect(screen.queryByRole('dialog', { name: '保存Bot 任务配置副本' })).not.toBeInTheDocument()
+    expect(screen.queryByRole('dialog', { name: '保存分工方案' })).not.toBeInTheDocument()
 
-    await openVersionAction(user, '保存当前配置副本')
-    const retryCreate = await screen.findByRole('dialog', { name: '保存Bot 任务配置副本' })
-    await user.type(within(retryCreate).getByLabelText('副本名称'), '失败副本')
-    await user.click(within(retryCreate).getByRole('button', { name: '保存副本' }))
+    await openVersionAction(user, '保存当前分工方案')
+    const retryCreate = await screen.findByRole('dialog', { name: '保存分工方案' })
+    await user.type(within(retryCreate).getByLabelText('方案名称'), '失败副本')
+    await user.click(within(retryCreate).getByRole('button', { name: '保存方案' }))
     await waitFor(() =>
       expect(toastMock).toHaveBeenCalledWith(
-        expect.objectContaining({ title: '创建副本失败', description: '磁盘满' })
+        expect.objectContaining({ title: '创建分工方案失败', description: '磁盘满' })
       )
     )
     await waitFor(() =>
-      expect(screen.queryByRole('dialog', { name: '保存Bot 任务配置副本' })).not.toBeInTheDocument()
+      expect(screen.queryByRole('dialog', { name: '保存分工方案' })).not.toBeInTheDocument()
     )
 
-    await openVersionAction(user, '管理配置副本')
-    const manageDialog = await screen.findByRole('dialog', { name: 'Bot 任务配置副本' })
-    await user.click(within(manageDialog).getByRole('button', { name: '删除副本 夜间副本' }))
-    expect(await screen.findByText('删除Bot 任务配置副本')).toBeInTheDocument()
+    await openVersionAction(user, '管理分工方案')
+    const manageDialog = await screen.findByRole('dialog', { name: '分工方案' })
+    await user.click(within(manageDialog).getByRole('button', { name: '删除方案 夜间副本' }))
+    expect(await screen.findByText('删除分工方案')).toBeInTheDocument()
     await user.click(screen.getByRole('button', { name: '取消' }))
-    await waitFor(() => expect(screen.queryByText('删除Bot 任务配置副本')).not.toBeInTheDocument())
+    await waitFor(() => expect(screen.queryByText('删除分工方案')).not.toBeInTheDocument())
     clickDialogAction(manageDialog, '关闭')
-    await waitFor(() => expect(screen.queryByRole('dialog', { name: 'Bot 任务配置副本' })).not.toBeInTheDocument())
+    await waitFor(() => expect(screen.queryByRole('dialog', { name: '分工方案' })).not.toBeInTheDocument())
   })
 
   it('切换副本过程中管理弹窗展示切换中', async () => {
@@ -1359,18 +1588,18 @@ describe('ModelConfigPage 特征化', () => {
     vi.mocked(configApi.switchModelConfigVersion).mockImplementation(() => switchJob.promise as never)
 
     await renderModelPage()
-    await openVersionAction(user, '管理配置副本')
-    const manageDialog = await screen.findByRole('dialog', { name: 'Bot 任务配置副本' })
+    await openVersionAction(user, '管理分工方案')
+    const manageDialog = await screen.findByRole('dialog', { name: '分工方案' })
     const switchButtons = within(manageDialog).getAllByRole('button', { name: '切换' })
     await user.click(switchButtons.find((button) => !(button as HTMLButtonElement).disabled)!)
     expect(await screen.findByText('切换中...')).toBeInTheDocument()
     switchJob.resolve(extraVersions().active_version as never)
     await waitFor(() =>
-      expect(toastMock).toHaveBeenCalledWith(expect.objectContaining({ title: '副本已切换' }))
+      expect(toastMock).toHaveBeenCalledWith(expect.objectContaining({ title: '分工方案已切换' }))
     )
   })
 
-  it('DeepSeek Chat 模板写入 thinking 参数，且联网搜索不可用', async () => {
+  it('DeepSeek Chat 模板写入 thinking 参数，Flash 支持原生联网搜索', async () => {
     const user = userEvent.setup()
     const deepSeekChatConfig = {
       ...baseConfig(),
@@ -1395,6 +1624,10 @@ describe('ModelConfigPage 特征化', () => {
     expect(within(dialog).getByText('写入 thinking.type')).toBeInTheDocument()
     const webSearchSwitch = within(dialog).getByRole('switch', { name: '启用联网搜索' })
     expect(webSearchSwitch).toBeDisabled()
+    fireEvent.change(within(dialog).getByLabelText(/模型标识符/), { target: { value: 'deepseek-flash' } })
+    await user.click(webSearchSwitch)
+    expect(webSearchSwitch).toBeChecked()
+    expect(within(dialog).getByText(/服务端搜索（deepseek_web_search）/)).toBeInTheDocument()
 
     await user.click(within(dialog).getByRole('combobox', { name: '思考力度' }))
     await user.click(screen.getByRole('option', { name: '低' }))

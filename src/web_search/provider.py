@@ -15,6 +15,7 @@ from src.core.tooling import (
 )
 from src.maisaka.tool_result_store import ToolResultStore, tool_result_store
 
+from .adapters.plugin import find_web_plugin
 from .config import WebRuntimeConfig, WebSearchConfigError
 from .models import PageResult, WebSearchError
 from .service import WebSearchService
@@ -43,7 +44,15 @@ class WebSearchToolProvider:
             return []
         specs = []
         annotation = ToolAnnotation(read_only=True, destructive=False, open_world=True)
-        if config.search:
+
+        def available(name: str, operation: str) -> bool:
+            service = config.services.get(name)
+            if service and service.adapter.startswith("plugin:"):
+                plugin = find_web_plugin(service.adapter)
+                return bool(plugin and operation in plugin.formats.web)
+            return bool(name)
+
+        if available(config.search, "web_search"):
             service = config.services.get(config.search)
             adapter = service.adapter if service is not None else ""
             limit = {"deepseek": 128, "firecrawl": 500}.get(adapter, 1000)
@@ -69,7 +78,7 @@ class WebSearchToolProvider:
                     },
                 )
             )
-        if config.fetch:
+        if available(config.fetch, "web_fetch"):
             specs.append(
                 ToolSpec(
                     name="web_fetch",

@@ -302,7 +302,7 @@ describe('useModelConfig 加载与 unwrap', () => {
     unmount()
   })
 
-  it('副本列表加载失败时仍完成配置加载', async () => {
+  it('分工方案列表加载失败时仍完成配置加载', async () => {
     getModelConfigVersionsMock.mockRejectedValue(new Error('副本服务不可用'))
 
     const { result, unmount } = await renderLoadedHook()
@@ -364,7 +364,7 @@ describe('useModelConfig 配置副本', () => {
     })
     expect(lastToast()).toEqual(
       expect.objectContaining({
-        title: '副本列表加载失败',
+        title: '分工方案列表加载失败',
         description: '列表拉取失败',
         variant: 'destructive',
       })
@@ -383,7 +383,7 @@ describe('useModelConfig 配置副本', () => {
     expect(createModelConfigVersionMock).toHaveBeenCalledWith('午后快照')
     expect(lastToast()).toEqual(
       expect.objectContaining({
-        title: '副本已创建',
+        title: '分工方案已创建',
         description: '已保存为「午后快照」',
       })
     )
@@ -416,7 +416,7 @@ describe('useModelConfig 配置副本', () => {
     expect(createModelConfigVersionMock).not.toHaveBeenCalled()
     expect(lastToast()).toEqual(
       expect.objectContaining({
-        title: '创建副本失败',
+        title: '创建分工方案失败',
         description: '落盘失败',
         variant: 'destructive',
       })
@@ -429,7 +429,7 @@ describe('useModelConfig 配置副本', () => {
     expect(switchModelConfigVersionMock).not.toHaveBeenCalled()
     expect(lastToast()).toEqual(
       expect.objectContaining({
-        title: '切换副本失败',
+        title: '切换分工方案失败',
         description: '切换前落盘失败',
         variant: 'destructive',
       })
@@ -437,7 +437,7 @@ describe('useModelConfig 配置副本', () => {
     unmount()
   })
 
-  it('创建副本失败时提示错误', async () => {
+  it('创建分工方案失败时提示错误', async () => {
     const { result, unmount } = await renderLoadedHook()
     createModelConfigVersionMock.mockRejectedValueOnce(new Error('磁盘已满'))
 
@@ -447,7 +447,7 @@ describe('useModelConfig 配置副本', () => {
 
     expect(lastToast()).toEqual(
       expect.objectContaining({
-        title: '创建副本失败',
+        title: '创建分工方案失败',
         description: '磁盘已满',
         variant: 'destructive',
       })
@@ -470,7 +470,7 @@ describe('useModelConfig 配置副本', () => {
     })
     expect(updateModelConfigMock).not.toHaveBeenCalled()
     expect(switchModelConfigVersionMock).toHaveBeenCalledWith('archive-id')
-    expect(lastToast()).toEqual(expect.objectContaining({ title: '副本已切换' }))
+    expect(lastToast()).toEqual(expect.objectContaining({ title: '分工方案已切换' }))
 
     act(() => {
       result.current.updateTaskConfig('replyer', 'temperature', 0.6)
@@ -484,7 +484,7 @@ describe('useModelConfig 配置副本', () => {
     unmount()
   })
 
-  it('切换副本失败时提示错误', async () => {
+  it('切换分工方案失败时提示错误', async () => {
     const { result, unmount } = await renderLoadedHook()
     switchModelConfigVersionMock.mockRejectedValueOnce(new Error('副本损坏'))
 
@@ -494,7 +494,7 @@ describe('useModelConfig 配置副本', () => {
 
     expect(lastToast()).toEqual(
       expect.objectContaining({
-        title: '切换副本失败',
+        title: '切换分工方案失败',
         description: '副本损坏',
         variant: 'destructive',
       })
@@ -510,7 +510,7 @@ describe('useModelConfig 配置副本', () => {
       await result.current.handleDeleteConfigVersion('archive-id')
     })
     expect(deleteModelConfigVersionMock).toHaveBeenCalledWith('archive-id')
-    expect(lastToast()).toEqual(expect.objectContaining({ title: '副本已删除' }))
+    expect(lastToast()).toEqual(expect.objectContaining({ title: '分工方案已删除' }))
 
     deleteModelConfigVersionMock.mockRejectedValueOnce(new Error('正在使用'))
     await act(async () => {
@@ -518,7 +518,7 @@ describe('useModelConfig 配置副本', () => {
     })
     expect(lastToast()).toEqual(
       expect.objectContaining({
-        title: '删除副本失败',
+        title: '删除分工方案失败',
         description: '正在使用',
         variant: 'destructive',
       })

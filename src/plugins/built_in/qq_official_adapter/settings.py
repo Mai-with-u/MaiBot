@@ -44,7 +44,7 @@ class PluginSettings(PluginConfigBase):
     __ui_order__: ClassVar[int] = 0
 
     enabled: bool = Field(default=False, description="启用 QQ 官方机器人连接")
-    config_version: str = Field(default="0.5.3", description="配置版本")
+    config_version: str = Field(default="0.5.4", description="配置版本")
 
 
 class QQOfficialSettings(PluginConfigBase):
@@ -66,7 +66,7 @@ class QQOfficialSettings(PluginConfigBase):
     )
     enable_mapping: bool = Field(
         default=False,
-        description="将用户 OpenID 按手动关联或静默同步结果映射为 QQ 号；关闭时保留关联记录，但不转换用户 ID",
+        description="启用后，已绑定的群使用群号，已关联的用户使用 QQ 号；关闭后群和用户都使用原始 OpenID，保留关联记录",
         json_schema_extra={"label": "启用映射"},
     )
     silent_user_sync: bool = Field(

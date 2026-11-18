@@ -188,7 +188,7 @@ class Person:
         nickname: str,
         group_id: Optional[str] = None,
         group_nick_name: Optional[str] = None,
-    ):
+    ) -> Optional["Person"]:
         """
         注册新用户的类方法
         必须输入 platform、user_id 和 nickname 参数
@@ -241,7 +241,7 @@ class Person:
 
         # 如果是群聊，添加群昵称
         if group_id and group_nick_name:
-            person.add_group_nick_name(group_id, group_nick_name)
+            person.group_cardname_list.append({"group_id": group_id, "group_cardname": group_nick_name})
 
         # 同步到数据库
         person.sync_to_database()
@@ -387,7 +387,7 @@ class Person:
             logger.error(f"从数据库加载用户 {self.person_id} 信息时出错: {e}")
             # 出错时保持默认值
 
-    def sync_to_database(self):
+    def sync_to_database(self) -> None:
         """将所有属性同步回数据库"""
         if not self.is_known and self._loaded_individual_profile is None:
             return
@@ -396,6 +396,7 @@ class Person:
             first_known_time = datetime.fromtimestamp(self.know_since) if self.know_since else None
             last_known_time = datetime.fromtimestamp(self.last_know) if self.last_know else None
 
+            saved_profile = self._loaded_individual_profile
             with get_db_session() as session:
                 session.execute(text("BEGIN IMMEDIATE"))
                 statement = select(PersonInfo).where(col(PersonInfo.person_id) == self.person_id).limit(1)
@@ -418,13 +419,12 @@ class Person:
                         individual.display_name = self.person_name.strip()
                         individual.is_known = self.is_known
                         session.add(individual)
-                        self._loaded_individual_profile = (individual.individual_id, individual.display_name, individual.is_known)
+                        saved_profile = (individual.individual_id, individual.display_name, individual.is_known)
                     record.know_counts = self.know_times
                     record.first_known_time = first_known_time
                     record.last_known_time = last_known_time
                     record.group_cardname = group_cardname_value
                     session.add(record)
-                    logger.debug(f"已同步用户 {self.person_id} 的信息到数据库")
                 else:
                     record = PersonInfo(
                         person_id=self.person_id,
@@ -440,14 +440,18 @@ class Person:
                     )
                     session.add(record)
                     session.flush()
-                    self.individual_id = record.individual_id
-                    self._loaded_individual_profile = (
+                    saved_profile = (
                         record.individual_id, self.person_name or self.nickname, self.is_known,
                     )
-                    logger.debug(f"已创建用户 {self.person_id} 的信息到数据库")
+
+            if saved_profile is not None:
+                self.individual_id = saved_profile[0]
+                self._loaded_individual_profile = saved_profile
+            logger.debug(f"已同步用户 {self.person_id} 的信息到数据库")
 
         except Exception as e:
             logger.error(f"同步用户 {self.person_id} 信息到数据库时出错: {e}")
+            raise
 
 
 async def store_person_memory_from_answer(

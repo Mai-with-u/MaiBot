@@ -3,6 +3,7 @@ import { useMemo } from 'react'
 import { useTranslation } from 'react-i18next'
 
 import { EnsureImageGallery, useImageGallery, type GalleryImage } from '@/components/image-gallery'
+import { VoicePlayer } from '@/components/VoicePlayer'
 import { useToast } from '@/hooks/use-toast'
 import { cn } from '@/lib/utils'
 import { scopeBotResourcePath } from '@/host/state'
@@ -104,15 +105,10 @@ export function RenderMessageSegment({ segment }: { segment: MessageSegment }) {
       return <MediaSegment segment={segment} mediaLabel={mediaLabel} />
     }
 
-    case 'voice':
-      return (
-        <div className="flex items-center gap-2">
-          <audio controls src={scopeBotResourcePath(String(segment.data))} className="h-8 max-w-[200px]">
-            <track kind="captions" src="" label={t('chat.media.noCaptions')} default />
-            {t('chat.media.audioUnsupported')}
-          </audio>
-        </div>
-      )
+    case 'voice': {
+      const src = scopeBotResourcePath(String(segment.data))
+      return <VoicePlayer key={src} src={src} />
+    }
 
     case 'video':
       return (

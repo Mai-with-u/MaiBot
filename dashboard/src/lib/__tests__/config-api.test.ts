@@ -222,7 +222,7 @@ describe('config-api', () => {
     })
   })
 
-  describe('模型配置副本', () => {
+  describe('分工方案', () => {
     const versionInfo = {
       id: 'v1',
       label: '备份一',
@@ -242,7 +242,7 @@ describe('config-api', () => {
       await expect(api.createModelConfigVersion('备份一')).resolves.toEqual(versionInfo)
       expect(httpMocks.backendApi.post).toHaveBeenCalledWith('/api/webui/config/model/versions', {
         body: { label: '备份一' },
-        errorMessage: '创建模型配置副本失败',
+        errorMessage: '创建分工方案失败',
       })
     })
 
@@ -253,7 +253,7 @@ describe('config-api', () => {
       await expect(api.switchModelConfigVersion('v 1')).resolves.toEqual(versionInfo)
       expect(httpMocks.backendApi.post).toHaveBeenCalledWith(
         '/api/webui/config/model/versions/v%201/activate',
-        { body: { archive_current: true }, errorMessage: '切换模型配置副本失败' }
+        { body: { archive_current: true }, errorMessage: '切换分工方案失败' }
       )
     })
 
@@ -264,7 +264,7 @@ describe('config-api', () => {
       await expect(api.updateModelConfigVersionLabel('v1', '新名字')).resolves.toEqual(versionInfo)
       expect(httpMocks.backendApi.patch).toHaveBeenCalledWith(
         '/api/webui/config/model/versions/v1',
-        { body: { label: '新名字' }, errorMessage: '更新模型配置副本失败' }
+        { body: { label: '新名字' }, errorMessage: '更新分工方案失败' }
       )
     })
 
@@ -275,7 +275,7 @@ describe('config-api', () => {
       await api.deleteModelConfigVersion('v1')
       expect(httpMocks.backendApi.delete).toHaveBeenCalledWith(
         '/api/webui/config/model/versions/v1',
-        { errorMessage: '删除模型配置副本失败' }
+        { errorMessage: '删除分工方案失败' }
       )
     })
   })

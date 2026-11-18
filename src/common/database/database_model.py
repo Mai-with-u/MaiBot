@@ -458,7 +458,7 @@ class Individual(SQLModel, table=True):
     display_name: str
     is_known: bool = False
     profile_sources_json: str = "[]"
-    created_at: datetime = Field(default_factory=datetime.now)
+    created_at: datetime = Field(default_factory=datetime.now, sa_type=DateTime)
 
 
 class IndividualMergeEvent(SQLModel, table=True):
@@ -470,7 +470,7 @@ class IndividualMergeEvent(SQLModel, table=True):
     target_individual_id: str = Field(index=True)
     members_json: str
     profiles_json: str = "{}"
-    created_at: datetime = Field(default_factory=datetime.now)
+    created_at: datetime = Field(default_factory=datetime.now, sa_type=DateTime)
 
 
 class PersonInfo(SQLModel, table=True):

@@ -68,11 +68,16 @@ async def test_timed_wait_wakes_thinking_without_new_messages() -> None:
 
     await runtime._schedule_wait_timeout(seconds=0, tool_call_id="wait-call")
 
-    assert runtime._agent_state == runtime._STATE_RUNNING
-    assert runtime._internal_turn_queue.get_nowait() == "timeout"
+    runtime._is_reply_frequency_silent = lambda: False
+    runtime._chat_history = []
+    runtime.message_cache = [object()]
+    runtime._last_processed_index = 1
     engine = object.__new__(MaisakaReasoningEngine)
     engine._runtime = runtime
-    completed = engine._build_wait_completed_message(has_new_messages=False)
+    context = await engine._prepare_turn_start_context(runtime._internal_turn_queue.get_nowait())
+    assert context.timeout_triggered
+    assert runtime._agent_state == runtime._STATE_RUNNING
+    completed = runtime._chat_history[-1]
     assert completed.tool_call_id == "wait-call"
     assert completed.logical_turn_id == "turn-wait"
 

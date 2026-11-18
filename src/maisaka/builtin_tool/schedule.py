@@ -21,6 +21,11 @@ def get_tool_spec(context: Optional[ToolAvailabilityContext] = None) -> ToolSpec
     actions = ["add", "list", "update", "cancel", "complete"]
     properties: Dict[str, Any] = {
         "action": {"type": "string", "enum": actions},
+        "trigger_message_ids": {
+            "type": "array", "items": {"type": "string", "minLength": 1},
+            "description": "用户发起日程时，填写每位发起人在当前聊天中的一条消息 ID，以记录姓名和平台用户 ID。"
+                           "自主创建可省略；update 省略保留原记录，传列表替换，传空列表清除。",
+        },
         "text": {"type": "string", "minLength": 1, "maxLength": 200, "description": "事项内容，add 必填"},
         "delay_seconds": {"type": "number", "exclusiveMinimum": 0, "description": "多少秒后触发，与 due_at 二选一"},
         "due_at": {"type": ["string", "null"] if owner else "string",
@@ -99,6 +104,20 @@ async def handle_tool(
             command["options"] = {
                 key: args[key] for key in ("due_at", "delay_seconds", "kind", "condition", "condition_type") if key in args
             }
+            if "trigger_message_ids" in args:
+                message_ids = args["trigger_message_ids"]
+                if not isinstance(message_ids, list):
+                    raise ValueError("触发消息 ID 必须为列表")
+                people = []
+                for message_id in message_ids:
+                    if not isinstance(message_id, str) or not message_id.strip():
+                        raise ValueError("触发消息 ID 必须为非空字符串")
+                    message = tool_ctx.runtime.find_source_message_by_id(message_id)
+                    if message is None or message.session_id != session_id:
+                        raise ValueError(f"当前聊天中找不到触发消息 {message_id}")
+                    user = message.message_info.user_info
+                    people.append({"user_id": user.user_id, "name": user.user_cardname or user.user_nickname})
+                command["options"]["trigger_people"] = people
             if action == "add":
                 name = chat_manager.get_session_name(session_id)
                 if not name:

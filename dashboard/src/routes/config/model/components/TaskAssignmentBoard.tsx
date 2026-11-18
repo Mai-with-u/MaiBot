@@ -378,6 +378,8 @@ function groupByProvider(items: TaskCandidate[]) {
 /** 只列出能胜任这项工作的模型：识图要能看图，嵌入只用嵌入模型。 */
 function candidatesFor(task: string, models: ModelInfo[]) {
   const pick = (model: ModelInfo) => {
+    if (task === 'tts') return model.model_type === 'tts'
+    if (model.model_type === 'asr') return task === 'voice'
     if (task === 'embedding' || task === 'image_embedding') {
       return model.model_type === 'embedding' || model.model_type === 'image_embedding'
     }

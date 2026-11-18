@@ -381,6 +381,40 @@ def test_v54_preserves_account_sources_and_existing_individual_name():
     database.dispose()
 
 
+def test_group_registration_reports_success_only_after_persistence(engine, monkeypatch, tmp_path):
+    from src.person_info import identity, person_info as runtime
+
+    @contextmanager
+    def isolated_session():
+        with Session(engine) as session, session.begin():
+            yield session
+
+    monkeypatch.setattr(identity, "get_instance_root", lambda: tmp_path)
+    monkeypatch.setattr(runtime, "get_db_session", isolated_session)
+    messages = []
+    monkeypatch.setattr(runtime.logger, "info", messages.append)
+    with engine.begin() as connection:
+        connection.exec_driver_sql(
+            "CREATE TRIGGER reject_account BEFORE INSERT ON person_info "
+            "BEGIN SELECT RAISE(ABORT, 'registration failed'); END"
+        )
+    with pytest.raises(IntegrityError, match="registration failed"):
+        runtime.Person.register_person("qq", "123", "昵称", "group", "群名片")
+    assert not messages
+    with Session(engine) as session:
+        assert session.exec(select(Individual)).all() == []
+        assert session.exec(select(PersonInfo)).all() == []
+
+    with engine.begin() as connection:
+        connection.exec_driver_sql("DROP TRIGGER reject_account")
+    person = runtime.Person.register_person("qq", "123", "昵称", "group", "群名片")
+    assert any("成功注册新用户" in message for message in messages)
+    with Session(engine) as session:
+        account = session.exec(select(PersonInfo)).one()
+        assert account.individual.individual_id == person.individual_id
+        assert json.loads(account.group_cardname) == [{"group_id": "group", "group_cardname": "群名片"}]
+
+
 def test_runtime_reads_shared_profile_without_overwriting_it_on_account_sync(engine, monkeypatch):
     from src.person_info import person_info as runtime
 

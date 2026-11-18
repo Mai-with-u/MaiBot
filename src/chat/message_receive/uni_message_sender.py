@@ -1,18 +1,17 @@
+from rich.traceback import install
 from typing import Any, Optional, Tuple
 
 import asyncio
 import traceback
 
-from rich.traceback import install
-
-from src.chat.message_receive.message import SessionMessage
 from src.chat.utils.utils import calculate_typing_time, truncate_message
 from src.common.data_models.message_component_data_model import ReplyComponent
-from src.common.database.database import get_db_session
 from src.common.logger import get_logger
 from src.common.message_server.api import get_global_api
 from src.common.utils.utils_message import MessageUtils
 from src.webui.routers.chat.serializers import serialize_message_sequence
+
+from .message import SessionMessage
 
 install(extra_lines=3)
 
@@ -87,7 +86,7 @@ async def _send_message(message: SessionMessage, show_log: bool = True) -> bool:
             from src.config.config import global_config
 
             # 解析消息段，获取富文本内容
-            message_segments = serialize_message_sequence(message.raw_message)
+            message_segments = await asyncio.to_thread(serialize_message_sequence, message.raw_message)
 
             # 判断消息类型
             # 如果只有一个文本段，使用简单的 text 类型
@@ -314,9 +313,7 @@ class UniversalMessageSender:
                 return False
 
             if storage_message:
-                with get_db_session() as db_session:
-                    MessageUtils.fill_reply_frequency_if_available(message)
-                    db_session.add(message.to_db_instance())
+                await MessageUtils.store_message_to_db_async(message)
 
             try:
                 from src.services.memory_flow_service import memory_automation_service

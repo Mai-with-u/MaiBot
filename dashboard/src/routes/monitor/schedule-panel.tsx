@@ -14,6 +14,7 @@ interface ScheduleItem {
   text: string
   session_id: string
   session_name: string
+  trigger_people: { name: string, user_id: string }[]
   kind: 'bot' | 'user'
   created_at: number
   due_at: number | null
@@ -126,6 +127,11 @@ export function ScheduleInspectorView() {
             <Badge variant={item.status === 'failed' ? 'destructive' : 'outline'}>{STATUS_LABELS[item.status]}</Badge>
           </div>
           <p className="whitespace-pre-wrap break-words">{item.text}</p>
+          {item.trigger_people.length > 0 && (
+            <p className="text-muted-foreground break-words">
+              发起人：{item.trigger_people.map(({ name, user_id }) => `${name}（${user_id}）`).join('、')}
+            </p>
+          )}
           <p className="text-muted-foreground">{item.kind === 'bot' ? '麦麦日程' : '用户待办'} · {item.due_at === null ? '未设置时间' : formatDate(item.due_at)}</p>
           {item.condition && <p className="text-muted-foreground whitespace-pre-wrap break-words">触发条件：{item.condition}</p>}
           {item.error && <p className="text-destructive whitespace-pre-wrap break-words">{item.error}</p>}

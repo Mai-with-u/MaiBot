@@ -70,6 +70,7 @@ from src.maisaka.monitor.message_payload import (
 )
 from src.maisaka.scenes.base import ChatScene
 from src.maisaka.scenes.factory import get_scene
+from src.maisaka.turn_trigger.scheduler import MAX_INTERNAL_ROUNDS
 from src.mcp_module.provider import MCPToolProvider
 from src.mcp_module.service import get_mcp_service
 from src.web_search.provider import WebSearchToolProvider
@@ -88,7 +89,6 @@ if TYPE_CHECKING:
 
 logger = get_logger("maisaka_runtime")
 
-MAX_INTERNAL_ROUNDS = 16
 MAX_RETAINED_MESSAGE_CACHE_SIZE = 200
 CONTEXT_RESTORE_FILL_RATIO = 0.5
 CONTEXT_RESTORE_SHORT_RESTART_SECONDS = 5 * 60
@@ -1719,7 +1719,7 @@ class MaisakaHeartFlowChatting(MaisakaRuntimeDisplayMixin):
         self._mark_message_turn_unscheduled()
         self._cancel_deferred_message_turn_task()
         self._cancel_wait_timeout_task()
-        if seconds is not None:
+        if seconds is not None and self._message_turn_scheduler.allows_timed_wakeup:
             self._wait_timeout_task = asyncio.create_task(
                 self._schedule_wait_timeout(seconds=seconds, tool_call_id=tool_call_id)
             )
@@ -1745,9 +1745,10 @@ class MaisakaHeartFlowChatting(MaisakaRuntimeDisplayMixin):
                 return
             if self._pending_wait_tool_call_id != tool_call_id:
                 return
+            if not self._message_turn_scheduler.allows_timed_wakeup:
+                return
 
             logger.debug(f"{self.log_prefix} Maisaka 等待已超时")
-            self._enter_running_state()
             await self._internal_turn_queue.put("timeout")
         except asyncio.CancelledError:
             return

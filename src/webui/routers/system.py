@@ -31,11 +31,13 @@ from src.common.update_notice import (
     get_pending_update_notice,
     mark_update_notice_seen,
 )
+from src.common.utils.audio_format import detect_audio_format
 from src.common.utils.image_path import (
     StoredImagePathError,
     resolve_stored_image_path,
     stored_image_paths_equal,
 )
+from src.common.utils.utils_file import FileUtils
 from src.config.config import MMC_VERSION
 from src.plugin_runtime.update_compatibility_notice import collect_update_incompatible_plugins
 
@@ -126,7 +128,7 @@ _restart_task: asyncio.Task[None] | None = None
 
 CacheImageTarget = Literal["images", "emoji"]
 DatabaseCleanupMode = Literal["all", "older_than_days"]
-MonitorMediaKind = Literal["image", "emoji"]
+MonitorMediaKind = Literal["image", "emoji", "voice"]
 
 
 class RestartResponse(BaseModel):
@@ -550,11 +552,20 @@ def _resolve_cache_image_file(target: CacheImageTarget, relative_path: str) -> P
 
 
 def _resolve_monitor_media_file(media_kind: MonitorMediaKind, media_hash: str) -> Path:
-    """根据监控事件中的媒体 hash 解析原始图片或表情文件。"""
+    """根据监控事件中的媒体 hash 解析当前实例的原件。"""
 
     normalized_hash = media_hash.strip()
     if not normalized_hash:
         raise HTTPException(status_code=400, detail="媒体 hash 不能为空")
+
+    if media_kind == "voice":
+        try:
+            voice_path = FileUtils.get_file_path_by_hash(normalized_hash).resolve(strict=True)
+        except FileNotFoundError as exc:
+            raise HTTPException(status_code=404, detail="未找到语音原件") from exc
+        if not voice_path.is_relative_to(_DATA_DIR / "voices") or not voice_path.is_file():
+            raise HTTPException(status_code=404, detail="未找到语音原件")
+        return voice_path
 
     image_type = ImageType.IMAGE if media_kind == "image" else ImageType.EMOJI
     label = "图片" if media_kind == "image" else "表情包"
@@ -1714,10 +1725,14 @@ def preview_local_cache_image(
 
 @router.get("/maisaka-monitor/media/{media_kind}/{media_hash}", response_model=None)
 def get_maisaka_monitor_media(media_kind: MonitorMediaKind, media_hash: str) -> FileResponse:
-    """返回 MaiSaka 观察面板消息中的原始图片或表情文件。"""
+    """返回 MaiSaka 观察面板消息中的原始媒体文件。"""
 
     file_path = _resolve_monitor_media_file(media_kind, media_hash)
-    media_type = mimetypes.guess_type(str(file_path))[0] or "application/octet-stream"
+    if media_kind == "voice":
+        with file_path.open("rb") as audio:
+            _, media_type = detect_audio_format(audio.read(16))
+    else:
+        media_type = mimetypes.guess_type(str(file_path))[0] or "application/octet-stream"
     return FileResponse(file_path, media_type=media_type, filename=file_path.name)
 
 

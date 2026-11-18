@@ -19,6 +19,7 @@ from src.common.data_models.message_component_data_model import (
     TextComponent,
     VoiceComponent,
 )
+from src.common.utils.audio_format import detect_audio_format
 from src.common.utils.image_path import resolve_stored_image_path
 
 
@@ -72,14 +73,17 @@ def serialize_message_component(component: StandardMessageComponents) -> Optiona
         )
 
     if isinstance(component, VoiceComponent):
-        return _serialize_binary_component(
-            segment_type="voice",
-            mime_type="audio/wav",
-            binary_data=component.binary_data,
-            binary_hash="",
-            image_type_name="",
-            fallback_text=component.content,
-        )
+        from src.common.utils.utils_file import FileUtils
+
+        data = component.binary_data
+        if not data and component.binary_hash:
+            try:
+                data = FileUtils.read_voice(component.binary_hash)
+            except FileNotFoundError:
+                # 旧消息可能只保存了转写文字和哈希。
+                pass
+        _, mime_type = detect_audio_format(data)
+        return _binary_segment("voice", mime_type, data, component.content)
 
     if isinstance(component, FileComponent):
         return {"type": "file", "data": component.to_payload()}
@@ -143,9 +147,13 @@ def _serialize_binary_component(
         image_type_name=image_type_name,
         default_mime_type=mime_type,
     )
-    if loaded_binary_data:
-        encoded_payload = base64.b64encode(loaded_binary_data).decode()
-        return {"type": segment_type, "data": f"data:{loaded_mime_type};base64,{encoded_payload}"}
+    return _binary_segment(segment_type, loaded_mime_type, loaded_binary_data, fallback_text)
+
+
+def _binary_segment(segment_type: str, mime_type: str, data: bytes, fallback_text: str) -> Dict[str, Any]:
+    if data:
+        encoded_payload = base64.b64encode(data).decode()
+        return {"type": segment_type, "data": f"data:{mime_type};base64,{encoded_payload}"}
 
     if fallback_text:
         return {"type": "text", "data": fallback_text}

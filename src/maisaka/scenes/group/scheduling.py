@@ -1,5 +1,6 @@
 """群聊调度：每批概率查看、内部衰减与静默判定。"""
 
+from math import ceil
 from typing import TYPE_CHECKING, Optional, Tuple
 import asyncio
 import random
@@ -8,7 +9,7 @@ import time
 from src.common.logger import get_logger
 from src.maisaka.turn_trigger.gates import TurnGateResult
 from src.maisaka.turn_trigger.messages import filter_external_messages
-from src.maisaka.turn_trigger.scheduler import MessageTurnScheduler
+from src.maisaka.turn_trigger.scheduler import MAX_INTERNAL_ROUNDS, MessageTurnScheduler
 from src.maisaka.turn_trigger.view_frequency import (
     ViewFrequencyController,
     mean_message_interval,
@@ -19,12 +20,18 @@ if TYPE_CHECKING:
     from src.maisaka.runtime import MaisakaHeartFlowChatting
 
 logger = get_logger("maisaka_turn_scheduler")
+LOW_FREQUENCY_ROUND_LIMIT = 8
 
 
 class GroupTurnScheduler(MessageTurnScheduler):
     def __init__(self, runtime: "MaisakaHeartFlowChatting") -> None:
         super().__init__(runtime)
         self.view_frequency = ViewFrequencyController()
+        self._logical_turn_id: Optional[str] = None
+        self._in_planner_turn = False
+        self._completed_rounds = 0
+        self._round_allowance = 0
+        self._round_debt = 0
         self._last_batch: Optional[Tuple[str, ...]] = None
         self._silence_task: Optional[asyncio.Task[None]] = None
         self._silence_triggered = False
@@ -32,9 +39,13 @@ class GroupTurnScheduler(MessageTurnScheduler):
         self._previous_context_interval: Optional[float] = None
         self._current_context_interval: Optional[float] = None
 
+    @property
+    def allows_timed_wakeup(self) -> bool:
+        return self._round_debt == 0
+
     def schedule_message_turn(self) -> None:
-        # 运行中的 Planner 会在下一轮接入消息，不重复投递外部激活。
-        if self._runtime._agent_state != self._runtime._STATE_RUNNING:
+        # 运行中由下一轮接入消息。wait 工具可先于本轮记账进入等待态，待收尾后再判定。
+        if not self._in_planner_turn and self._runtime._agent_state != self._runtime._STATE_RUNNING:
             super().schedule_message_turn()
 
     def _resume_wait_on_message(self) -> bool:
@@ -67,6 +78,10 @@ class GroupTurnScheduler(MessageTurnScheduler):
         accepted = self.view_frequency.decide(frequency, random.random())
         # 本批即使未放行也已结束防抖，后续消息重新开批；缓存留作下次查看上下文。
         runtime._fixed_message_debouncer.consume()
+        if accepted and self._round_debt:
+            self._round_debt -= 1
+            self._arm_silence_check()
+            return TurnGateResult(decision="wait", detail=f"本批查看抵扣 1 轮欠债 剩余={self._round_debt}")
         self._arm_silence_check()
         return TurnGateResult(
             decision="trigger" if accepted else "wait",
@@ -76,19 +91,33 @@ class GroupTurnScheduler(MessageTurnScheduler):
             ),
         )
 
-    def start_planner_turn(self) -> None:
+    def start_planner_turn(self, logical_turn_id: str) -> int:
         self.close()
-        self.view_frequency.activate(self._runtime._get_effective_reply_frequency())
+        self._in_planner_turn = True
+        frequency = min(1.0, self._runtime._get_effective_reply_frequency())
+        self.view_frequency.activate(frequency)
+        if logical_turn_id != self._logical_turn_id:
+            self._logical_turn_id = logical_turn_id
+            self._completed_rounds = 0
+            self._round_allowance = ceil(frequency * MAX_INTERNAL_ROUNDS)
+            self._runtime._max_internal_rounds = LOW_FREQUENCY_ROUND_LIMIT if frequency < 0.5 else MAX_INTERNAL_ROUNDS
+        return self._completed_rounds
 
     def record_planner_run(self) -> None:
         # Focus 自己维护统一循环，不参与普通群聊的频率状态。
         if self._runtime._is_focus_mode_active_for_current_chat():
             return
+        self._completed_rounds += 1
+        if self._completed_rounds > self._round_allowance:
+            self._round_debt += 1
         self._previous_context_interval = self._current_context_interval
         self._current_context_interval = self._context_interval()
         self.view_frequency.record_planner_run()
 
     def finish_planner_turn(self) -> None:
+        self._in_planner_turn = False
+        if not self._runtime._has_pending_wait_tool_call():
+            self._logical_turn_id = None
         # 最后一轮模型或工具执行期间到达的消息可能尚未接入，退出后仍须为其完成一次判定。
         self._runtime._schedule_message_turn()
         self._arm_silence_check()
@@ -133,6 +162,8 @@ class GroupTurnScheduler(MessageTurnScheduler):
         runtime = self._runtime
         if (
             not runtime._running
+            or self._in_planner_turn
+            or not self.allows_timed_wakeup
             or runtime._focus_group is not None
             or runtime._agent_state == runtime._STATE_RUNNING
             or runtime._message_turn_scheduled
@@ -153,6 +184,7 @@ class GroupTurnScheduler(MessageTurnScheduler):
                 await asyncio.sleep(max(0.0, deadline - time.time()))
                 if (
                     runtime._last_message_received_at != received_at
+                    or not self.allows_timed_wakeup
                     or runtime._focus_group is not None
                     or runtime._agent_state == runtime._STATE_RUNNING
                     or runtime._message_turn_scheduled

@@ -25,6 +25,7 @@ from src.llm_models.model_client.base_client import ResponseRequest
 from src.llm_models.payload_content.context_item import ContextItemBuilder, RoleType
 from src.llm_models.request_snapshot import serialize_tool_options_snapshot
 from src.maisaka.builtin_tool.context import BuiltinToolRuntimeContext, PostProcessedReplyMessage
+from src.maisaka.builtin_tool.reply_voice import VoiceMode, voice_attachment_schema
 from src.maisaka.context.compaction import PlannerRequestSnapshot
 from src.maisaka.context.message_id_alias import to_display_message_id
 from src.maisaka.context.messages import ContentContextMessage, SessionBackedMessage
@@ -83,6 +84,7 @@ class ReplySupplementPlan(SupplementNode):
     """一份发送编排；reply 只能出现一次，不能携带或改写正文。"""
 
     plugin_options: Dict[str, Dict[str, Any]] = Field(default_factory=dict)
+    attach_voice: Optional[VoiceMode] = None
     msg_id: Optional[str] = Field(min_length=1)
     parts: List[Annotated[Union[ReplyNode, AtNode, PictureNode, EmojiNode], Field(discriminator="type")]] = Field(
         min_length=1, max_length=16,
@@ -266,11 +268,16 @@ async def _generate_reply_supplement_once(
         context.group_id = message.message_info.group_info.group_id if message.message_info.group_info else ""
         context.user_id = message.message_info.user_info.user_id
     extension_schema = build_reply_extensions_schema(context) or {"type": "object", "properties": {}, "additionalProperties": False}
+    voice_schema = voice_attachment_schema(context.platform)
 
     def build_request() -> Union[ResponseRequest, ACPPlannerSnapshot]:
         request = snapshot.request.detached_snapshot()
         schema = ReplySupplementPlan.model_json_schema()
         schema["properties"]["plugin_options"] = extension_schema
+        if voice_schema is None:
+            del schema["properties"]["attach_voice"]
+        else:
+            schema["properties"]["attach_voice"] = voice_schema
         if not resources.allow_at:
             # 在请求声明中移除不可用的 @ 节点，私聊不向模型提供该选项。
             node_schema = schema["properties"]["parts"]["items"]
@@ -321,6 +328,8 @@ async def _generate_reply_supplement_once(
     if result.tool_calls or result.native_tool_calls:
         raise ValueError("回复补充器不得调用工具")
     plan = validate_llm_json(result.response, ReplySupplementPlan)
+    if plan.attach_voice is not None and voice_schema is None:
+        raise ValueError("当前回复不可使用语音附件")
     validate(plan.plugin_options, extension_schema)
     metadata["plan"] = plan.model_dump()
     return resolve_supplement(plan, resources, metadata)
