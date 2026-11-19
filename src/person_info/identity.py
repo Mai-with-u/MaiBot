@@ -15,6 +15,17 @@ if TYPE_CHECKING:
     from src.chat.message_receive.message import SessionMessage
 
 
+# QQ 合并转发消息中无法获取真实 QQ 号时，协议端统一填入的占位号。
+# 若放任该占位号参与身份归并，所有出现在合并转发中的不同群友会被
+# 错误地合并为同一个 person_id，导致人物画像膨胀并拖垮画像刷新。
+QQ_MERGED_FORWARD_PLACEHOLDER_USER_ID = "1094950020"
+
+
+def is_placeholder_user_id(user_id: str) -> bool:
+    """判断 user_id 是否为协议端占位号（不可用于身份归并）。"""
+    return user_id == QQ_MERGED_FORWARD_PLACEHOLDER_USER_ID
+
+
 def person_id_for(platform: str, user_id: str) -> str:
     """与历史人物 ID 算法保持一致。"""
     normalized_platform = platform.split("-")[1] if "-" in platform else platform
