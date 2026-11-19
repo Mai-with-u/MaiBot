@@ -1681,17 +1681,33 @@ class MetadataStore(
 
     def get_chat_summary_history(self, chat_id: str) -> List[Dict[str, Any]]:
         """按窗口归属读取摘要，正文跨群复用时也保留各自的回顾上下文。"""
+        # 先分别通过索引收集本群直接归属和跨群引用的候选段落哈希，再按主键点查，
+        # 避免 LEFT JOIN + OR 条件迫使 SQLite 扫描全量 paragraphs 并与该群引用做嵌套循环。
         cursor = self._conn.execute(
             """
-            SELECT p.*, MAX(COALESCE(r.created_at, p.created_at)) AS summary_observed_at
-            FROM paragraphs p
-            LEFT JOIN external_memory_refs r
-              ON r.paragraph_hash = p.hash AND r.source_type = 'chat_summary'
-              AND json_extract(r.metadata_json, '$.chat_id') = ?
-            WHERE (p.source = ? OR r.external_id IS NOT NULL)
-              AND (p.is_deleted IS NULL OR p.is_deleted = 0)
+            WITH chat_refs AS (
+                SELECT paragraph_hash, MAX(created_at) AS max_ref_created_at
+                FROM external_memory_refs
+                WHERE source_type = 'chat_summary'
+                  AND json_extract(metadata_json, '$.chat_id') = ?
+                  AND external_id IS NOT NULL
+                GROUP BY paragraph_hash
+            ),
+            owned_hashes AS (
+                SELECT hash AS paragraph_hash
+                FROM paragraphs
+                WHERE source = ?
+                  AND (is_deleted IS NULL OR is_deleted = 0)
+                UNION
+                SELECT paragraph_hash
+                FROM chat_refs
+            )
+            SELECT p.*, COALESCE(cr.max_ref_created_at, p.created_at) AS summary_observed_at
+            FROM owned_hashes oh
+            CROSS JOIN paragraphs p ON p.hash = oh.paragraph_hash
+            LEFT JOIN chat_refs cr ON cr.paragraph_hash = p.hash
+            WHERE (p.is_deleted IS NULL OR p.is_deleted = 0)
               AND COALESCE(json_extract(p.metadata, '$.dedup_phase'), 'complete') = 'complete'
-            GROUP BY p.hash
             ORDER BY summary_observed_at ASC, p.hash ASC
             """,
             (chat_id, f"chat_summary:{chat_id}"),

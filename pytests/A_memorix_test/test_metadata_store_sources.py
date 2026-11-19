@@ -194,3 +194,139 @@ def test_batch_metadata_writes_roll_back_invalid_paragraph_links(
 
     assert entity_count == 0
     assert relation_count == 0
+
+
+def test_get_chat_summary_history_preserves_scope_order_and_filters(tmp_path: Path) -> None:
+    store = MetadataStore(data_dir=tmp_path)
+    store.connect()
+    try:
+        connection = store.get_connection()
+        connection.executemany(
+            """
+            INSERT INTO paragraphs (hash, content, created_at, metadata, source, is_deleted)
+            VALUES (?, ?, ?, ?, ?, ?)
+            """,
+            [
+                ("h1", "直接归属", 100.0, json.dumps({"dedup_phase": "complete"}), "chat_summary:chat-1", 0),
+                ("h0", "同时间戳按哈希排序", 100.0, None, "chat_summary:chat-1", 0),
+                (
+                    "h2",
+                    "直接归属且有多条引用",
+                    200.0,
+                    json.dumps({"dedup_phase": "complete"}),
+                    "chat_summary:chat-1",
+                    0,
+                ),
+                ("h3", "跨群复用段落", 150.0, json.dumps({}), "chat_summary:chat-2", 0),
+                ("h4", "已软删的直接归属", 120.0, json.dumps({"dedup_phase": "complete"}), "chat_summary:chat-1", 1),
+                ("h5", "已软删的跨群引用", 130.0, json.dumps({"dedup_phase": "complete"}), "chat_summary:chat-2", 1),
+                ("h6", "去重未完成段落", 140.0, json.dumps({"dedup_phase": "pending"}), "chat_summary:chat-1", 0),
+                ("h7", "is_deleted 为空", 160.0, None, "chat_summary:chat-1", None),
+                ("h8", "其他群独有摘要", 170.0, None, "chat_summary:chat-2", 0),
+                ("h9", "其他 source_type 引用", 180.0, None, "chat_summary:chat-1", 0),
+            ],
+        )
+        connection.executemany(
+            """
+            INSERT INTO external_memory_refs (external_id, paragraph_hash, source_type, created_at, metadata_json)
+            VALUES (?, ?, ?, ?, ?)
+            """,
+            [
+                ("ext-1", "h2", "chat_summary", 190.0, json.dumps({"chat_id": "chat-1"})),
+                ("ext-2", "h2", "chat_summary", 250.0, json.dumps({"chat_id": "chat-1"})),
+                ("ext-3", "h3", "chat_summary", 155.0, json.dumps({"chat_id": "chat-1"})),
+                ("ext-4", "h3", "chat_summary", 110.0, json.dumps({"chat_id": "chat-1"})),
+                ("ext-5", "h5", "chat_summary", 165.0, json.dumps({"chat_id": "chat-1"})),
+                ("ext-6", "h8", "chat_summary", 300.0, json.dumps({"chat_id": "chat-2"})),
+                ("ext-7", "h9", "other_source", 999.0, json.dumps({"chat_id": "chat-1"})),
+            ],
+        )
+        connection.commit()
+
+        chat_1_history = store.get_chat_summary_history("chat-1")
+        chat_2_history = store.get_chat_summary_history("chat-2")
+        empty_history = store.get_chat_summary_history("chat-missing")
+    finally:
+        store.close()
+
+    assert [item["hash"] for item in chat_1_history] == ["h0", "h1", "h3", "h7", "h9", "h2"]
+    assert [item["hash"] for item in chat_2_history] == ["h3", "h8"]
+    assert empty_history == []
+
+
+def test_get_chat_summary_history_uses_indexed_lookup_plan(tmp_path: Path) -> None:
+    store = MetadataStore(data_dir=tmp_path)
+    store.connect()
+    try:
+        connection = store.get_connection()
+        connection.executemany(
+            """
+            INSERT INTO paragraphs (hash, content, created_at, metadata, source, is_deleted)
+            VALUES (?, ?, ?, ?, ?, 0)
+            """,
+            [
+                (
+                    f"other-{index}",
+                    f"其他群摘要 {index}",
+                    float(index),
+                    None,
+                    f"chat_summary:chat-other-{index % 10}",
+                )
+                for index in range(200)
+            ],
+        )
+        connection.execute(
+            """
+            INSERT INTO paragraphs (hash, content, created_at, metadata, source, is_deleted)
+            VALUES ('target-hash', '目标群摘要', 1000.0, NULL, 'chat_summary:chat-target', 0)
+            """
+        )
+        connection.executemany(
+            """
+            INSERT INTO external_memory_refs (external_id, paragraph_hash, source_type, created_at, metadata_json)
+            VALUES (?, ?, 'chat_summary', ?, ?)
+            """,
+            [
+                (
+                    f"ext-other-{index}",
+                    f"other-{index}",
+                    float(index),
+                    json.dumps({"chat_id": f"chat-other-{index % 10}"}),
+                )
+                for index in range(200)
+            ],
+        )
+        connection.execute(
+            """
+            INSERT INTO external_memory_refs (external_id, paragraph_hash, source_type, created_at, metadata_json)
+            VALUES ('ext-target', 'other-0', 'chat_summary', 1001.0, ?)
+            """,
+            (json.dumps({"chat_id": "chat-target"}),),
+        )
+        connection.execute("ANALYZE")
+        connection.commit()
+
+        traced_sql: list[str] = []
+        connection.set_trace_callback(traced_sql.append)
+        try:
+            history = store.get_chat_summary_history("chat-target")
+        finally:
+            connection.set_trace_callback(None)
+
+        summary_queries = [sql for sql in traced_sql if "summary_observed_at" in sql]
+        assert len(summary_queries) == 1
+        plan_lines = [
+            str(row["detail"]) for row in connection.execute(f"EXPLAIN QUERY PLAN {summary_queries[0]}").fetchall()
+        ]
+    finally:
+        store.close()
+
+    assert [item["hash"] for item in history] == ["target-hash", "other-0"]
+    plan_text = "\n".join(plan_lines)
+    assert "idx_paragraphs_source" in plan_text
+    assert "idx_external_memory_refs_chat" in plan_text
+    assert "sqlite_autoindex_paragraphs_1" in plan_text
+    assert "idx_paragraphs_expiration" not in plan_text
+    assert "MULTI-INDEX OR" not in plan_text
+    assert "SCAN paragraphs" not in plan_text
+    assert "SCAN p" not in plan_text
