@@ -458,7 +458,7 @@ class Individual(SQLModel, table=True):
     display_name: str
     is_known: bool = False
     profile_sources_json: str = "[]"
-    created_at: datetime = Field(default_factory=datetime.now, sa_type=DateTime)
+    created_at: datetime = Field(default_factory=lambda: datetime.now().astimezone(), sa_type=DateTime(timezone=True))
 
 
 class IndividualMergeEvent(SQLModel, table=True):
@@ -470,7 +470,7 @@ class IndividualMergeEvent(SQLModel, table=True):
     target_individual_id: str = Field(index=True)
     members_json: str
     profiles_json: str = "{}"
-    created_at: datetime = Field(default_factory=datetime.now, sa_type=DateTime)
+    created_at: datetime = Field(default_factory=lambda: datetime.now().astimezone(), sa_type=DateTime(timezone=True))
 
 
 class PersonInfo(SQLModel, table=True):
@@ -522,7 +522,7 @@ def create_person_individual(mapper: Mapper, connection: Connection, person: Per
             display_name=origin["display_name"],
             is_known=person.is_known,
             profile_sources_json=json.dumps([origin], ensure_ascii=False),
-            created_at=datetime.now(),
+            created_at=datetime.now().astimezone(),
         ))
     else:
         origins = json.loads(existing.profile_sources_json)
