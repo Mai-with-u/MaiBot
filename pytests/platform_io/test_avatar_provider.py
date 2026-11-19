@@ -30,29 +30,33 @@ def provider(monkeypatch: pytest.MonkeyPatch):
     return broker, registry, invoke, supervisor
 
 
-def add_adapter(provider, plugin_id: str, account_id: str, *, api: bool = True):
+def add_adapter(
+    provider, plugin_id: str, account_id: str, *, api: bool = True, public: bool = True, supports_send: bool = True
+):
     broker, registry, invoke, supervisor = provider
     driver = PluginPlatformDriver(
         driver_id=plugin_id,
         platform="custom",
         supervisor=supervisor,
         component_name="gateway",
-        supports_send=True,
+        supports_send=supports_send,
         account_id=account_id,
         scope="connection",
         plugin_id=plugin_id,
     )
     broker.register_driver(driver)
-    broker.bind_send_route(
-        RouteBinding(
-            route_key=driver.descriptor.route_key,
-            driver_id=driver.driver_id,
-            driver_kind=driver.descriptor.kind,
-        )
+    binding = RouteBinding(
+        route_key=driver.descriptor.route_key,
+        driver_id=driver.driver_id,
+        driver_kind=driver.descriptor.kind,
     )
+    if supports_send:
+        broker.bind_send_route(binding)
+    else:
+        broker.bind_receive_route(binding)
     if api:
         registry.register_api(
-            "adapter.avatar.get", plugin_id, {"public": True, "version": "1", "handler_name": "avatar"}
+            "adapter.avatar.get", plugin_id, {"public": public, "version": "1", "handler_name": "avatar"}
         )
 
 
@@ -78,6 +82,24 @@ async def test_routes_to_matching_adapter_and_rejects_ambiguous_default(provider
     assert kwargs["args"]["scope"] == "connection"
     with pytest.raises(ValueError, match="多个适配器"):
         await avatar_provider.query_adapter_avatar("custom", "person", "user")
+
+
+@pytest.mark.asyncio
+@pytest.mark.parametrize("target_type", ["group", "user"])
+async def test_avatar_fallback_ignores_gateways_without_public_avatar_api(provider, target_type):
+    add_adapter(provider, "record_only", "1", api=False, supports_send=False)
+    add_adapter(provider, "private_avatar", "1", public=False, supports_send=False)
+    add_adapter(provider, "avatar_adapter", "1")
+
+    result = await avatar_provider.query_adapter_avatar("custom", "123", target_type)
+
+    assert result["status"] == "available"
+    provider[2].assert_awaited_once()
+    kwargs = provider[2].await_args.kwargs
+    assert kwargs["plugin_id"] == "avatar_adapter"
+    assert kwargs["args"]["target_type"] == target_type
+    assert kwargs["args"]["account_id"] == "1"
+    assert kwargs["args"]["scope"] == "connection"
 
 
 @pytest.mark.asyncio
