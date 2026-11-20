@@ -321,7 +321,14 @@ jobs:
               owner, repo, basehead: `${ref.object.sha}...${process.env.SOURCE_COMMIT}`,
             });
             if (!['ahead', 'identical'].includes(comparison.status)) {
-              throw new Error(`${branch} 包含未纳入本次发布的提交，保留分支`);
+              // Squash 合并改变提交历史，完整文件树一致时仍可安全清理。
+              const [branchCommit, sourceCommit] = await Promise.all([
+                github.rest.git.getCommit({ owner, repo, commit_sha: ref.object.sha }),
+                github.rest.git.getCommit({ owner, repo, commit_sha: process.env.SOURCE_COMMIT }),
+              ]);
+              if (branchCommit.data.tree.sha !== sourceCommit.data.tree.sha) {
+                throw new Error(`${branch} 包含未纳入本次发布的提交，保留分支`);
+              }
             }
             await github.rest.git.deleteRef({ owner, repo, ref: `heads/${branch}` });
             core.info(`已清理 ${branch}`);
