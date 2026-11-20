@@ -156,6 +156,39 @@ describe('ProviderForm 表单校验', () => {
   })
 })
 
+describe('ProviderForm ChatGPT 独立登录', () => {
+  it('显示账号标签及授权入口，编辑标签后不携带旧 API Key 保存', async () => {
+    const user = userEvent.setup()
+    const { onSave } = renderForm({
+      editingProvider: makeProvider({
+        name: 'ChatGPT',
+        base_url: 'https://api.openai.com/v1',
+        client_type: 'chatgpt',
+        chatgpt_account: 'work',
+        api_key: 'stale-api-key',
+      }),
+      editingIndex: 0,
+    })
+
+    const accountInput = await screen.findByLabelText('ChatGPT 账号标签')
+    expect(accountInput).toHaveValue('work')
+    expect(screen.queryByLabelText(/^API Key/)).not.toBeInTheDocument()
+    expect(screen.getByText('maibot chatgpt login --account 标签')).toBeInTheDocument()
+    expect(screen.getByRole('link', { name: 'Manage usage — 管理 ChatGPT 用量与授权' }))
+      .toHaveAttribute('href', 'https://chatgpt.com/settings/usage')
+
+    await user.clear(accountInput)
+    await user.type(accountInput, 'personal')
+    await user.click(screen.getByRole('button', { name: '保存' }))
+
+    await waitFor(() => expect(onSave).toHaveBeenCalledWith(
+      expect.objectContaining({ client_type: 'chatgpt', chatgpt_account: 'personal', api_key: '' }),
+      0,
+    ))
+    expect(screen.queryByRole('alert')).not.toBeInTheDocument()
+  })
+})
+
 describe('ProviderForm API Key 交互', () => {
   it('默认以密码框隐藏 API Key，点击眼睛按钮切换显示/隐藏', async () => {
     const user = userEvent.setup()
