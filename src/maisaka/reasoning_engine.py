@@ -44,6 +44,7 @@ from src.llm_models.payload_content.context_item import (
 )
 from src.llm_models.payload_content.tool_option import ToolCall
 from src.services import database_service as database_api
+from src.services.bot_account_service import is_bot_self
 from src.maisaka.display.display_utils import format_tool_call_for_display
 from src.maisaka.display.prompt_cli_renderer import PromptCLIVisualizer
 from src.maisaka.display.reasoning_steps import reasoning_trace_id
@@ -145,6 +146,8 @@ class CycleRuntimeState:
     cycle_end: CycleEnd = field(default_factory=lambda: CycleEnd("continue", "本轮思考完成，继续后续内部轮次。"))
     tool_result_summaries: list[str] = field(default_factory=list)
     tool_monitor_results: list[dict[str, Any]] = field(default_factory=list)
+    # 本轮调用者：触发本轮的真人消息，请求模型前固定，插件工具据此拿到 user_id；没有真人触发时为空。
+    caller_message: Optional[SessionMessage] = None
 
 
 @dataclass(frozen=True, slots=True)
@@ -1050,6 +1053,8 @@ class MaisakaReasoningEngine:
 
                 cached_messages = turn_start_context.cached_messages
                 trigger_message = turn_start_context.trigger_message
+                # 只有新消息触发的轮次才有调用者；主动、静默查看、等待超时复用的旧消息不是本轮的触发者。
+                caller_message = self._caller_anchor(trigger_message) if cached_messages else None
 
                 if turn_start_context.silent_reply_frequency:
                     await self._handle_silent_turn(
@@ -1073,9 +1078,10 @@ class MaisakaReasoningEngine:
                         if pending_round_messages:
                             cached_messages = pending_round_messages
                             trigger_message = pending_round_messages[-1]
+                            caller_message = self._caller_anchor(trigger_message)
 
                         cycle_detail, round_text = await self._start_cycle_round(round_index)
-                        state = CycleRuntimeState()
+                        state = CycleRuntimeState(caller_message=caller_message)
                         try:
                             await self._refresh_visual_placeholders_for_cycle(cycle_detail)
                             await self._post_process_chat_history_after_cycle(cycle_detail, consume_references=False)
@@ -1120,6 +1126,7 @@ class MaisakaReasoningEngine:
 
                             cached_messages = interrupt_result.retry_messages
                             trigger_message = interrupt_result.retry_messages[-1]
+                            caller_message = self._caller_anchor(trigger_message)
                             continue
                         except asyncio.CancelledError:
                             state.cycle_end = CycleEnd("cancelled", "思考任务已取消，本轮结束。")
@@ -1602,11 +1609,13 @@ class MaisakaReasoningEngine:
     def _build_tool_execution_context(
         self,
         latest_thought: str,
+        caller_message: Optional[SessionMessage],
     ) -> ToolExecutionContext:
         """构造统一工具执行上下文。
 
         Args:
             latest_thought: 当前轮的最新思考文本。
+            caller_message: 本轮调用者消息；插件参数组装从它补 user_id（群会话本身没有单一用户）。
 
         Returns:
             ToolExecutionContext: 统一工具执行上下文。
@@ -1621,7 +1630,25 @@ class MaisakaReasoningEngine:
             group_id=str(getattr(chat_stream, "group_id", "") or "").strip(),
             user_id=str(getattr(chat_stream, "user_id", "") or "").strip(),
             platform=str(getattr(chat_stream, "platform", "") or "").strip(),
+            metadata={"anchor_message": caller_message} if caller_message is not None else {},
         )
+
+    def _caller_anchor(self, message: Optional[SessionMessage]) -> Optional[SessionMessage]:
+        """判断消息能否作为本轮调用者：同一会话、不是通知、有用户 ID、不是机器人自己。
+
+        Args:
+            message: 本轮触发消息。
+
+        Returns:
+            Optional[SessionMessage]: 能作为调用者时返回该消息，否则返回 None。
+        """
+
+        if message is None or message.session_id != self._runtime.session_id or message.is_notify:
+            return None
+        user_id = message.message_info.user_info.user_id.strip()
+        if not user_id or is_bot_self(message.platform, user_id):
+            return None
+        return message
 
     @staticmethod
     def _truncate_tool_record_text(text: str, max_length: int = 180) -> str:
@@ -2206,7 +2233,7 @@ class MaisakaReasoningEngine:
                 await self._emit_planner_progress(cycle_detail, state, tool_monitor_results, next_call_id)
             return False, "", tool_result_summaries, tool_monitor_results
 
-        execution_context = self._build_tool_execution_context(latest_thought)
+        execution_context = self._build_tool_execution_context(latest_thought, state.caller_message)
         availability_context = self._build_tool_availability_context()
         tool_spec_map = {
             tool_spec.name: tool_spec
