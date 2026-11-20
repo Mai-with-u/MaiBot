@@ -70,6 +70,7 @@ from src.maisaka.monitor.message_payload import (
 )
 from src.maisaka.scenes.base import ChatScene
 from src.maisaka.scenes.factory import get_scene
+from src.maisaka.turn_trigger.gates import TurnTrigger, WaitTimeoutTrigger
 from src.maisaka.turn_trigger.scheduler import MAX_INTERNAL_ROUNDS
 from src.mcp_module.provider import MCPToolProvider
 from src.mcp_module.service import get_mcp_service
@@ -160,7 +161,7 @@ class MaisakaHeartFlowChatting(MaisakaRuntimeDisplayMixin):
         # Keep all original messages for batching and later learning.
         self.message_cache: list[SessionMessage] = []
         self._last_processed_index = 0
-        self._internal_turn_queue: asyncio.Queue[Literal["message", "timeout", "proactive"]] = asyncio.Queue()
+        self._internal_turn_queue: asyncio.Queue[TurnTrigger] = asyncio.Queue()
         self._proactive_trigger_message: Optional[SessionMessage] = None
         self._proactive_logical_turn_id: Optional[str] = None
         self._subagent_tasks = SubAgentTaskManager()
@@ -1648,16 +1649,17 @@ class MaisakaHeartFlowChatting(MaisakaRuntimeDisplayMixin):
         """切换到停止状态。"""
         self._agent_state = self._STATE_STOP
         self._reset_consecutive_wait_count("stop_state")
-        self._clear_wait_state()
+        self._end_logical_turn()
 
     def _enter_running_state(self) -> None:
         """切换到运行状态，不清理 wait 工具挂起信息。"""
 
         self._agent_state = self._STATE_RUNNING
 
-    def _clear_wait_state(self) -> None:
-        """清理 wait 工具挂起状态与超时任务。"""
+    def _end_logical_turn(self) -> None:
+        """结束当前逻辑回合，清理调度状态、挂起的 wait 和超时任务。"""
 
+        self._message_turn_scheduler.end_logical_turn()
         self._pending_wait_tool_call_id = None
         self._pending_wait_after_reply = False
         self._pending_wait_logical_turn_id = None
@@ -1734,7 +1736,7 @@ class MaisakaHeartFlowChatting(MaisakaRuntimeDisplayMixin):
         self._wait_timeout_task.cancel()
         self._wait_timeout_task = None
 
-    async def _schedule_wait_timeout(self, seconds: float, tool_call_id: Optional[str]) -> None:
+    async def _schedule_wait_timeout(self, seconds: float, tool_call_id: str) -> None:
         """在 wait 到期后向内部循环投递 timeout 触发。"""
         try:
             if seconds > 0:
@@ -1749,7 +1751,7 @@ class MaisakaHeartFlowChatting(MaisakaRuntimeDisplayMixin):
                 return
 
             logger.debug(f"{self.log_prefix} Maisaka 等待已超时")
-            await self._internal_turn_queue.put("timeout")
+            await self._internal_turn_queue.put(WaitTimeoutTrigger(tool_call_id))
         except asyncio.CancelledError:
             return
         finally:

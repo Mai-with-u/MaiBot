@@ -1,4 +1,4 @@
-"""查看频率状态转换、批次去重及静默触发。"""
+"""群聊连续思考、批次去重、定时与静默唤醒。"""
 
 from types import SimpleNamespace
 from unittest.mock import AsyncMock, Mock
@@ -6,50 +6,12 @@ import asyncio
 
 import pytest
 
-from src.maisaka.scenes.group.scheduling import GroupTurnScheduler
 from src.maisaka.chat_loop_service import ChatResponse
 from src.maisaka.reasoning_engine import CycleEnd, CycleRuntimeState, MaisakaReasoningEngine, TurnStartContext
-from src.maisaka.turn_trigger.view_frequency import (
-    ViewFrequencyController,
-    mean_message_interval,
-    predict_message_interval,
-)
-
-
-@pytest.mark.parametrize("frequency,runs", [(0.3, 5), (0.5, 8), (0.7, 12), (1, 16)])
-def test_decay_stops_at_budget_and_does_not_reset(frequency: float, runs: int) -> None:
-    controller = ViewFrequencyController()
-    assert controller.probability(frequency) == frequency
-    controller.activate(frequency)
-    for index in range(runs):
-        assert controller.probability(frequency) == 1
-        controller.activate(frequency)
-        assert controller.record_planner_run() is (index == runs - 1)
-    assert controller.phase == "recovery"
-    assert controller.probability(frequency) == 0
-
-
-def test_recovery_progresses_on_rejected_decisions_and_can_reactivate() -> None:
-    controller = ViewFrequencyController()
-    controller.activate(0.0625)
-    assert controller.record_planner_run()
-    for index in range(16):
-        assert controller.probability(0.5) == pytest.approx(0.5 * index / 16)
-        assert not controller.decide(0.5, 0.99)
-    assert controller.phase == "idle"
-    assert controller.probability(0.5) == 0.5
-    assert controller.decide(0.5, 0.2)
-    controller.activate(0.5)
-    assert controller.internal_frequency == 0.5
-
-
-def test_early_stop_retains_budget_and_zero_disables_sampling() -> None:
-    controller = ViewFrequencyController()
-    controller.activate(0.5)
-    controller.record_planner_run()
-    controller.activate(0.5)
-    assert controller.internal_frequency == 7 / 16
-    assert not controller.decide(0, 0)
+from src.maisaka.runtime import MaisakaHeartFlowChatting
+from src.maisaka.scenes.group.scheduling import GroupTurnScheduler
+from src.maisaka.turn_trigger.gates import WaitTimeoutTrigger
+from src.maisaka.turn_trigger.view_frequency import mean_message_interval, predict_message_interval
 
 
 def test_interval_uses_receive_order_and_two_context_means() -> None:
@@ -62,7 +24,7 @@ def test_interval_uses_receive_order_and_two_context_means() -> None:
 
 def make_scheduler() -> GroupTurnScheduler:
     runtime = SimpleNamespace(
-        message_cache=[SimpleNamespace(message_id="one")],
+        message_cache=[SimpleNamespace(message_id="one", received_at=None)],
         _last_processed_index=0,
         log_prefix="test",
         _has_forced_turn_trigger=lambda: False,
@@ -88,36 +50,48 @@ def test_each_batch_is_sampled_once_and_new_batch_keeps_context(monkeypatch: pyt
 
 
 @pytest.mark.asyncio
-async def test_silence_is_sampled_and_rejection_advances_recovery(monkeypatch: pytest.MonkeyPatch) -> None:
+@pytest.mark.parametrize("agent_state", ["stop", "wait"])
+async def test_silence_samples_once_until_next_message(monkeypatch: pytest.MonkeyPatch, agent_state: str) -> None:
     scheduler = make_scheduler()
     runtime = scheduler._runtime
     runtime._running = True
     runtime._last_message_received_at = 100.0
     runtime._focus_group = None
-    runtime._agent_state = "stop"
+    runtime._agent_state = agent_state
     runtime._STATE_RUNNING = "running"
     runtime._STATE_WAIT = "wait"
     runtime._message_turn_scheduled = False
     runtime._is_reply_frequency_silent = lambda: False
     runtime._get_message_quiet_period_remaining_seconds = lambda: 0
-    runtime._get_effective_reply_frequency = lambda: 0.5
+    runtime._get_effective_reply_frequency = Mock(side_effect=[0.32, 0.6])
     runtime._enqueue_message_turn = Mock()
-    scheduler.view_frequency.activate(0.0625)
-    scheduler.view_frequency.record_planner_run()
-    sleeps = []
-
-    async def sleep(seconds: float) -> None:
-        sleeps.append(seconds)
-
-    monkeypatch.setattr("src.maisaka.scenes.group.scheduling.asyncio.sleep", sleep)
+    runtime._pending_wait_started_at = 100.0
+    runtime._cancel_wait_timeout_task = Mock()
+    runtime._schedule_message_turn = Mock()
+    monkeypatch.setattr(scheduler, "_context_interval", lambda: 10.0)
     monkeypatch.setattr("src.maisaka.scenes.group.scheduling.time.time", lambda: 120.0)
-    monkeypatch.setattr("src.maisaka.scenes.group.scheduling.random.random", lambda: 0.0)
-    await scheduler._check_silence(10.0)
-    assert len(sleeps) == 2  # 第一轮概率为 0；恢复后第二轮才允许放行。
+    draw = Mock(return_value=0.5)
+    monkeypatch.setattr("src.maisaka.scenes.group.scheduling.random.random", draw)
+
+    scheduler.observe_message()
+    await scheduler._silence_task
+    draw.assert_called_once()
+    runtime._enqueue_message_turn.assert_not_called()
+    runtime._cancel_wait_timeout_task.assert_not_called()
+    assert not scheduler.consume_silence_trigger()
+    scheduler.finish_planner_turn()
+    assert scheduler._silence_task is None
+
+    runtime._last_message_received_at = 110.0
+    scheduler.observe_message()
+    await scheduler._silence_task
+    assert draw.call_count == 2
     runtime._enqueue_message_turn.assert_called_once()
     assert scheduler.consume_silence_trigger()
     assert not scheduler.consume_silence_trigger()
-    assert scheduler._silence_handled_at == 100.0
+    scheduler.finish_planner_turn()
+    assert scheduler._silence_task is None
+    assert runtime._cancel_wait_timeout_task.call_count == int(agent_state == "wait")
 
 
 @pytest.mark.asyncio
@@ -148,7 +122,11 @@ def make_engine(monkeypatch: pytest.MonkeyPatch) -> MaisakaReasoningEngine:
     runtime._STATE_WAIT = "wait"
     runtime.session_id = "test"
     runtime._monitor_run_id = "run"
-    runtime._enter_stop_state = Mock(side_effect=lambda: setattr(runtime, "_agent_state", "stop"))
+    runtime._STATE_STOP = "stop"
+    runtime._cancel_wait_timeout_task = Mock()
+    runtime._reset_consecutive_wait_count = Mock()
+    runtime._end_logical_turn = lambda: MaisakaHeartFlowChatting._end_logical_turn(runtime)
+    runtime._enter_stop_state = Mock(side_effect=lambda: MaisakaHeartFlowChatting._enter_stop_state(runtime))
     runtime._prepare_tool_prompt_records = Mock(return_value={})
     runtime._render_context_usage_panel = Mock()
     engine = MaisakaReasoningEngine(runtime)
@@ -168,6 +146,47 @@ def planner_response() -> ChatResponse:
         completion_tokens=0,
         total_tokens=0,
     )
+
+
+@pytest.mark.parametrize("waiting", [False, True])
+def test_message_after_thinking_uses_current_frequency(monkeypatch: pytest.MonkeyPatch, waiting: bool) -> None:
+    runtime = make_engine(monkeypatch)._runtime
+    scheduler = runtime._message_turn_scheduler
+    runtime._get_effective_reply_frequency = lambda: 0.32
+    runtime._get_pending_message_count = lambda: 1
+    runtime._schedule_message_turn = scheduler.schedule_message_turn
+    runtime._get_message_quiet_period_remaining_seconds = lambda: 0
+    runtime._is_reply_frequency_silent = lambda: False
+    runtime._message_turn_scheduled = False
+    runtime._enqueue_message_turn = Mock()
+    runtime._pending_wait_started_at = 10.0
+    runtime._update_stage_status = Mock()
+    runtime._last_processed_index = 0
+    monkeypatch.setattr(scheduler, "_arm_silence_check", Mock())
+    monkeypatch.setattr("src.maisaka.scenes.group.scheduling.filter_external_messages", lambda messages, **kw: messages)
+    draw = Mock(side_effect=[0.5, 0.2])
+    monkeypatch.setattr("src.maisaka.scenes.group.scheduling.random.random", draw)
+
+    scheduler.start_planner_turn("first")
+    scheduler.record_planner_run()
+    scheduler.schedule_message_turn()
+    draw.assert_not_called()
+
+    if waiting:
+        runtime._agent_state = runtime._STATE_WAIT
+    else:
+        runtime._enter_stop_state()
+    scheduler.finish_planner_turn()
+    draw.assert_called_once()
+    runtime._enqueue_message_turn.assert_not_called()
+    if waiting:
+        runtime._cancel_wait_timeout_task.assert_not_called()
+
+    runtime.message_cache.append(SimpleNamespace(message_id="two"))
+    scheduler.schedule_message_turn()
+    runtime._enqueue_message_turn.assert_called_once()
+    if waiting:
+        runtime._cancel_wait_timeout_task.assert_called_once()
 
 
 @pytest.mark.parametrize("frequency,limit,debt", [(0.07, 8, 6), (0.499, 8, 0), (0.5, 16, 8), (1, 16, 0)])
@@ -199,8 +218,6 @@ async def test_internal_loop_runs_to_frequency_limit(
     await asyncio.wait_for(engine.run_loop(), timeout=2)
     assert engine._run_planner_request.await_count == limit
     assert scheduler._round_debt == debt
-    assert scheduler.view_frequency.phase == "recovery"
-    assert scheduler.view_frequency.internal_frequency == 0
     runtime._enter_stop_state.assert_called_once()
 
 
@@ -234,6 +251,75 @@ def test_debt_carries_across_wait_and_frequency_changes(monkeypatch: pytest.Monk
     assert scheduler.allows_timed_wakeup
 
 
+@pytest.mark.parametrize(
+    "frequency, draw, accepted", [(0.32, 0.31, True), (0.32, 0.32, False), (0, 0, False), (1, 0.99, True)]
+)
+@pytest.mark.asyncio
+async def test_wait_timeout_samples_current_frequency_once(
+    monkeypatch: pytest.MonkeyPatch, frequency: float, draw: float, accepted: bool,
+) -> None:
+    engine = make_engine(monkeypatch)
+    runtime = engine._runtime
+    runtime._internal_turn_queue = asyncio.Queue()
+    runtime._has_pending_messages = lambda: False
+    runtime._has_pending_wait_tool_call = lambda: runtime._pending_wait_tool_call_id is not None
+    runtime._is_reply_frequency_silent = lambda: runtime._get_effective_reply_frequency() == 0
+    runtime._enter_running_state = lambda: MaisakaHeartFlowChatting._enter_running_state(runtime)
+    runtime._consume_pending_wait_state = lambda: MaisakaHeartFlowChatting._consume_pending_wait_state(runtime)
+    runtime._mark_message_turn_unscheduled = Mock()
+    runtime._cancel_deferred_message_turn_task = Mock()
+    runtime._schedule_wait_timeout = lambda **kwargs: MaisakaHeartFlowChatting._schedule_wait_timeout(runtime, **kwargs)
+    runtime._end_planner_continuation = Mock()
+    runtime._update_stage_status = Mock()
+    sample = Mock(return_value=draw)
+    monkeypatch.setattr("src.maisaka.scenes.group.scheduling.random.random", sample)
+
+    MaisakaHeartFlowChatting._enter_wait_state(runtime, seconds=0, tool_call_id="timer", logical_turn_id="first")
+    await runtime._wait_timeout_task
+    timeout = runtime._internal_turn_queue.get_nowait()
+    runtime._get_effective_reply_frequency = lambda: frequency
+    assert (await engine._prepare_turn_start_context(WaitTimeoutTrigger("older"))).trigger_message is None
+    sample.assert_not_called()
+    context = await engine._prepare_turn_start_context(timeout)
+    assert context.timeout_triggered is accepted
+    assert context.trigger_message is (runtime.message_cache[-1] if accepted else None)
+    assert runtime._agent_state == (runtime._STATE_RUNNING if accepted else runtime._STATE_STOP)
+    assert runtime._internal_turn_queue.empty()
+    assert not runtime._has_pending_wait_tool_call()
+    assert runtime._chat_history[-1].tool_call_id == "timer"
+    assert (await engine._prepare_turn_start_context(timeout)).trigger_message is None
+    sample.assert_called_once()
+
+
+@pytest.mark.asyncio
+async def test_accepted_message_and_wait_timeout_share_wakeup(monkeypatch: pytest.MonkeyPatch) -> None:
+    engine = make_engine(monkeypatch)
+    runtime = engine._runtime
+    runtime._agent_state = runtime._STATE_WAIT
+    runtime._pending_wait_started_at = 10.0
+    runtime._message_turn_scheduler.accepted_wait_started_at = runtime._pending_wait_started_at
+    runtime._pending_wait_tool_call_id = "timer"
+    runtime._internal_turn_queue = asyncio.Queue()
+    runtime._internal_turn_queue.put_nowait("message")
+    runtime._is_reply_frequency_silent = lambda: False
+    runtime._has_pending_messages = lambda: True
+    runtime._has_pending_wait_tool_call = lambda: True
+    runtime._wait_for_message_quiet_period = AsyncMock()
+    runtime._mark_message_turn_unscheduled = Mock()
+    runtime._collect_pending_messages = lambda: runtime.message_cache
+    runtime._enter_running_state = Mock()
+    runtime._update_stage_status = Mock()
+    engine._build_wait_completed_message = Mock(return_value=SimpleNamespace(logical_turn_id="first"))
+    engine._ingest_messages = AsyncMock()
+    draw = Mock()
+    monkeypatch.setattr("src.maisaka.scenes.group.scheduling.random.random", draw)
+
+    context = await engine._prepare_turn_start_context(WaitTimeoutTrigger("timer"))
+    assert context.trigger_message is runtime.message_cache[-1]
+    engine._build_wait_completed_message.assert_called_once_with(has_new_messages=True)
+    draw.assert_not_called()
+
+
 @pytest.mark.asyncio
 async def test_round_debt_blocks_silence_and_queued_wait_timeout(monkeypatch: pytest.MonkeyPatch) -> None:
     engine = make_engine(monkeypatch)
@@ -241,6 +327,7 @@ async def test_round_debt_blocks_silence_and_queued_wait_timeout(monkeypatch: py
     scheduler = runtime._message_turn_scheduler
     runtime._get_effective_reply_frequency = lambda: 0.0625
     runtime._has_pending_wait_tool_call = lambda: True
+    runtime._pending_wait_tool_call_id = "waiting"
     runtime._schedule_message_turn = Mock()
     runtime._internal_turn_queue = asyncio.Queue()
     runtime._is_reply_frequency_silent = lambda: False
@@ -254,7 +341,7 @@ async def test_round_debt_blocks_silence_and_queued_wait_timeout(monkeypatch: py
     runtime._enqueue_message_turn = Mock()
     await scheduler._check_silence(0.01)
     runtime._enqueue_message_turn.assert_not_called()
-    context = await engine._prepare_turn_start_context("timeout")
+    context = await engine._prepare_turn_start_context(WaitTimeoutTrigger("waiting"))
     assert context.trigger_message is None
     assert runtime._agent_state == runtime._STATE_WAIT
     assert scheduler._round_debt == 1
@@ -287,25 +374,16 @@ async def test_wait_on_final_group_round_closes_tool_call(monkeypatch: pytest.Mo
     runtime._enter_stop_state.assert_called_once()
 
 
-def test_continued_planner_runs_do_not_reset_recovery() -> None:
-    controller = ViewFrequencyController()
-    controller.activate(0.0625)
-    assert controller.record_planner_run()
-    assert not controller.decide(0.5, 0.9)
-    assert controller.recovery_rounds == 1
-    assert not controller.record_planner_run()
-    assert controller.recovery_rounds == 1
-    assert controller.internal_frequency == 0.5 / 16
 
 
 @pytest.mark.asyncio
-async def test_interrupted_planner_does_not_consume_frequency(monkeypatch: pytest.MonkeyPatch) -> None:
+async def test_interrupted_planner_does_not_consume_round(monkeypatch: pytest.MonkeyPatch) -> None:
     engine = make_engine(monkeypatch)
-    controller = engine._runtime._message_turn_scheduler.view_frequency
-    controller.activate(0.5)
+    scheduler = engine._runtime._message_turn_scheduler
+    scheduler.start_planner_turn("first")
     state = CycleRuntimeState(response=planner_response(), planner_interrupted=True)
     await engine._finalize_cycle(cycle_detail=SimpleNamespace(cycle_id=1), round_index=0, state=state)
-    assert controller.internal_frequency == 0.5
+    assert scheduler.start_planner_turn("first") == 0
 
 
 @pytest.mark.asyncio

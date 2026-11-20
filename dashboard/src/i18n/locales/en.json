@@ -2435,7 +2435,7 @@
       },
       "talkValue": {
         "title": "Group viewing frequency",
-        "content": "The base probability of checking a debounced message batch with Planner. Activation enables continuous checks until the internal budget is exhausted, followed by recovery over 16 decisions. This is not the reply probability."
+        "content": "Each batch of ordinary group messages has this chance to start a Planner run. The run continues until it finishes or waits. New messages during a wait and the expiry of a wait timer both use the current probability. Each timer gets one chance to wake the Planner."
       },
       "plugins": {
         "title": "Plugin market",

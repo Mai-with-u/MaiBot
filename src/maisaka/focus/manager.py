@@ -189,7 +189,7 @@ class FocusModeManager:
                 runtime._internal_loop_task.cancel()
                 await asyncio.gather(runtime._internal_loop_task, return_exceptions=True)
                 runtime._internal_loop_task = None
-            runtime._clear_wait_state()
+            runtime._end_logical_turn()
             await self.attach(runtime)
             pending.extend(runtime.message_cache[runtime._last_processed_index :])
             for message in {message.message_id: message for message in pending}.values():
