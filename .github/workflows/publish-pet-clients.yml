@@ -2,6 +2,11 @@ name: Build Pet Clients (Manual)
 
 on:
   workflow_dispatch:
+    inputs:
+      verify_android_only:
+        description: 'Build and verify the Android APK without attaching it to a release'
+        type: boolean
+        default: false
 
 permissions:
   contents: read
@@ -36,7 +41,7 @@ jobs:
     strategy:
       fail-fast: false
       matrix:
-        platform: [windows, android]
+        platform: ${{ fromJSON(inputs.verify_android_only && '["android"]' || '["windows", "android"]') }}
     steps:
       - uses: actions/checkout@v4
         with:
@@ -103,9 +108,8 @@ jobs:
             source/pet-clients/android/gradle/wrapper/gradle-wrapper.properties
       - uses: android-actions/setup-android@v3
         if: matrix.platform == 'android'
-      - name: Install Android SDK packages
-        if: matrix.platform == 'android'
-        run: sdkmanager 'platforms;android-35' 'build-tools;35.0.0'
+        with:
+          packages: 'platforms;android-35 build-tools;35.0.0'
       - name: Build and check signed Android APK
         if: matrix.platform == 'android'
         working-directory: source/pet-clients/android
@@ -116,7 +120,7 @@ jobs:
         run: |
           ./gradlew.bat :app:assembleRelease :app:lintRelease --console=plain
           if ($LASTEXITCODE -ne 0) { exit $LASTEXITCODE }
-          & "$env:ANDROID_HOME/build-tools/35.0.0/apksigner.bat" verify --verbose app/build/outputs/apk/release/app-release.apk
+          & "$env:ANDROID_HOME/build-tools/35.0.0/apksigner.bat" verify --verbose --print-certs app/build/outputs/apk/release/app-release.apk
           if ($LASTEXITCODE -ne 0) { exit $LASTEXITCODE }
       - name: Collect installer and checksum
         env:
@@ -137,7 +141,7 @@ jobs:
   attach:
     name: Attach successful builds to the existing release
     needs: [resolve, build]
-    if: always() && needs.resolve.outputs.ready == 'true' && !cancelled()
+    if: ${{ always() && !inputs.verify_android_only && needs.resolve.outputs.ready == 'true' && !cancelled() }}
     runs-on: ubuntu-24.04
     permissions:
       contents: write
