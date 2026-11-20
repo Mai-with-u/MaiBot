@@ -24,7 +24,7 @@ def get_tool_spec() -> ToolSpec:
 
     return ToolSpec(
         name="wait",
-        description="暂停当前思考，不发送消息。不填 seconds 表示结束本轮，等待新消息；填写 seconds 表示定时等待，到期后即使没有新消息也会继续思考。定时等待可能被新消息提前唤醒。",
+        description="暂停当前思考，不发送消息。不填 seconds 表示结束本轮，等待新消息；填写 seconds 表示定时等待，普通群聊到期时按当前查看概率判断是否继续思考。定时等待可能被新消息提前唤醒。",
         parameters_schema={
             "type": "object",
             "properties": {
@@ -66,7 +66,7 @@ async def handle_tool(
         tool_call_id=invocation.call_id,
         logical_turn_id=tool_ctx.engine.active_logical_turn_id,
     )
-    wait_detail = f"当前对话循环进入等待，最多 {wait_seconds} 秒；私聊新消息经防抖后唤醒，群聊按随等待进度增长的概率唤醒，到期必定继续。"
+    wait_detail = f"本次连续思考已结束，定时等待 {wait_seconds} 秒。私聊在收到新消息并完成防抖后或倒计时到期时唤醒。普通群聊对新消息和到期倒计时均按当前查看概率判定。"
     return tool_ctx.build_success_result(
         invocation.tool_name,
         f"{wait_detail}连续 wait 次数：{current_count}。",

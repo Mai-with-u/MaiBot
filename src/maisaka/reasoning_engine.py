@@ -5,7 +5,7 @@ from binascii import Error as BinasciiError
 from dataclasses import dataclass, field
 from datetime import datetime
 from html import escape
-from typing import TYPE_CHECKING, Any, Awaitable, Callable, Dict, List, Literal, Optional
+from typing import TYPE_CHECKING, Any, Awaitable, Callable, Dict, List, Optional
 
 import asyncio
 import difflib
@@ -47,6 +47,7 @@ from src.services import database_service as database_api
 from src.maisaka.display.display_utils import format_tool_call_for_display
 from src.maisaka.display.prompt_cli_renderer import PromptCLIVisualizer
 from src.maisaka.display.reasoning_steps import reasoning_trace_id
+from src.maisaka.turn_trigger.gates import TurnTrigger, WaitTimeoutTrigger
 from src.maisaka.utils.tool_post_execution import handle_tool_post_execution_effects
 from src.maisaka.utils.tool_record_payload import build_tool_record_payload, normalize_tool_record_value
 
@@ -848,7 +849,7 @@ class MaisakaReasoningEngine:
 
     async def _prepare_turn_start_context(
         self,
-        queued_trigger: Literal["message", "timeout", "proactive"],
+        queued_trigger: TurnTrigger,
     ) -> TurnStartContext:
         """消费触发信号并准备本轮初始消息与触发消息。"""
 
@@ -856,27 +857,35 @@ class MaisakaReasoningEngine:
         silence_triggered = self._runtime._message_turn_scheduler.consume_silence_trigger()
         silent_reply_frequency = self._runtime._is_reply_frequency_silent()
 
-        if timeout_triggered and not (
-            self._runtime._has_pending_wait_tool_call() and self._runtime._message_turn_scheduler.allows_timed_wakeup
-        ):
-            # 定时信号入队后，最后一轮可能才完成记账或结束 wait。
-            timeout_triggered = False
-            if not (message_triggered or proactive_triggered or silence_triggered):
-                return TurnStartContext([], None, False, False, silent_reply_frequency)
+        # 定时信号入队后，最后一轮可能才完成记账。
+        timeout_triggered = timeout_triggered and self._runtime._message_turn_scheduler.allows_timed_wakeup
+        if not (message_triggered or timeout_triggered or proactive_triggered or silence_triggered):
+            return TurnStartContext([], None, False, False, silent_reply_frequency)
 
         if (
             self._runtime._agent_state == self._runtime._STATE_WAIT
-            and not (timeout_triggered or proactive_triggered or silence_triggered)
-            and not silent_reply_frequency
+            and not (proactive_triggered or silence_triggered)
             and not (
                 message_triggered
                 and self._runtime._has_pending_messages()
                 and self._runtime._message_turn_scheduler.accepted_wait_started_at == self._runtime._pending_wait_started_at
             )
         ):
-            self._runtime._mark_message_turn_unscheduled()
-            logger.debug(f"{self._runtime.log_prefix} 当前仍处于 wait 状态，忽略消息触发并继续等待超时")
-            return TurnStartContext([], None, timeout_triggered, proactive_triggered, silent_reply_frequency)
+            if timeout_triggered:
+                if not self._runtime._message_turn_scheduler.accept_wait_timeout():
+                    self._runtime._chat_history.append(
+                        self._build_wait_completed_message(has_new_messages=self._runtime._has_pending_messages())
+                    )
+                    self._runtime._end_planner_continuation()
+                    self._runtime._enter_stop_state()
+                    self._runtime._update_stage_status("空闲", "定时等待结束，本次未唤醒思考")
+                    if message_triggered:
+                        self._runtime._mark_message_turn_unscheduled()
+                    return TurnStartContext([], None, False, False, silent_reply_frequency)
+            elif not silent_reply_frequency:
+                self._runtime._mark_message_turn_unscheduled()
+                logger.debug(f"{self._runtime.log_prefix} 当前仍处于 wait 状态，忽略消息触发并继续等待超时")
+                return TurnStartContext([], None, False, False, silent_reply_frequency)
 
         if self._runtime._has_pending_messages():
             # 消息、timeout、主动任务都可能带走消息缓存，不能绕过当前批次的防抖等待。
@@ -1193,29 +1202,25 @@ class MaisakaReasoningEngine:
 
     def _drain_ready_turn_triggers(
         self,
-        queued_trigger: Literal["message", "timeout", "proactive"],
+        queued_trigger: TurnTrigger,
     ) -> tuple[bool, bool, bool]:
         """合并当前已就绪的消息触发信号。"""
 
-        message_triggered = queued_trigger == "message"
-        timeout_triggered = queued_trigger == "timeout"
-        proactive_triggered = queued_trigger == "proactive"
+        message_triggered = timeout_triggered = proactive_triggered = False
 
         while True:
+            if queued_trigger == "message":
+                message_triggered = True
+            elif queued_trigger == "proactive":
+                proactive_triggered = True
+            elif isinstance(queued_trigger, WaitTimeoutTrigger):
+                # 已结束的 wait 即使还有信号排队，也不能唤醒或结束后来的 wait。
+                if queued_trigger.tool_call_id == self._runtime._pending_wait_tool_call_id:
+                    timeout_triggered = True
             try:
-                next_trigger = self._runtime._internal_turn_queue.get_nowait()
+                queued_trigger = self._runtime._internal_turn_queue.get_nowait()
             except asyncio.QueueEmpty:
                 break
-
-            if next_trigger == "message":
-                message_triggered = True
-                continue
-            if next_trigger == "timeout":
-                timeout_triggered = True
-                continue
-            if next_trigger == "proactive":
-                proactive_triggered = True
-                continue
 
         return message_triggered, timeout_triggered, proactive_triggered
 

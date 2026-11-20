@@ -148,7 +148,7 @@ def get_tool_spec(context: Optional[ToolAvailabilityContext] = None) -> ToolSpec
         "wait_seconds": {
             "type": "integer",
             "minimum": 0,
-            "description": "可选。after_reply=wait 时最多等待的秒数，到期后即使没有新消息也会继续思考。不填表示结束本轮。",
+            "description": "可选。after_reply=wait 时最多等待的秒数，普通群聊到期时按当前查看概率判断是否继续思考。不填表示结束本轮。",
         },
         "msg_id": {
             "type": "string",

@@ -1,9 +1,17 @@
 """Maisaka 消息触发门控的判定结果。"""
 
 from dataclasses import dataclass
-from typing import Literal
+from typing import Literal, Union
 
 TurnGateDecision = Literal["trigger", "wait", "delay"]
+
+
+@dataclass(frozen=True)
+class WaitTimeoutTrigger:
+    tool_call_id: str
+
+
+TurnTrigger = Union[Literal["message", "proactive"], WaitTimeoutTrigger]
 
 
 @dataclass(frozen=True)
