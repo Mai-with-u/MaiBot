@@ -171,13 +171,16 @@ def _append_image_component(
 ) -> bool:
     """将图片组件追加到 LLM 消息构建器。"""
     image_format = _guess_image_format(component.binary_data)
+    normalized_content = component.content.strip()
     if enable_visual_message and image_format and component.binary_data:
+        # 视觉输入之外保留文本锚点：纯图片消息在文本流中只剩消息前缀时，
+        # 模型按内容检索 msg_id 容易错抄相邻消息的编号，导致引用回复挂错对象。
+        builder.add_text_content(normalized_content or "[图片]")
         append_context_image(
             builder, lambda: _encode_image_for_context(component.binary_data, image_format, max_image_side)
         )
         return True
 
-    normalized_content = component.content.strip()
     if normalized_content:
         builder.add_text_content(normalized_content)
         return True
