@@ -51,7 +51,7 @@ def _is_unsafe_ip_address(address: ipaddress.IPv4Address | ipaddress.IPv6Address
 
 def _is_non_public_ip_address(address: ipaddress.IPv4Address | ipaddress.IPv6Address) -> bool:
     """判断地址是否不属于普通公网目标。"""
-    return address.is_private or address.is_loopback or _is_unsafe_ip_address(address)
+    return not address.is_global or address.is_private or address.is_loopback or _is_unsafe_ip_address(address)
 
 
 def _should_enforce_public_network(require_public_network: bool | None) -> bool:
