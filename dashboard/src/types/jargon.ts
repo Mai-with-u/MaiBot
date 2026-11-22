@@ -17,7 +17,7 @@ export interface Jargon {
   chat_names: string[]
   is_global: boolean
   count: number
-  is_jargon: boolean
+  is_jargon: boolean | null
   is_legacy_empty_meaning: boolean
   is_complete: boolean
   created_by: JargonCreatedBy
@@ -81,7 +81,7 @@ export interface JargonExportItem {
   content: string
   meaning: string
   count: number
-  is_jargon: boolean
+  is_jargon: boolean | null
   is_complete: boolean
   is_global: boolean
   created_by: JargonCreatedBy
@@ -104,7 +104,14 @@ export interface JargonExportResponse {
 /**
  * 黑话导入请求
  */
+export interface JargonImportConflict {
+  content: string
+  records: { id: number; meaning: string; is_global: boolean; session_ids: string[] }[]
+}
+
 export interface JargonImportRequest {
+  replacements?: Record<string, JargonImportConflict['records']>
+  reviewed_skips?: string[]
   target_session_ids: string[]
   is_global?: boolean
   jargons: JargonExportItem[]
@@ -161,7 +168,7 @@ export interface JargonUpdateRequest {
   session_id?: string
   session_ids?: string[]
   is_global?: boolean
-  is_jargon?: boolean
+  is_jargon?: boolean | null
   created_by?: JargonCreatedBy
 }
 

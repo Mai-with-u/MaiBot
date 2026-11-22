@@ -66,8 +66,8 @@ interface JargonFilters {
   groupIndex: string | null
 }
 
-type JargonStatusFilter = 'confirmed_jargon' | 'confirmed_not_jargon' | 'manual_jargon'
-type JargonSummaryTab = 'total' | JargonStatusFilter | 'global_count' | 'complete_count'
+type JargonStatusFilter = 'confirmed_jargon' | 'confirmed_not_jargon' | 'pending' | 'manual_jargon'
+type JargonSummaryTab = JargonStatusFilter | 'global_count' | 'complete_count'
 
 /**
  * 黑话管理主页面
@@ -111,7 +111,7 @@ export function JargonManagementPage({
     domain: 'jargon',
     getId: (jargon) => jargon.id,
     initialFilters: {
-      summary: 'total',
+      summary: 'confirmed_jargon',
       chatId: 'all',
       browseMode: 'all',
       groupIndex: null,
@@ -123,6 +123,7 @@ export function JargonManagementPage({
       const summaryStatus: JargonStatusFilter | undefined = [
         'confirmed_jargon',
         'confirmed_not_jargon',
+        'pending',
         'manual_jargon',
       ].includes(filters.summary)
         ? (filters.summary as JargonStatusFilter)
@@ -277,7 +278,7 @@ export function JargonManagementPage({
     onSuccess: (_data, vars) => {
       toast({
         title: '操作成功',
-        description: `已将 ${vars.ids.length} 个词条设为${vars.isJargon ? '黑话' : '无黑话'}`,
+        description: `已将 ${vars.ids.length} 个词条设为${vars.isJargon ? '黑话' : '不是黑话'}`,
       })
       list.clearSelection()
       invalidateJargon()
@@ -292,7 +293,7 @@ export function JargonManagementPage({
   const handleChatChange = (chatId: string) => {
     list.updateFilters((filters) => ({
       ...filters,
-      summary: filters.summary === 'global_count' ? 'total' : filters.summary,
+      summary: filters.summary === 'global_count' ? 'confirmed_jargon' : filters.summary,
       chatId,
       browseMode: chatId === 'all' ? 'all' : 'chat',
       groupIndex: null,
@@ -305,7 +306,7 @@ export function JargonManagementPage({
       browseMode: mode,
       chatId: mode === 'chat' ? filters.chatId : 'all',
       groupIndex: mode === 'group' ? (groups[0]?.id ?? null) : null,
-      summary: mode === 'group' && filters.summary === 'global_count' ? 'total' : filters.summary,
+      summary: mode === 'group' && filters.summary === 'global_count' ? 'confirmed_jargon' : filters.summary,
     }))
   }
 
@@ -326,22 +327,21 @@ export function JargonManagementPage({
     count: number
     className: string
   }> = [
-    { value: 'total', label: '总数量', count: stats.total, className: 'text-foreground' },
     {
       value: 'confirmed_jargon',
-      label: '已确认黑话',
+      label: '黑话',
       count: stats.confirmed_jargon,
       className: 'text-green-600',
     },
     {
       value: 'confirmed_not_jargon',
-      label: '无黑话',
+      label: '不是黑话',
       count: stats.confirmed_not_jargon,
       className: 'text-gray-500',
     },
     {
       value: 'manual_jargon',
-      label: '手动黑话',
+      label: '已锁定',
       count: stats.manual_jargon,
       className: 'text-amber-600',
     },
@@ -350,6 +350,12 @@ export function JargonManagementPage({
       label: '全局黑话',
       count: stats.global_count,
       className: 'text-blue-600',
+    },
+    {
+      value: 'pending',
+      label: '积累中',
+      count: stats.pending ?? 0,
+      className: 'text-amber-600',
     },
     {
       value: 'complete_count',
@@ -437,7 +443,7 @@ export function JargonManagementPage({
           </Button>
           <Button variant="outline" size="xs" onClick={() => handleBatchSetJargon(false)}>
             <X className="h-3 w-3" />
-            标记为无黑话
+            标记为不是黑话
           </Button>
           <Button variant="outline" size="xs" onClick={list.clearSelection}>
             取消选择
@@ -454,8 +460,7 @@ export function JargonManagementPage({
   const summary = (
     <MetricStrip
       items={[
-        { label: '总数量', value: stats.total.toLocaleString() },
-        { label: '已确认黑话', value: stats.confirmed_jargon.toLocaleString(), positive: true },
+        { label: '黑话', value: stats.confirmed_jargon.toLocaleString(), positive: true },
         { label: '推断完成', value: stats.complete_count.toLocaleString() },
       ]}
     />
@@ -576,7 +581,7 @@ export function JargonManagementPage({
                     ...filters,
                     browseMode: 'group',
                     groupIndex: String(id),
-                    summary: filters.summary === 'global_count' ? 'total' : filters.summary,
+                    summary: filters.summary === 'global_count' ? 'confirmed_jargon' : filters.summary,
                   }))
                 }
               }}

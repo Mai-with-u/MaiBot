@@ -1,4 +1,4 @@
-import { cleanup, fireEvent, render, screen, waitFor } from '@testing-library/react'
+import { cleanup, render, screen, waitFor } from '@testing-library/react'
 import userEvent from '@testing-library/user-event'
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest'
 
@@ -121,9 +121,9 @@ describe('JargonDetailDialog', () => {
     expect(screen.getByText('黑话详情')).toBeInTheDocument()
     expect(screen.getByLabelText('内容')).toHaveValue('黑话7')
     expect(screen.getByLabelText('含义')).toHaveValue('含义7')
-    // 状态徽章区：是黑话 / 旧数据 / AI / 全局 / 推断完成
-    // （「是黑话」同时出现在徽章与黑话状态 Select 的隐藏原生 option 中）
-    expect(screen.getAllByText('是黑话').length).toBeGreaterThanOrEqual(1)
+    // 状态徽章区：黑话 / 旧数据 / AI / 全局 / 推断完成
+    // （「黑话」同时出现在徽章与黑话状态 Select 的隐藏原生 option 中）
+    expect(screen.getAllByText('黑话').length).toBeGreaterThanOrEqual(1)
     expect(screen.getByText('旧数据')).toBeInTheDocument()
     expect(screen.getByText('AI')).toBeInTheDocument()
     expect(screen.getByText('全局')).toBeInTheDocument()
@@ -168,7 +168,7 @@ describe('JargonDetailDialog', () => {
     await waitFor(() =>
       expect(jargonApi.updateJargon).toHaveBeenCalledWith(
         1,
-        expect.objectContaining({ content: '新内容', session_ids: ['s1'], is_jargon: true })
+        expect.objectContaining({ content: '新内容', session_ids: ['s1'], is_jargon: true, created_by: 'MANUAL' })
       )
     )
     expect(onChanged).toHaveBeenCalledWith(updated)
@@ -188,7 +188,7 @@ describe('JargonDetailDialog', () => {
     expect(onChanged).not.toHaveBeenCalled()
   })
 
-  it('AI 记录有含义时可固定含义：以 MANUAL + is_jargon 调用更新', async () => {
+  it('AI 记录有含义时可锁定含义：以 MANUAL + is_jargon 调用更新', async () => {
     const user = userEvent.setup()
     const pinned = makeJargon(1, { created_by: 'MANUAL' })
     vi.mocked(jargonApi.updateJargon).mockResolvedValue({
@@ -197,7 +197,9 @@ describe('JargonDetailDialog', () => {
       data: pinned,
     })
     const { onChanged } = renderDetail(makeJargon(1, { meaning: '老含义' }))
-    await user.click(screen.getByRole('button', { name: '固定含义' }))
+    await user.click(screen.getByRole('checkbox', { name: '锁定含义' }))
+    expect(jargonApi.updateJargon).not.toHaveBeenCalled()
+    await user.click(screen.getByRole('button', { name: '保存' }))
     await waitFor(() =>
       expect(jargonApi.updateJargon).toHaveBeenCalledWith(
         1,
@@ -205,15 +207,15 @@ describe('JargonDetailDialog', () => {
       )
     )
     expect(onChanged).toHaveBeenCalledWith(pinned)
-    expect(toastMock).toHaveBeenCalledWith(expect.objectContaining({ title: '已固定含义' }))
+    expect(toastMock).toHaveBeenCalledWith(expect.objectContaining({ title: '保存成功' }))
   })
 
-  it('AI 记录无含义时固定含义按钮禁用', () => {
+  it('AI 记录无含义时锁定含义按钮禁用', () => {
     renderDetail(makeJargon(1, { meaning: null }))
-    expect(screen.getByRole('button', { name: '固定含义' })).toBeDisabled()
+    expect(screen.getByRole('checkbox', { name: '锁定含义' })).toBeDisabled()
   })
 
-  it('MANUAL 记录显示取消固定：以 created_by=AI 调用更新', async () => {
+  it('MANUAL 记录显示解锁含义：以 created_by=AI 调用更新', async () => {
     const user = userEvent.setup()
     const unpinned = makeJargon(1, { created_by: 'AI' })
     vi.mocked(jargonApi.updateJargon).mockResolvedValue({
@@ -222,15 +224,18 @@ describe('JargonDetailDialog', () => {
       data: unpinned,
     })
     renderDetail(makeJargon(1, { created_by: 'MANUAL' }))
-    expect(screen.queryByRole('button', { name: '固定含义' })).not.toBeInTheDocument()
-    await user.click(screen.getByRole('button', { name: '取消固定' }))
+    const lock = screen.getByRole('checkbox', { name: '锁定含义' })
+    expect(lock).toBeChecked()
+    await user.click(lock)
+    expect(jargonApi.updateJargon).not.toHaveBeenCalled()
+    await user.click(screen.getByRole('button', { name: '保存' }))
     await waitFor(() =>
       expect(jargonApi.updateJargon).toHaveBeenCalledWith(
         1,
         expect.objectContaining({ created_by: 'AI' })
       )
     )
-    expect(toastMock).toHaveBeenCalledWith(expect.objectContaining({ title: '已取消固定' }))
+    expect(toastMock).toHaveBeenCalledWith(expect.objectContaining({ title: '保存成功' }))
   })
 
   it('session_ids 为空时回退为 session_id，保存仍带上该聊天', async () => {
@@ -263,10 +268,13 @@ describe('JargonDetailDialog', () => {
     const meaningInput = screen.getByLabelText('含义')
     await user.clear(meaningInput)
     await user.type(meaningInput, '新含义')
+    const lock = screen.getByRole('checkbox', { name: '锁定含义' })
+    expect(lock).toBeChecked()
+    await user.click(lock)
 
     await user.click(screen.getByRole('combobox'))
-    await user.click(await screen.findByRole('option', { name: '无黑话' }))
-    expect(screen.getAllByText('无黑话').length).toBeGreaterThanOrEqual(1)
+    await user.click(await screen.findByRole('option', { name: '不是黑话' }))
+    expect(screen.getAllByText('不是黑话').length).toBeGreaterThanOrEqual(1)
 
     await user.click(screen.getByRole('switch', { name: '全局黑话' }))
     await user.click(screen.getByRole('button', { name: '保存' }))
@@ -310,63 +318,23 @@ describe('JargonDetailDialog', () => {
     )
   })
 
-  it('关闭按钮回调 onOpenChange(false)', async () => {
+  it('右上角关闭时放弃未保存的锁定修改', async () => {
     const user = userEvent.setup()
     const { onOpenChange } = renderDetail(makeJargon(1))
-    const saveButton = screen.getByRole('button', { name: '保存' })
-    const footer = saveButton.parentElement
-    expect(footer).not.toBeNull()
-    const closeButton = screen
-      .getAllByRole('button', { name: '关闭' })
-      .find((btn) => footer?.contains(btn))
-    expect(closeButton).toBeDefined()
-    await user.click(closeButton!)
+    await user.click(screen.getByRole('checkbox', { name: '锁定含义' }))
+    await user.click(screen.getByRole('button', { name: '关闭' }))
     expect(onOpenChange).toHaveBeenCalledWith(false)
-  })
-
-  it('清空含义后固定按钮禁用；直接调用 onClick 提示无法固定', () => {
-    renderDetail(makeJargon(1, { meaning: '老含义' }))
-    fireEvent.change(screen.getByLabelText('含义'), { target: { value: '' } })
-    const pinButton = screen.getByRole('button', { name: '固定含义' })
-    expect(pinButton).toBeDisabled()
-    // 无含义时按钮禁用，React 不会派发 click；取出 props.onClick 覆盖守卫分支
-    const reactPropsKey = Object.keys(pinButton).find((key) => key.startsWith('__reactProps$'))
-    const reactProps = reactPropsKey
-      ? (pinButton as unknown as Record<string, { onClick?: () => void }>)[reactPropsKey]
-      : undefined
-    expect(reactProps?.onClick).toBeTypeOf('function')
-    reactProps?.onClick?.()
-    expect(toastMock).toHaveBeenCalledWith(
-      expect.objectContaining({
-        title: '无法固定',
-        description: '当前黑话还没有含义，不能固定为手动记录',
-      })
-    )
     expect(jargonApi.updateJargon).not.toHaveBeenCalled()
   })
 
-  it('固定含义失败：展示兜底错误信息', async () => {
+  it('勾选后清空含义，保存时提示填写释义', async () => {
     const user = userEvent.setup()
-    vi.mocked(jargonApi.updateJargon).mockRejectedValue('固定接口炸了')
-    renderDetail(makeJargon(1, { meaning: '老含义' }))
-    await user.click(screen.getByRole('button', { name: '固定含义' }))
-    await waitFor(() =>
-      expect(toastMock).toHaveBeenCalledWith(
-        expect.objectContaining({ title: '固定失败', description: '无法固定黑话含义' })
-      )
-    )
-  })
-
-  it('取消固定失败：展示兜底错误信息', async () => {
-    const user = userEvent.setup()
-    vi.mocked(jargonApi.updateJargon).mockRejectedValue('取消接口炸了')
-    renderDetail(makeJargon(1, { created_by: 'MANUAL' }))
-    await user.click(screen.getByRole('button', { name: '取消固定' }))
-    await waitFor(() =>
-      expect(toastMock).toHaveBeenCalledWith(
-        expect.objectContaining({ title: '取消固定失败', description: '无法取消固定黑话含义' })
-      )
-    )
+    renderDetail(makeJargon(1))
+    await user.click(screen.getByRole('checkbox', { name: '锁定含义' }))
+    await user.clear(screen.getByLabelText('含义'))
+    await user.click(screen.getByRole('button', { name: '保存' }))
+    expect(toastMock).toHaveBeenCalledWith(expect.objectContaining({ description: '请先填写要锁定的含义' }))
+    expect(jargonApi.updateJargon).not.toHaveBeenCalled()
   })
 })
 

@@ -1,4 +1,4 @@
-import { Check, Hash, HelpCircle, Upload } from 'lucide-react'
+import { HelpCircle, Upload } from 'lucide-react'
 import { useEffect, useState } from 'react'
 
 import {
@@ -11,6 +11,7 @@ import {
   AlertDialogHeader,
   AlertDialogTitle,
 } from '@/components/ui/alert-dialog'
+import { Checkbox } from '@/components/ui/checkbox'
 import { Button } from '@/components/ui/button'
 import {
   Dialog,
@@ -36,7 +37,6 @@ import { Switch } from '@/components/ui/switch'
 import { Textarea } from '@/components/ui/textarea'
 import { useToast } from '@/hooks/use-toast'
 import { formatChatDisplayName } from '@/lib/chat-display'
-import { cn } from '@/lib/utils'
 
 import { createJargon, updateJargon } from '@/lib/jargon-api'
 
@@ -46,33 +46,6 @@ import type {
   JargonCreateRequest,
   JargonUpdateRequest,
 } from '@/types/jargon'
-
-// ====================
-// 信息项组件
-// ====================
-function InfoItem({
-  icon: Icon,
-  label,
-  value,
-  mono = false,
-}: {
-  icon?: typeof Hash
-  label: string
-  value: string | null | undefined
-  mono?: boolean
-}) {
-  return (
-    <div className="space-y-1">
-      <Label className="text-muted-foreground flex items-center gap-1 text-xs">
-        {Icon && <Icon className="h-3 w-3" />}
-        {label}
-      </Label>
-      <div className={cn('text-sm', mono && 'font-mono', !value && 'text-muted-foreground')}>
-        {value || '-'}
-      </div>
-    </div>
-  )
-}
 
 // ====================
 // 黑话详情对话框
@@ -94,12 +67,12 @@ export function JargonDetailDialog({
 }: JargonDetailDialogProps) {
   const [formData, setFormData] = useState<JargonUpdateRequest>({})
   const [saving, setSaving] = useState(false)
-  const [pinning, setPinning] = useState(false)
-  const [unpinning, setUnpinning] = useState(false)
+  const [locked, setLocked] = useState(false)
   const { toast } = useToast()
 
   useEffect(() => {
     if (jargon && open) {
+      setLocked(jargon.created_by === 'MANUAL')
       setFormData({
         content: jargon.content,
         meaning: jargon.meaning || '',
@@ -113,6 +86,13 @@ export function JargonDetailDialog({
     }
   }, [jargon, open])
 
+  const editText = (field: 'content' | 'meaning', value: string) => {
+    const next = { ...formData, [field]: value }
+    setFormData(next)
+    if (next.meaning?.trim()) setLocked(true)
+  }
+
+  const locking = locked && jargon?.created_by !== 'MANUAL'
   const handleSave = async () => {
     if (!jargon) return
     if (formData.content !== undefined && !formData.content.trim()) {
@@ -123,7 +103,12 @@ export function JargonDetailDialog({
       })
       return
     }
-    if (formData.session_ids && formData.session_ids.length === 0) {
+    if (locking && !formData.meaning?.trim()) {
+      toast({ title: '验证失败', description: '请先填写要锁定的含义', variant: 'destructive' })
+      return
+    }
+    const globalWithoutSources = formData.is_global && !jargon.session_id && !jargon.session_ids?.length
+    if (!globalWithoutSources && formData.session_ids?.length === 0) {
       toast({
         title: '验证失败',
         description: '请至少选择一个聊天',
@@ -134,7 +119,12 @@ export function JargonDetailDialog({
 
     try {
       setSaving(true)
-      const response = await updateJargon(jargon.id, formData)
+      const response = await updateJargon(jargon.id, {
+        ...formData,
+        ...(globalWithoutSources && !formData.session_ids?.length && { session_ids: undefined, session_id: undefined }),
+        ...(locking && { created_by: 'MANUAL', is_jargon: true, meaning: formData.meaning?.trim() }),
+        ...(!locked && jargon.created_by === 'MANUAL' && { created_by: 'AI' }),
+      })
       if (response.data) {
         onChanged(response.data)
       }
@@ -153,119 +143,62 @@ export function JargonDetailDialog({
     }
   }
 
-  const handlePinMeaning = async () => {
-    if (!jargon) return
-    const meaning = (formData.meaning ?? jargon.meaning ?? '').trim()
-    if (!meaning) {
-      toast({
-        title: '无法固定',
-        description: '当前黑话还没有含义，不能固定为手动记录',
-        variant: 'destructive',
-      })
-      return
-    }
-
-    try {
-      setPinning(true)
-      const response = await updateJargon(jargon.id, {
-        ...formData,
-        meaning,
-        created_by: 'MANUAL',
-        is_jargon: true,
-      })
-      if (response.data) {
-        onChanged(response.data)
-      }
-      toast({
-        title: '已固定含义',
-        description: '这条黑话已标记为手动记录，后续 AI 学习不会再覆盖它',
-      })
-    } catch (error) {
-      toast({
-        title: '固定失败',
-        description: error instanceof Error ? error.message : '无法固定黑话含义',
-        variant: 'destructive',
-      })
-    } finally {
-      setPinning(false)
-    }
-  }
-
-  const handleUnpinMeaning = async () => {
-    if (!jargon) return
-
-    try {
-      setUnpinning(true)
-      const response = await updateJargon(jargon.id, {
-        ...formData,
-        created_by: 'AI',
-      })
-      if (response.data) {
-        onChanged(response.data)
-      }
-      toast({
-        title: '已取消固定',
-        description: '这条黑话已恢复为 AI 学习记录',
-      })
-    } catch (error) {
-      toast({
-        title: '取消固定失败',
-        description: error instanceof Error ? error.message : '无法取消固定黑话含义',
-        variant: 'destructive',
-      })
-    } finally {
-      setUnpinning(false)
-    }
-  }
-
   if (!jargon) return null
-
-  const canPinMeaning =
-    jargon.created_by !== 'MANUAL' && Boolean((formData.meaning ?? jargon.meaning ?? '').trim())
+  const status = locking ? true : formData.is_jargon
 
   return (
     <Dialog open={open} onOpenChange={onOpenChange}>
       <DialogContent
-        className="grid max-h-[80vh] max-w-2xl grid-rows-[auto_1fr_auto] overflow-hidden"
+        className="grid max-h-[calc(100dvh-2rem)] grid-rows-[auto_minmax(0,1fr)_auto] overflow-hidden [--dialog-width:68rem]"
+        aria-describedby={undefined}
         confirmOnEnter
       >
         <DialogHeader>
           <DialogTitle>黑话详情</DialogTitle>
-          <DialogDescription>查看并修改黑话信息</DialogDescription>
         </DialogHeader>
 
-        <DialogBody className="h-full">
-          <div className="space-y-4 pb-2">
-            <div className="grid grid-cols-2 gap-4">
-              <InfoItem icon={Hash} label="记录ID" value={jargon.id.toString()} mono />
-              <InfoItem label="使用次数" value={jargon.count.toString()} />
-            </div>
+        <DialogBody type="auto" className="min-w-0" viewportClassName="pr-5">
+          <div className="grid gap-5 pb-2 md:grid-cols-[minmax(0,2fr)_minmax(0,1fr)]">
+            <div className="min-w-0 space-y-4">
+              <p className="text-muted-foreground text-sm">使用次数 {jargon.count}</p>
 
-            <div className="space-y-1">
-              <Label htmlFor="detail_content">内容</Label>
-              <Input
-                id="detail_content"
-                value={formData.content || ''}
-                onChange={(e) => setFormData({ ...formData, content: e.target.value })}
-                placeholder="输入黑话内容"
-              />
-            </div>
+              <div className="space-y-1">
+                <Label htmlFor="detail_content">内容</Label>
+                <Input
+                  id="detail_content"
+                  value={formData.content || ''}
+                  onChange={(e) => editText('content', e.target.value)}
+                  placeholder="输入黑话内容"
+                />
+              </div>
 
-            <div className="space-y-1">
-              <Label htmlFor="detail_meaning">含义</Label>
-              <Textarea
-                id="detail_meaning"
-                value={formData.meaning || ''}
-                onChange={(e) => setFormData({ ...formData, meaning: e.target.value })}
-                placeholder="输入黑话含义"
-                rows={4}
-              />
+              <div className="space-y-1">
+                <div className="flex items-center gap-4">
+                  <Label htmlFor="detail_meaning">含义</Label>
+                  <Label htmlFor="detail_lock_meaning" className="flex items-center gap-1.5 text-xs">
+                    <Checkbox
+                      id="detail_lock_meaning"
+                      checked={locked}
+                      disabled={saving || (!locked && !formData.meaning?.trim())}
+                      onCheckedChange={(checked) => setLocked(checked === true)}
+                    />
+                    锁定含义
+                  </Label>
+                </div>
+                <Textarea
+                  id="detail_meaning"
+                  value={formData.meaning || ''}
+                  onChange={(e) => editText('meaning', e.target.value)}
+                  placeholder="输入黑话含义"
+                  rows={4}
+                />
+              </div>
             </div>
-
-            <div className="space-y-4">
+            <div className="min-w-0 space-y-4">
               <div className="space-y-1">
                 <Label>聊天</Label>
                 <MultiSelect
+                  sortable={false}
                   options={chatList.map((chat) => ({
                     label: formatChatDisplayName(chat.chat_name, chat.account_id),
                     value: chat.session_id,
@@ -280,21 +213,22 @@ export function JargonDetailDialog({
               </div>
               <div className="space-y-1">
                 <Label className="text-muted-foreground text-xs">状态</Label>
-                <div className="flex items-center gap-2">
-                  {formData.is_jargon === true && (
+                <div className="flex flex-wrap items-center gap-2">
+                  {status === true && (
                     <Badge variant="default" className="bg-green-600">
-                      是黑话
+                      黑话
                     </Badge>
                   )}
-                  {formData.is_jargon !== true && <Badge variant="secondary">无黑话</Badge>}
+                  {status === null && <Badge variant="outline">积累中</Badge>}
+                  {status === false && <Badge variant="secondary">不是黑话</Badge>}
                   {jargon.is_legacy_empty_meaning && (
                     <Badge variant="outline">
                       <HelpCircle className="mr-1 h-3 w-3" />
                       旧数据
                     </Badge>
                   )}
-                  {jargon.created_by === 'MANUAL' ? (
-                    <Badge variant="outline">手动</Badge>
+                  {locked ? (
+                    <Badge variant="outline">已锁定</Badge>
                   ) : (
                     <Badge variant="secondary">AI</Badge>
                   )}
@@ -310,68 +244,47 @@ export function JargonDetailDialog({
                   )}
                 </div>
               </div>
-            </div>
 
-            <div className="space-y-2">
-              <Label>黑话状态</Label>
-              <Select
-                value={formData.is_jargon ? 'true' : 'false'}
-                onValueChange={(value) =>
-                  setFormData({
-                    ...formData,
-                    is_jargon: value === 'true',
-                  })
-                }
-              >
-                <SelectTrigger>
-                  <SelectValue />
-                </SelectTrigger>
-                <SelectContent>
-                  <SelectItem value="true">是黑话</SelectItem>
-                  <SelectItem value="false">无黑话</SelectItem>
-                </SelectContent>
-              </Select>
-            </div>
+              <div className="space-y-2">
+                <Label>黑话状态</Label>
+                <Select
+                  disabled={locking}
+                  value={String(status ?? 'pending')}
+                  onValueChange={(value) =>
+                    setFormData({
+                      ...formData,
+                      is_jargon: value === 'pending' ? null : value === 'true',
+                    })
+                  }
+                >
+                  <SelectTrigger>
+                    <SelectValue />
+                  </SelectTrigger>
+                  <SelectContent>
+                    <SelectItem value="true">黑话</SelectItem>
+                    {jargon.is_jargon === null && <SelectItem value="pending">积累中</SelectItem>}
+                    <SelectItem value="false">不是黑话</SelectItem>
+                  </SelectContent>
+                </Select>
+              </div>
 
-            <div className="flex items-center space-x-2">
-              <Switch
-                id="detail_is_global"
-                checked={formData.is_global}
-                onCheckedChange={(checked) => setFormData({ ...formData, is_global: checked })}
-              />
-              <Label htmlFor="detail_is_global">全局黑话</Label>
+              <div className="flex items-center space-x-2">
+                <Switch
+                  id="detail_is_global"
+                  checked={formData.is_global}
+                  onCheckedChange={(checked) => setFormData({ ...formData, is_global: checked })}
+                />
+                <Label htmlFor="detail_is_global">全局黑话</Label>
+              </div>
             </div>
           </div>
         </DialogBody>
 
         <DialogFooter className="flex-shrink-0">
-          {jargon.created_by === 'MANUAL' ? (
-            <Button
-              variant="outline"
-              onClick={handleUnpinMeaning}
-              disabled={saving || unpinning}
-              title="恢复为 AI 学习记录，后续可由学习流程更新"
-            >
-              {unpinning ? '取消中...' : '取消固定'}
-            </Button>
-          ) : (
-            <Button
-              variant="outline"
-              onClick={handlePinMeaning}
-              disabled={saving || pinning || !canPinMeaning}
-              title={canPinMeaning ? '固定当前含义，后续不再由 AI 更新' : '当前黑话还没有含义'}
-            >
-              <Check className="mr-1 h-4 w-4" />
-              {pinning ? '固定中...' : '固定含义'}
-            </Button>
-          )}
-          <Button variant="outline" onClick={() => onOpenChange(false)}>
-            关闭
-          </Button>
           <Button
             data-dialog-action="confirm"
             onClick={handleSave}
-            disabled={saving || pinning || unpinning}
+            disabled={saving}
           >
             {saving ? '保存中...' : '保存'}
           </Button>
@@ -453,7 +366,7 @@ export function JargonCreateDialog({
           <DialogDescription>创建新的黑话记录</DialogDescription>
         </DialogHeader>
 
-        <DialogBody>
+        <DialogBody viewportClassName="pr-7">
           <div className="space-y-4">
             <div className="space-y-2">
               <Label htmlFor="content">
@@ -493,6 +406,7 @@ export function JargonCreateDialog({
                   聊天 <span className="text-destructive">*</span>
                 </Label>
                 <MultiSelect
+                  sortable={false}
                   options={chatList.map((chat) => ({
                     label: formatChatDisplayName(chat.chat_name, chat.account_id),
                     value: chat.session_id,

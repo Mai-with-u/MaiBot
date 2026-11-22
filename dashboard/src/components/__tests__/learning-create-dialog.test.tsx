@@ -4,13 +4,13 @@ import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest'
 
 import { LearningCreateDialog } from '../learning-create-dialog'
 import { getExpressionChatTargets } from '@/lib/expression-api'
-import { getJargonChatList } from '@/lib/jargon-api'
+import { getJargonChatList, importJargons, previewJargonImport } from '@/lib/jargon-api'
 import * as learning from '@/lib/text-learning-api'
 import type { ChatInfo } from '@/types/expression'
 import type { JargonChatInfo } from '@/types/jargon'
 
 vi.mock('@/lib/expression-api', () => ({ getExpressionChatTargets: vi.fn() }))
-vi.mock('@/lib/jargon-api', () => ({ getJargonChatList: vi.fn() }))
+vi.mock('@/lib/jargon-api', () => ({ getJargonChatList: vi.fn(), importJargons: vi.fn(), previewJargonImport: vi.fn() }))
 vi.mock('@/hooks/use-toast', () => ({ useToast: () => ({ toast: vi.fn() }) }))
 vi.mock('@/lib/text-learning-api', async (original) => ({
   ...(await original<typeof learning>()),
@@ -93,12 +93,41 @@ describe('LearningCreateDialog', () => {
         kind,
         ['chat1'],
         [first],
-        false
+        false,
+        ...(kind === 'jargon' ? [expect.any(Function)] : [])
       )
     )
     expect(success).toHaveBeenCalledOnce()
     expect(screen.getByRole('button', { name: '导入所选（0）' })).toBeDisabled()
     expect(screen.getByRole('checkbox', { name: /：调侃/ })).toBeDisabled()
+  })
+
+  it('比较重复黑话后将替换决定应用到剩余候选', async () => {
+    const actual = await vi.importActual<typeof learning>('@/lib/text-learning-api')
+    vi.mocked(learning.importLearningCandidates).mockImplementationOnce(actual.importLearningCandidates)
+    vi.mocked(learning.prepareLearningText).mockResolvedValueOnce(['原文'])
+    vi.mocked(learning.extractTextCandidates).mockResolvedValueOnce([first, second])
+    const records = [{ id: 1, meaning: '库中的释义', is_global: true, session_ids: [] }]
+    const otherRecords = [{ ...records[0], id: 2 }]
+    vi.mocked(previewJargonImport).mockResolvedValueOnce([
+      { content: first.title, records }, { content: second.title, records: otherRecords },
+    ])
+    vi.mocked(importJargons).mockResolvedValueOnce({
+      success: true, message: '完成', imported_count: 2, skipped_count: 0, failed_count: 0,
+    })
+    show('jargon')
+    await start()
+    await screen.findByText('学习完成')
+    fireEvent.click(screen.getByRole('button', { name: '导入所选（2）' }))
+    const dialog = await screen.findByRole('alertdialog')
+    expect(dialog).toHaveTextContent('库中的释义')
+    expect(dialog).toHaveTextContent(first.description)
+    expect(importJargons).not.toHaveBeenCalled()
+    fireEvent.click(screen.getByRole('checkbox', { name: '应用到剩余 2 个重复词条' }))
+    fireEvent.click(screen.getByRole('button', { name: '确认替换' }))
+    await waitFor(() => expect(importJargons).toHaveBeenCalledWith(expect.objectContaining({
+      replacements: { [first.title]: records, [second.title]: otherRecords }, reviewed_skips: [],
+    })))
   })
 
   it('单段失败后继续后续段，结果可先导入，再单独重试补充新候选', async () => {
@@ -296,7 +325,8 @@ describe('LearningCreateDialog', () => {
           kind,
           [],
           [{ title: '编辑后的内容', description: '编辑后的含义' }],
-          true
+          true,
+          ...(kind === 'jargon' ? [expect.any(Function)] : [])
         )
       )
       expect(success).toHaveBeenCalledWith(true)

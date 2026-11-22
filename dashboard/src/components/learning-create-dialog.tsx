@@ -2,6 +2,11 @@ import { useQuery } from '@tanstack/react-query'
 import { ArrowLeft, BookOpen, Loader2, PenLine } from 'lucide-react'
 import { useEffect, useRef, useState } from 'react'
 
+import type { JargonImportConflict } from '@/types/jargon'
+import {
+  AlertDialog, AlertDialogAction, AlertDialogCancel, AlertDialogContent, AlertDialogDescription,
+  AlertDialogFooter, AlertDialogHeader, AlertDialogTitle,
+} from '@/components/ui/alert-dialog'
 import { LearningCandidateRow } from '@/components/learning-candidate-row'
 import { Button } from '@/components/ui/button'
 import { Checkbox } from '@/components/ui/checkbox'
@@ -77,6 +82,39 @@ export function LearningCreateDialog({
   const [error, setError] = useState('')
   const [importResult, setImportResult] = useState('')
   const [importedByTarget, setImportedByTarget] = useState<Record<string, Set<number>>>({})
+  const [duplicate, setDuplicate] = useState<{
+    conflict: JargonImportConflict
+    meaning: string
+    remaining: number
+  } | null>(null)
+  const [applyToAll, setApplyToAll] = useState(false)
+  const decisionRef = useRef<{
+    resolve: (decision: { replace: boolean; applyToAll: boolean }) => void
+    reject: (error: Error) => void
+  } | null>(null)
+  const mounted = useRef(true)
+  useEffect(() => {
+    mounted.current = true
+    return () => {
+      mounted.current = false
+      decisionRef.current?.reject(new Error('导入已取消'))
+      decisionRef.current = null
+    }
+  }, [])
+
+  const reviewConflict = (conflict: JargonImportConflict, meaning: string, remaining: number) =>
+    new Promise<{ replace: boolean; applyToAll: boolean }>((resolve, reject) => {
+      if (!mounted.current) return reject(new Error('导入已取消'))
+      decisionRef.current = { resolve, reject }
+      setApplyToAll(false)
+      setDuplicate({ conflict, meaning, remaining })
+    })
+
+  const resolveConflict = (replace: boolean, remember = false) => {
+    decisionRef.current?.resolve({ replace, applyToAll: remember })
+    decisionRef.current = null
+    setDuplicate(null)
+  }
   const stopRequested = useRef(false)
   const learningBusy = useRef(false)
   const importBusy = useRef(false)
@@ -204,7 +242,8 @@ export function LearningCreateDialog({
         kind,
         isGlobal ? [] : validTargetIds,
         selectedIndices.map((index) => editedCandidates[index]),
-        isGlobal
+        isGlobal,
+        ...(kind === 'jargon' ? [reviewConflict] as const : [])
       )
       if (!result.success) throw new Error(result.message)
       onSuccess(isGlobal)
@@ -254,7 +293,7 @@ export function LearningCreateDialog({
               : '粘贴文段，已学到的结果可随时勾选导入，失败段可单独重试。'}
           </DialogDescription>
         </DialogHeader>
-        <DialogBody>
+        <DialogBody type="auto">
           {mode === 'choose' ? (
             <div className="grid gap-3 sm:grid-cols-2">
               <button
@@ -582,6 +621,39 @@ export function LearningCreateDialog({
             </Button>
           )}
         </DialogFooter>
+        <AlertDialog open={duplicate !== null} onOpenChange={(next) => { if (!next) resolveConflict(false) }}>
+          <AlertDialogContent>
+            <AlertDialogHeader>
+              <AlertDialogTitle>替换「{duplicate?.conflict.content}」的释义？</AlertDialogTitle>
+              <AlertDialogDescription>替换后，以下同名记录将使用新释义，并锁定为黑话。</AlertDialogDescription>
+            </AlertDialogHeader>
+            {duplicate && (
+              <div className="max-h-[45vh] space-y-3 overflow-y-auto text-sm">
+                {duplicate.conflict.records.map((record) => (
+                  <div key={record.id}>
+                    <p className="text-muted-foreground">已有释义 · {record.is_global ? '全局' :
+                      record.session_ids.map((id) => targets.find((target) => target.value === id)?.label ?? id).join('、')}</p>
+                    <p className="whitespace-pre-wrap break-words">{record.meaning || '暂无释义'}</p>
+                  </div>
+                ))}
+                <div>
+                  <p className="text-muted-foreground">新释义</p>
+                  <p className="whitespace-pre-wrap break-words">{duplicate.meaning}</p>
+                </div>
+              </div>
+            )}
+            {duplicate && duplicate.remaining > 1 && (
+              <div className="flex items-center gap-2">
+                <Checkbox id="jargon-replace-all" checked={applyToAll} onCheckedChange={(value) => setApplyToAll(value === true)} />
+                <Label htmlFor="jargon-replace-all">应用到剩余 {duplicate.remaining} 个重复词条</Label>
+              </div>
+            )}
+            <AlertDialogFooter>
+              <AlertDialogCancel onClick={() => resolveConflict(false, applyToAll)}>跳过此词</AlertDialogCancel>
+              <AlertDialogAction onClick={() => resolveConflict(true, applyToAll)}>确认替换</AlertDialogAction>
+            </AlertDialogFooter>
+          </AlertDialogContent>
+        </AlertDialog>
       </DialogContent>
     </Dialog>
   )

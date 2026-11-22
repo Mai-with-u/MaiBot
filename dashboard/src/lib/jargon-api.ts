@@ -13,6 +13,7 @@ import type {
   JargonDetailResponse,
   JargonExportResponse,
   JargonGroupListResponse,
+  JargonImportConflict,
   JargonImportRequest,
   JargonImportResponse,
   JargonListResponse,
@@ -98,6 +99,13 @@ export async function exportJargons(params: {
       include_chat_info: params.include_chat_info ?? false,
     },
     errorMessage: '导出黑话失败',
+  })
+}
+
+export function previewJargonImport(data: JargonImportRequest) {
+  return backendApi.post<JargonImportConflict[]>(`${API_BASE}/import/preview`, {
+    body: data,
+    errorMessage: '检查重复黑话失败',
   })
 }
 

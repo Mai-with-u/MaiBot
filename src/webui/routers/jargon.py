@@ -164,7 +164,7 @@ class JargonResponse(BaseModel):
     chat_name: Optional[str] = None  # 解析后的聊天名称，用于前端显示
     chat_names: List[str] = Field(default_factory=list)
     count: int = 0
-    is_jargon: bool = False
+    is_jargon: Optional[bool] = None
     is_legacy_empty_meaning: bool = False
     is_complete: bool = False
     is_global: bool = False
@@ -303,7 +303,7 @@ class JargonExportItem(BaseModel):
     content: str
     meaning: str = ""
     count: int = 0
-    is_jargon: bool = False
+    is_jargon: Optional[bool] = None
     is_complete: bool = False
     is_global: bool = False
     created_by: JargonCreatedBy = JargonCreatedBy.MANUAL
@@ -322,12 +322,24 @@ class JargonExportResponse(BaseModel):
     """黑话导出响应。"""
 
     success: bool = True
-    version: int = 1
+    version: int = 2
     type: str = "maibot.jargon.export"
     exported_at: str
     include_chat_info: bool = False
     count: int
     jargons: List[JargonExportItem]
+
+
+class JargonConflictRecord(BaseModel):
+    id: int
+    meaning: str
+    is_global: bool
+    session_ids: List[str]
+
+
+class JargonImportConflict(BaseModel):
+    content: str
+    records: List[JargonConflictRecord]
 
 
 class JargonImportRequest(BaseModel):
@@ -337,6 +349,9 @@ class JargonImportRequest(BaseModel):
     is_global: bool = False
     jargons: List[JargonExportItem]
     conflict_strategy: Literal["skip", "overwrite"] = "skip"
+    # 自动学习导入时，核对用户确认替换的记录和原释义。
+    replacements: Optional[Dict[str, List[JargonConflictRecord]]] = None
+    reviewed_skips: List[str] = Field(default_factory=list)
 
 
 class JargonImportResponse(BaseModel):
@@ -478,6 +493,14 @@ def no_jargon_condition() -> Any:
     return or_(col(Jargon.is_jargon).is_(False), col(Jargon.is_jargon).is_(None), not_(effective_jargon_condition()))
 
 
+def pending_jargon_condition() -> Any:
+    """待推断包括尚无结论的词条和缺少释义的历史黑话。"""
+    return or_(
+        col(Jargon.is_jargon).is_(None),
+        and_(col(Jargon.is_jargon).is_(True), not_(jargon_has_meaning_condition())),
+    )
+
+
 def is_legacy_empty_meaning_jargon(is_jargon: Any, meaning: Any) -> bool:
     """识别历史遗留的“标记为黑话但没有含义”的记录。"""
 
@@ -510,11 +533,11 @@ def apply_jargon_list_filters(
     if jargon_status == "confirmed_jargon":
         statement = statement.where(effective_jargon_condition())
     elif jargon_status == "confirmed_not_jargon":
-        statement = statement.where(no_jargon_condition())
+        statement = statement.where(col(Jargon.is_jargon).is_(False))
     elif jargon_status == "manual_jargon":
         statement = statement.where(col(Jargon.created_by) == JargonCreatedBy.MANUAL)
     elif jargon_status == "pending":
-        statement = statement.where(no_jargon_condition())
+        statement = statement.where(pending_jargon_condition())
     elif is_jargon is not None:
         statement = statement.where(effective_jargon_condition() if is_jargon else no_jargon_condition())
 
@@ -645,7 +668,7 @@ def jargon_to_export_item(
         content=jargon.content,
         meaning=jargon.meaning or "",
         count=jargon.count,
-        is_jargon=bool(jargon.is_jargon),
+        is_jargon=jargon.is_jargon,
         is_complete=jargon.is_complete,
         is_global=jargon.is_global,
         created_by=normalize_jargon_created_by(jargon.created_by, jargon.id),
@@ -688,7 +711,7 @@ def jargon_to_dict(
         "chat_name": chat_name,
         "chat_names": chat_names,
         "count": jargon.count,
-        "is_jargon": bool(jargon.is_jargon) and not is_legacy_empty_meaning,
+        "is_jargon": None if is_legacy_empty_meaning else jargon.is_jargon,
         "is_legacy_empty_meaning": is_legacy_empty_meaning,
         "is_complete": jargon.is_complete,
         "is_global": jargon.is_global,
@@ -726,7 +749,7 @@ def jargon_list_row_to_dict(
         "chat_name": chat_name,
         "chat_names": chat_names,
         "count": row["count"],
-        "is_jargon": bool(row["is_jargon"]) and not is_legacy_empty_meaning,
+        "is_jargon": None if is_legacy_empty_meaning else row["is_jargon"],
         "is_legacy_empty_meaning": is_legacy_empty_meaning,
         "is_complete": row["is_complete"],
         "is_global": row["is_global"],
@@ -998,10 +1021,10 @@ def get_jargon_stats() -> JargonStatsResponse:
             confirmed_not_jargon = session.exec(
                 select(func.count())
                 .select_from(Jargon)
-                .where(no_jargon_condition())
+                .where(col(Jargon.is_jargon).is_(False))
             ).one()
             pending = session.exec(
-                select(func.count()).select_from(Jargon).where(col(Jargon.is_jargon).is_(None))
+                select(func.count()).select_from(Jargon).where(pending_jargon_condition())
             ).one()
             manual_jargon = session.exec(
                 select(func.count()).select_from(Jargon).where(col(Jargon.created_by) == JargonCreatedBy.MANUAL)
@@ -1093,23 +1116,80 @@ def export_jargons(request: JargonExportRequest) -> JargonExportResponse:
         raise HTTPException(status_code=500, detail=f"导出黑话失败: {str(e)}") from e
 
 
+def find_import_conflicts(
+    session: Session, content: str, target_session_ids: Set[str], is_global: bool
+) -> List[Jargon]:
+    same_content = session.exec(select(Jargon).where(col(Jargon.content) == content).order_by(col(Jargon.id))).all()
+    return [
+        record for record in same_content
+        if (record.is_global if is_global else scopes_overlap(record, target_session_ids, False))
+    ]
+
+
+def conflict_record(jargon: Jargon) -> JargonConflictRecord:
+    return JargonConflictRecord(
+        id=jargon.id, meaning=jargon.meaning, is_global=jargon.is_global,
+        session_ids=sorted(get_session_ids(jargon.session_id_dict)),
+    )
+
+
+def replace_import_meanings(records: List[Jargon], item: JargonExportItem, targets: Set[str]) -> None:
+    """原地更新已确认的同名记录，保留证据、遇见次数和已关联的聊天。"""
+    covered: Set[str] = set()
+    for row in records:
+        covered.update(get_session_ids(row.session_id_dict))
+        row.meaning = item.meaning.strip()
+        row.is_jargon = bool(row.meaning)
+        row.is_complete = item.is_complete
+        row.created_by = JargonCreatedBy.MANUAL
+        row.updated_timestamp = datetime.now()
+    missing = targets - covered
+    if missing and not any(row.is_global for row in records):
+        row = records[0]
+        counts = parse_session_id_dict(row.session_id_dict)
+        counts.update({session_id: 1 for session_id in missing})
+        row.session_id_dict = dump_session_id_dict(counts)
+
+
+def import_target_sessions(request: JargonImportRequest) -> List[str]:
+    if request.is_global and request.target_session_ids:
+        raise HTTPException(status_code=400, detail="全局导入不能同时指定聊天")
+    if not request.jargons:
+        raise HTTPException(status_code=400, detail="导入文件中没有黑话")
+    return [] if request.is_global else require_existing_session_ids(request.target_session_ids)
+
+
+@router.post("/import/preview")
+def preview_jargon_import(request: JargonImportRequest) -> List[JargonImportConflict]:
+    """按导入范围返回同名记录，供用户比较释义。"""
+    targets = set(import_target_sessions(request))
+    result: List[JargonImportConflict] = []
+    with get_db_session(auto_commit=False) as session:
+        for content in dict.fromkeys(item.content.strip() for item in request.jargons):
+            records = find_import_conflicts(session, content, targets, request.is_global)
+            if records:
+                result.append(JargonImportConflict(content=content, records=[conflict_record(row) for row in records]))
+    return result
+
+
 @router.post("/import", response_model=JargonImportResponse)
 def import_jargons(request: JargonImportRequest) -> JargonImportResponse:
     """将黑话 JSON 导入到用户选择的真实聊天流或全局。"""
 
     try:
-        if request.is_global and request.target_session_ids:
-            raise HTTPException(status_code=400, detail="全局导入不能同时指定聊天")
-        target_session_ids = [] if request.is_global else require_existing_session_ids(request.target_session_ids)
-        if not request.jargons:
-            raise HTTPException(status_code=400, detail="导入文件中没有黑话")
-
+        target_session_ids = import_target_sessions(request)
         imported_count = 0
         skipped_count = 0
         failed_count = 0
         target_session_id_set = set(target_session_ids)
 
         with get_db_session() as session:
+            if request.replacements is not None:
+                # 在同一 SQLite 写事务中校验快照和提交，避免覆盖确认期间的新修改。
+                session.connection().exec_driver_sql("BEGIN IMMEDIATE")
+                titles = [item.content.strip() for item in request.jargons]
+                if len(set(titles)) != len(titles):
+                    raise HTTPException(status_code=400, detail="所选候选包含同名词条，请修改后再导入")
             for item in request.jargons:
                 content = item.content.strip()
                 if not content:
@@ -1117,13 +1197,18 @@ def import_jargons(request: JargonImportRequest) -> JargonImportResponse:
                     continue
 
                 meaning = item.meaning.strip()
-                same_content_jargons = session.exec(select(Jargon).where(col(Jargon.content) == content)).all()
-                overlapping_jargons = [
-                    jargon
-                    for jargon in same_content_jargons
-                    # 全局导入只与已有全局记录判重，局部同名记录不能阻止创建全局词条。
-                    if (jargon.is_global if request.is_global else scopes_overlap(jargon, target_session_id_set, False))
-                ]
+                overlapping_jargons = find_import_conflicts(session, content, target_session_id_set, request.is_global)
+                if request.replacements is not None:
+                    if content in request.reviewed_skips:
+                        skipped_count += 1
+                        continue
+                    expected = request.replacements.get(content, [])
+                    if expected != [conflict_record(row) for row in overlapping_jargons]:
+                        raise HTTPException(status_code=409, detail=f"「{content}」的冲突记录已变化，请重新导入并确认")
+                    if overlapping_jargons:
+                        replace_import_meanings(overlapping_jargons, item, target_session_id_set)
+                        imported_count += 1
+                        continue
 
                 if overlapping_jargons and request.conflict_strategy == "skip":
                     skipped_count += 1
@@ -1144,7 +1229,7 @@ def import_jargons(request: JargonImportRequest) -> JargonImportResponse:
                     meaning=meaning,
                     session_id_dict=dump_session_id_dict(session_counts),
                     count=max(item.count, 0),
-                    is_jargon=item.is_jargon and bool(meaning),
+                    is_jargon=None if item.is_jargon and not meaning else item.is_jargon,
                     is_complete=item.is_complete,
                     is_global=request.is_global,
                     created_by=JargonCreatedBy.MANUAL,
@@ -1252,7 +1337,7 @@ def create_jargon(request: JargonCreateRequest) -> JargonCreateResponse:
                 meaning=meaning,
                 session_id_dict=build_session_id_dict_for_sessions(session_ids),
                 count=0,
-                is_jargon=bool(meaning),
+                is_jargon=True if meaning else None,
                 is_complete=False,
                 is_global=request.is_global,
                 created_by=JargonCreatedBy.MANUAL,

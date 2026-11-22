@@ -49,7 +49,7 @@ const sampleJargons: Jargon[] = Array.from({ length: 73 }, (_, index) => {
     chat_names: [chats[session]],
     is_global: index % 9 === 0,
     count: 128 - index,
-    is_jargon: index % 5 !== 0,
+    is_jargon: index % 7 === 0 ? null : index % 5 !== 0,
     is_legacy_empty_meaning: false,
     is_complete: index % 7 !== 0,
     created_by: index % 4 === 0 ? 'MANUAL' : 'AI',
@@ -58,18 +58,18 @@ const sampleJargons: Jargon[] = Array.from({ length: 73 }, (_, index) => {
   }
 })
 type Summary =
-  | 'total'
   | 'confirmed_jargon'
+  | 'pending'
   | 'confirmed_not_jargon'
   | 'manual_jargon'
   | 'global_count'
   | 'complete_count'
 const categories: { value: Summary; label: string; matches: (item: Jargon) => boolean }[] = [
-  { value: 'total', label: '总数量', matches: () => true },
-  { value: 'confirmed_jargon', label: '已确认黑话', matches: (item) => item.is_jargon },
-  { value: 'confirmed_not_jargon', label: '无黑话', matches: (item) => !item.is_jargon },
-  { value: 'manual_jargon', label: '手动黑话', matches: (item) => item.created_by === 'MANUAL' },
+  { value: 'confirmed_jargon', label: '黑话', matches: (item) => item.is_jargon === true },
+  { value: 'confirmed_not_jargon', label: '不是黑话', matches: (item) => item.is_jargon === false },
+  { value: 'manual_jargon', label: '已锁定', matches: (item) => item.created_by === 'MANUAL' },
   { value: 'global_count', label: '全局黑话', matches: (item) => item.is_global },
+  { value: 'pending', label: '积累中', matches: (item) => item.is_jargon === null },
   { value: 'complete_count', label: '推断完成', matches: (item) => item.is_complete },
 ]
 
@@ -79,7 +79,7 @@ export function JargonReview() {
   const [search, setSearch] = useState('')
   const [scope, setScope] = useState<'chat' | 'group' | 'all'>('chat')
   const [scopeId, setScopeId] = useState<string | number>('0')
-  const [summary, setSummary] = useState<Summary>('total')
+  const [summary, setSummary] = useState<Summary>('confirmed_jargon')
   const [selected, setSelected] = useState(new Set<number>())
   const [page, setPage] = useState(1)
   const [pageSize, setPageSize] = useState(20)
@@ -102,7 +102,7 @@ export function JargonReview() {
     setItems((current) =>
       current.map((item) => (selected.has(item.id) ? { ...item, is_jargon: isJargon } : item))
     )
-    setNotice(`预览：已将 ${selected.size} 条标记为${isJargon ? '黑话' : '无黑话'}`)
+    setNotice(`预览：已将 ${selected.size} 条标记为${isJargon ? '黑话' : '不是黑话'}`)
     setSelected(new Set())
     changeParams()
   }
@@ -115,9 +115,8 @@ export function JargonReview() {
         summary={
           <MetricStrip
             items={[
-              { label: '总数量', value: items.length.toLocaleString() },
               {
-                label: '已确认黑话',
+                label: '黑话',
                 value: items.filter((item) => item.is_jargon).length,
                 positive: true,
               },
@@ -141,13 +140,13 @@ export function JargonReview() {
             onModeChange={(value) => {
               setScope(value)
               setScopeId('0')
-              if (value === 'group' && summary === 'global_count') setSummary('total')
+              if (value === 'group' && summary === 'global_count') setSummary('confirmed_jargon')
               changeParams()
             }}
             selectedItemId={scopeId}
             onItemSelect={(value) => {
               setScopeId(value)
-              if (scope === 'chat' && summary === 'global_count') setSummary('total')
+              if (scope === 'chat' && summary === 'global_count') setSummary('confirmed_jargon')
               changeParams()
             }}
             items={
@@ -256,7 +255,7 @@ export function JargonReview() {
                   </Button>
                   <Button variant="outline" size="xs" onClick={() => markSelected(false)}>
                     <X />
-                    标记为无黑话
+                    标记为不是黑话
                   </Button>
                   <Button variant="outline" size="xs" onClick={() => setSelected(new Set())}>
                     取消选择

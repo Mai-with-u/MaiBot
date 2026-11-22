@@ -22,7 +22,7 @@ class MaiJargon(BaseDatabaseDataModel[Jargon]):
         evidence_messages: Optional[str] = None,
         session_id_list: Optional[Dict[str, int]] = None,
         count: int = 0,
-        is_jargon: Optional[bool] = False,
+        is_jargon: Optional[bool] = None,
         is_complete: bool = False,
         is_global: bool = False,
         last_inference_count: int = 0,
@@ -43,7 +43,7 @@ class MaiJargon(BaseDatabaseDataModel[Jargon]):
         self.count = count
         """使用次数"""
         self.is_jargon = is_jargon
-        """是否为黑话，False表示为白话"""
+        """是否为黑话，None 表示待推断，False 表示已判定为非黑话"""
         self.is_complete = is_complete
         """是否为已经完成全部推断（count > 100后不再推断）"""
         self.is_global = is_global

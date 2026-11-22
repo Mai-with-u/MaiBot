@@ -1,6 +1,7 @@
 import { backendApi } from '@/lib/http'
 import { importExpressions } from '@/lib/expression-api'
-import { importJargons } from '@/lib/jargon-api'
+import type { JargonImportConflict, JargonImportRequest } from '@/types/jargon'
+import { importJargons, previewJargonImport } from '@/lib/jargon-api'
 
 export type LearningKind = 'expression' | 'jargon'
 
@@ -61,7 +62,10 @@ export async function importLearningCandidates(
   kind: LearningKind,
   targetIds: string[],
   candidates: LearnedCandidate[],
-  isGlobal = false
+  isGlobal = false,
+  reviewConflict?: (
+    conflict: JargonImportConflict, meaning: string, remaining: number
+  ) => Promise<{ replace: boolean; applyToAll: boolean }>
 ) {
   if ((!isGlobal && !targetIds.length) || !candidates.length)
     throw new Error('请选择导入目标和候选')
@@ -90,7 +94,7 @@ export async function importLearningCandidates(
       })),
     })
   }
-  return importJargons({
+  const request: JargonImportRequest = {
     target_session_ids: targetIds,
     ...(isGlobal ? { is_global: true } : {}),
     conflict_strategy: 'skip',
@@ -103,5 +107,26 @@ export async function importLearningCandidates(
       is_global: isGlobal,
       created_by: 'MANUAL',
     })),
-  })
+  }
+  if (reviewConflict) {
+    const meanings = new Map(items.map((item) => [item.title, item.description]))
+    if (meanings.size !== items.length) throw new Error('所选候选包含同名词条，请修改后再导入')
+    const conflicts = await previewJargonImport(request)
+    const replacements = new Map<string, JargonImportConflict['records']>()
+    const skips: string[] = []
+    let batchDecision: boolean | undefined
+    for (const [index, conflict] of conflicts.entries()) {
+      let replace = batchDecision
+      if (replace === undefined) {
+        const decision = await reviewConflict(conflict, meanings.get(conflict.content)!, conflicts.length - index)
+        replace = decision.replace
+        if (decision.applyToAll) batchDecision = replace
+      }
+      if (replace) replacements.set(conflict.content, conflict.records)
+      else skips.push(conflict.content)
+    }
+    request.replacements = Object.fromEntries(replacements)
+    request.reviewed_skips = skips
+  }
+  return importJargons(request)
 }

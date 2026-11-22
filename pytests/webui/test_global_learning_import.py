@@ -159,3 +159,72 @@ def test_manual_local_create_still_validates_existing_chat(storage, resource):
             row = session.exec(select(Jargon)).one()
             assert not row.is_global
             assert "real-chat" in row.session_id_dict
+
+def test_jargon_verdict_filters_and_counts_match_after_legacy_migration(storage):
+    from src.common.database.migrations.v56_to_v57 import migrate_v56_to_v57
+
+    engine, client = storage
+    with Session(engine) as session:
+        session.add_all([
+            Jargon(content="旧候选", meaning="", is_jargon=False, last_inference_count=5),
+            Jargon(content="旧非黑话", meaning="", is_jargon=False, is_complete=True),
+            Jargon(content="旧空释义", meaning="", is_jargon=True),
+            Jargon(content="已确认", meaning="群内含义", is_jargon=True),
+        ])
+        session.commit()
+    with engine.begin() as connection:
+        migrate_v56_to_v57(SimpleNamespace(connection=connection))
+    with Session(engine) as session:
+        session.add(Jargon(content="新候选", meaning=""))
+        session.add(Jargon(content="已判非黑话", meaning="", is_jargon=False, is_complete=False))
+        session.commit()
+
+    stats = client.get("/jargon/stats/summary").json()["data"]
+    for status, verdict, expected in [
+        ("pending", None, {"旧候选", "新候选", "旧空释义"}),
+        ("confirmed_not_jargon", False, {"旧非黑话", "已判非黑话"}),
+        ("confirmed_jargon", True, {"已确认"}),
+    ]:
+        page = client.get("/jargon/list", params={"jargon_status": status}).json()
+        assert page["total"] == stats[status] == len(expected)
+        assert {item["content"] for item in page["data"]} == expected
+        assert all(item["is_jargon"] is verdict for item in page["data"])
+
+
+def test_jargon_import_review_replaces_in_place_and_rolls_back_stale_decisions(storage):
+    engine, client = storage
+    with Session(engine) as session:
+        session.add(Jargon(content="gkd", meaning="原释义", is_global=True, count=37))
+        session.commit()
+
+    payload = jargon_payload(is_global=True)
+    payload["jargons"].insert(0, {"content": "新词", "meaning": "新释义", "is_jargon": True})
+    preview = client.post("/jargon/import/preview", json=payload)
+    assert preview.status_code == 200, preview.text
+    conflict, = preview.json()
+    records = conflict["records"]
+    assert conflict["content"] == "gkd"
+    assert records[0]["meaning"] == "原释义"
+    assert records[0]["is_global"]
+    request = {**payload, "replacements": {"gkd": records}}
+    with Session(engine) as session:
+        existing = session.exec(select(Jargon)).one()
+        existing.meaning = "其他人刚编辑的释义"
+        session.commit()
+    assert client.post("/jargon/import", json=request).status_code == 409
+    with Session(engine) as session:
+        assert session.exec(select(Jargon)).one().meaning == "其他人刚编辑的释义"
+
+    records[0]["meaning"] = "其他人刚编辑的释义"
+    result = client.post("/jargon/import", json=request)
+    assert result.status_code == 200, result.text
+    assert result.json()["imported_count"] == 2
+    with Session(engine) as session:
+        row = session.get(Jargon, records[0]["id"])
+        assert row.meaning == "搞快点"
+        assert row.count == 37
+        assert row.is_global and row.created_by == JargonCreatedBy.MANUAL
+
+    skipped = client.post("/jargon/import", json={**jargon_payload(is_global=True), "replacements": {},
+                                                  "reviewed_skips": ["gkd"]})
+    assert skipped.json()["skipped_count"] == 1

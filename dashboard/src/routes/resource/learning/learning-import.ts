@@ -66,9 +66,20 @@ export function classifyLearningJson(
       : null
   }
   if (type === 'maibot.jargon.export' || Array.isArray(payload.jargons)) {
-    return Array.isArray(payload.jargons)
-      ? { kind: 'jargon', items: payload.jargons as JargonExportItem[] }
-      : null
+    if (!Array.isArray(payload.jargons)) return null
+    const items = payload.jargons as JargonExportItem[]
+    if (payload.version === 1) {
+      // 旧版导出对未判定的词条也写入 false。
+      return {
+        kind: 'jargon',
+        items: items.map((item) =>
+          item.is_jargon === false && !item.is_complete && !item.meaning?.trim()
+            ? { ...item, is_jargon: null }
+            : item
+        ),
+      }
+    }
+    return { kind: 'jargon', items }
   }
   return null
 }

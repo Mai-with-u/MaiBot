@@ -691,7 +691,7 @@ class JargonMiner:
                     session_id_dict=session_dict_str,
                     is_global=False,
                     count=1,
-                    is_jargon=False,
+                    is_jargon=None,
                     meaning="",
                     created_by=JargonCreatedBy.AI,
                     created_timestamp=now,

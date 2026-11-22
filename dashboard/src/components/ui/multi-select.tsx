@@ -54,6 +54,7 @@ interface MultiSelectProps {
   className?: string
   compact?: boolean
   disabled?: boolean
+  sortable?: boolean
   singleSelect?: boolean
 }
 
@@ -62,11 +63,13 @@ function SortableBadge({
   value,
   label,
   onRemove,
+  sortable,
   compact = false,
   disabled = false,
 }: {
   value: string
   label: string
+  sortable: boolean
   onRemove: (value: string) => void
   compact?: boolean
   disabled?: boolean
@@ -78,7 +81,7 @@ function SortableBadge({
     transform,
     transition,
     isDragging,
-  } = useSortable({ id: value, disabled })
+  } = useSortable({ id: value, disabled: disabled || !sortable })
 
   const style = {
     // 标签宽度随名称变化，排序时只平移，避免按目标标签尺寸缩放文字。
@@ -105,31 +108,33 @@ function SortableBadge({
       ref={setNodeRef}
       style={style}
       className={cn(
-        'inline-flex items-center gap-1',
+        'inline-flex min-w-0 max-w-full items-center gap-1',
         isDragging && 'shadow-lg'
       )}
     >
       <Badge
         variant="secondary"
         className={cn(
-          'flex items-center gap-1 hover:bg-secondary/80',
-          !disabled && 'cursor-move',
+          'flex min-w-0 max-w-full items-center gap-1 hover:bg-secondary/80',
+          sortable && !disabled && 'cursor-move',
           disabled && 'opacity-60',
           compact && 'min-h-6 max-w-[calc(100vw-5rem)] px-1.5 py-0 text-[11px] leading-none sm:max-w-full'
         )}
       >
-        <div
-          {...attributes}
-          {...listeners}
-          className={cn(
-            'flex items-center',
-            !disabled && 'cursor-grab active:cursor-grabbing',
-            disabled && 'cursor-not-allowed'
-          )}
-        >
-          <GripVertical className="h-3 w-3 text-muted-foreground" />
-        </div>
-        <span className={cn(compact && 'min-w-0 truncate')}>{label}</span>
+        {sortable && (
+          <div
+            {...attributes}
+            {...listeners}
+            className={cn(
+              'flex items-center',
+              !disabled && 'cursor-grab active:cursor-grabbing',
+              disabled && 'cursor-not-allowed'
+            )}
+          >
+            <GripVertical className="h-3 w-3 text-muted-foreground" />
+          </div>
+        )}
+        <span className="min-w-0 truncate" title={label}>{label}</span>
         <span
           role="button"
           tabIndex={0}
@@ -168,6 +173,7 @@ export function MultiSelect({
   className,
   compact = false,
   disabled = false,
+  sortable = true,
   singleSelect = false,
 }: MultiSelectProps) {
   const [open, setOpen] = React.useState(false)
@@ -231,95 +237,82 @@ export function MultiSelect({
   }
 
   return (
-    <Popover
-      open={disabled ? false : open}
-      onOpenChange={(nextOpen) => {
-        if (!disabled) {
-          setOpen(nextOpen)
-        }
-      }}
-    >
-      <PopoverTrigger asChild>
-        <Button
-          variant="outline"
-          role="combobox"
-          aria-expanded={open}
-          disabled={disabled}
-          className={cn(
-            'h-auto w-full justify-between',
-            compact ? 'min-h-[var(--control-height-sm)] px-2 py-1.5' : 'min-h-[var(--control-height)]',
-            className
-          )}
-        >
-          <DndContext
-            sensors={sensors}
-            collisionDetection={closestCenter}
-            onDragEnd={handleDragEnd}
-          >
-            <SortableContext
-              items={selected}
-              strategy={horizontalListSortingStrategy}
+    <div className={cn('grid w-full min-w-0 gap-2', className)}>
+      {selected.length > 0 && (
+        <DndContext sensors={sensors} collisionDetection={closestCenter} onDragEnd={handleDragEnd}>
+          <SortableContext items={selected} strategy={horizontalListSortingStrategy}>
+            <div
+              role="group"
+              aria-label="已选项"
+              className="flex max-h-40 min-w-0 flex-wrap gap-1.5 overflow-y-auto rounded-md border bg-muted/20 p-2"
             >
-              <div className="flex flex-1 flex-wrap gap-1">
-                {selected.length === 0 ? (
-                  <span className={cn('text-muted-foreground', compact && 'text-sm')}>{placeholder}</span>
-                ) : (
-                  selected.map((value) => {
-                    const option = options.find((opt) => opt.value === value)
+              {selected.map((value) => (
+                <SortableBadge
+                  key={value}
+                  value={value}
+                  label={options.find((option) => option.value === value)?.label || value}
+                  onRemove={handleRemove}
+                  sortable={sortable}
+                  compact={compact}
+                  disabled={disabled}
+                />
+              ))}
+            </div>
+          </SortableContext>
+        </DndContext>
+      )}
+      <Popover open={!disabled && open} onOpenChange={setOpen}>
+        <PopoverTrigger asChild>
+          <Button
+            type="button"
+            variant="outline"
+            size={compact ? 'sm' : 'default'}
+            role="combobox"
+            aria-expanded={open}
+            disabled={disabled}
+            className="w-full min-w-0 justify-between"
+          >
+            <span className="text-muted-foreground truncate">{placeholder}</span>
+            <ChevronsUpDown className="h-4 w-4 shrink-0 opacity-50" />
+          </Button>
+        </PopoverTrigger>
+        <PopoverContent className="w-[var(--radix-popover-trigger-width)] max-w-[var(--radix-popover-content-available-width)] p-0" align="start">
+          <Command>
+            <CommandInput placeholder="搜索..." className="h-9" />
+            <CommandList>
+              <CommandEmpty>{emptyText}</CommandEmpty>
+              {optionGroups.map(([group, groupOptions]) => (
+                <CommandGroup key={group ?? ''} heading={group}>
+                  {groupOptions.map((option) => {
+                    const isSelected = selected.includes(option.value)
                     return (
-                      <SortableBadge
-                        key={value}
-                        value={value}
-                        label={option?.label || value}
-                        onRemove={handleRemove}
-                        compact={compact}
+                      <CommandItem
+                        key={option.value}
+                        value={option.value}
+                        keywords={option.group ? [option.label, option.group] : [option.label]}
                         disabled={disabled}
-                      />
-                    )
-                  })
-                )}
-              </div>
-            </SortableContext>
-          </DndContext>
-          <ChevronsUpDown className="ml-2 h-4 w-4 shrink-0 opacity-50" strokeWidth={2} fill="none" />
-        </Button>
-      </PopoverTrigger>
-      <PopoverContent className="w-full p-0" align="start">
-        <Command>
-          <CommandInput placeholder="搜索..." className="h-9" />
-          <CommandList>
-            <CommandEmpty>{emptyText}</CommandEmpty>
-            {optionGroups.map(([group, groupOptions]) => (
-              <CommandGroup key={group ?? ''} heading={group}>
-                {groupOptions.map((option) => {
-                  const isSelected = selected.includes(option.value)
-                  return (
-                    <CommandItem
-                      key={option.value}
-                      value={option.value}
-                      keywords={option.group ? [option.label, option.group] : [option.label]}
-                      disabled={disabled}
-                      onSelect={() => handleSelect(option.value)}
-                    >
-                      <div
-                        className={cn(
-                          'mr-2 flex h-4 w-4 items-center justify-center rounded-sm border border-primary',
-                          isSelected
-                            ? 'bg-primary text-primary-foreground'
-                            : 'opacity-50 [&_svg]:invisible'
-                        )}
+                        onSelect={() => handleSelect(option.value)}
                       >
-                        <Check className="h-3 w-3" strokeWidth={2} fill="none" />
-                      </div>
-                      <span>{option.label}</span>
-                    </CommandItem>
-                  )
-                })}
-              </CommandGroup>
-            ))}
-          </CommandList>
-        </Command>
-      </PopoverContent>
-    </Popover>
+                        <div
+                          className={cn(
+                            'mr-2 flex h-4 w-4 shrink-0 items-center justify-center rounded-sm border border-primary',
+                            isSelected
+                              ? 'bg-primary text-primary-foreground'
+                              : 'opacity-50 [&_svg]:invisible'
+                          )}
+                        >
+                          <Check className="h-3 w-3" strokeWidth={2} fill="none" />
+                        </div>
+                        <span className="min-w-0 truncate" title={option.label}>{option.label}</span>
+                      </CommandItem>
+                    )
+                  })}
+                </CommandGroup>
+              ))}
+            </CommandList>
+          </Command>
+        </PopoverContent>
+      </Popover>
+    </div>
   )
 }

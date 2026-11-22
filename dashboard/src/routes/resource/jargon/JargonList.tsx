@@ -1,4 +1,4 @@
-import { Check, Edit, Globe, HelpCircle, Trash2, X } from 'lucide-react'
+import { Check, Edit, Globe, HelpCircle, Lock, Trash2, X } from 'lucide-react'
 import type { ReactNode } from 'react'
 
 import { Badge } from '@/components/ui/badge'
@@ -46,12 +46,14 @@ function renderJargonStatus(jargon: Jargon) {
       {jargon.is_jargon ? (
         <Badge variant="default" className="bg-green-600 hover:bg-green-700">
           <Check className="mr-1 h-3 w-3" />
-          是黑话
+          黑话
         </Badge>
+      ) : jargon.is_jargon === null ? (
+        <Badge variant="outline">积累中</Badge>
       ) : (
         <Badge variant="secondary">
           <X className="mr-1 h-3 w-3" />
-          无黑话
+          不是黑话
         </Badge>
       )}
       {jargon.is_legacy_empty_meaning && (
@@ -72,10 +74,10 @@ function renderManualMarker(createdBy: Jargon['created_by'], showLabel = false) 
   return showLabel ? (
     <Badge variant="outline">
       <Check className="mr-1 h-3 w-3" />
-      手动
+      已锁定
     </Badge>
   ) : (
-    <Check className="h-4 w-4 text-green-600" aria-label="手动创建" />
+    <span title="已锁定"><Lock className="h-4 w-4" aria-label="已锁定" /></span>
   )
 }
 
@@ -127,10 +129,10 @@ export function JargonList({
         <Table density="compact" className="table-fixed" aria-label="黑话列表">
           <colgroup>
             <col className="w-11" />
-            <col className={hideChatColumn ? 'w-[26%]' : 'w-[22%]'} />
+            <col className="w-[14%]" />
             <col />
             {!hideChatColumn && <col className="w-[18%]" />}
-            <col className="w-16" />
+            <col className="w-28" />
             <col className="w-22" />
             <col className="w-24" />
           </colgroup>
@@ -154,7 +156,7 @@ export function JargonList({
               <TableHead>内容</TableHead>
               <TableHead>含义</TableHead>
               {!hideChatColumn && <TableHead>聊天</TableHead>}
-              <TableHead className="text-center">手动</TableHead>
+              <TableHead className="text-center">状态</TableHead>
               <TableHead className="text-center">遇见次数</TableHead>
               <TableHead>
                 <span className="sr-only">操作</span>
@@ -182,7 +184,14 @@ export function JargonList({
               </TableRow>
             ) : (
               jargons.map((jargon) => (
-                <TableRow key={jargon.id}>
+                <TableRow
+                  key={jargon.id}
+                  className="cursor-pointer hover:bg-muted/50"
+                  onClick={(event) => {
+                    if (event.target instanceof Element && event.target.closest('button, input, [role="checkbox"]')) return
+                    onEdit(jargon)
+                  }}
+                >
                   <TableCell>
                     <Checkbox
                       size="sm"
@@ -193,6 +202,7 @@ export function JargonList({
                   </TableCell>
                   <TableCell>
                     <div className="flex items-center gap-1.5">
+                      {renderManualMarker(jargon.created_by)}
                       {jargon.is_global && (
                         <span title="全局黑话">
                           <Globe className="h-4 w-4 flex-shrink-0 text-blue-500" />
@@ -221,8 +231,8 @@ export function JargonList({
                     </TableCell>
                   )}
                   <TableCell className="text-center">
-                    <div className="flex justify-center">
-                      {renderManualMarker(jargon.created_by)}
+                    <div className="flex flex-wrap items-center justify-center gap-1">
+                      {renderJargonStatus(jargon)}
                     </div>
                   </TableCell>
                   <TableCell className="text-center">{jargon.count}</TableCell>
