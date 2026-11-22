@@ -44,7 +44,7 @@ class PluginSettings(PluginConfigBase):
     __ui_order__: ClassVar[int] = 0
 
     enabled: bool = Field(default=False, description="启用 QQ 官方机器人连接")
-    config_version: str = Field(default="0.5.4", description="配置版本")
+    config_version: str = Field(default="0.5.5", description="配置版本")
 
 
 class QQOfficialSettings(PluginConfigBase):
@@ -59,6 +59,11 @@ class QQOfficialSettings(PluginConfigBase):
         json_schema_extra={"label": "AppSecret", "x-widget": "password"},
     )
     api_base_url: str = Field(default="https://api.bot.qq.com", description="QQ 开放平台 API 地址")
+    developer_admin_groups: List[GroupTarget] = Field(
+        default_factory=list,
+        description="机器人开发者担任群主或管理员的群，每条群消息可回复 50 次，其余群为 5 次",
+        json_schema_extra={"x-widget": "target", "label": "开发者管理的群"},
+    )
     unified_account_id: str = Field(
         default="",
         description="统一账号 ID（如 NapCat 机器人 QQ 号）；非空时聊天流按此 ID 归属，与其它 qq 适配器共享上下文",

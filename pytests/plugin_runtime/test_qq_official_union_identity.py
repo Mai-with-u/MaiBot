@@ -4,6 +4,7 @@ from types import SimpleNamespace
 from typing import Any, Dict
 from unittest.mock import AsyncMock, Mock
 
+import asyncio
 import json
 import time
 
@@ -12,7 +13,7 @@ import pytest
 from src.plugins.built_in.qq_official_adapter.codec import decode_message
 from src.plugins.built_in.qq_official_adapter.identity_sync import UserProfile, text_fingerprint
 from src.plugins.built_in.qq_official_adapter.plugin import QQOfficialAdapterPlugin
-from src.plugins.built_in.qq_official_adapter.settings import AdapterSettings
+from src.plugins.built_in.qq_official_adapter.settings import AdapterSettings, GroupTarget
 from src.plugins.built_in.qq_official_adapter.union_identity import UNION_IDENTITIES_FILE, UnionIdentities
 
 
@@ -248,3 +249,46 @@ async def test_delete_binding_clears_persisted_related_identities(
     stored = json.loads((adapter.ctx.paths.data_dir / "id_map.json").read_text(encoding="utf-8"))
     assert deleted not in stored[kind]
     assert not (adapter.ctx.paths.data_dir / "binding_delete_pending.json").exists()
+
+@pytest.mark.asyncio
+@pytest.mark.parametrize("managed,limit", [(False, 5), (True, 50)])
+async def test_group_and_private_replies_share_original_window(
+    adapter: QQOfficialAdapterPlugin, managed: bool, limit: int
+) -> None:
+    del adapter._claim_passive_fields  # 使用真实凭证分配逻辑。
+    if managed:
+        adapter.config.qq_official.developer_admin_groups = [GroupTarget(id="123")]
+    await adapter._record_union_identity("", "private-openid", "union-user")
+    event = incoming()
+    event["timestamp"] = datetime.fromtimestamp(time.time() - 3500).astimezone().isoformat()
+    await adapter._receive_message("GROUP_MESSAGE_CREATE", event, account_id="bot", bot_name="麦麦")
+    source = dict(adapter.ctx.gateway.route_message.call_args.kwargs["message"], session_id="stream")
+    adapter.ctx.message = SimpleNamespace(get_by_id=AsyncMock(return_value=source))
+    group_result = await adapter.handle_qq_official_gateway({
+        "message_info": {"group_info": {"group_id": "123"}},
+        "raw_message": [{"type": "text", "data": "群内回复"}], "reply_to": "incoming",
+    })
+    assert group_result["success"]
+    assert adapter._api_post.call_args.args[1]["msg_seq"] == 1
+    results = await asyncio.gather(*(
+        adapter._reply_group_message_privately("incoming", "私聊回复", stream_id="stream")
+        for _ in range(limit)
+    ))
+    assert sum(result["success"] for result in results) == limit - 1
+    private_calls = adapter._api_post.call_args_list[1:]
+    assert sorted(call.args[1]["msg_seq"] for call in private_calls) == list(range(2, limit + 1))
+    assert all(call.args[0] == "/v2/users/private-openid/messages" and
+               call.args[1]["msg_id"] == "incoming" for call in private_calls)
+
+
+@pytest.mark.asyncio
+async def test_private_group_reply_requires_current_stream_and_live_credential(adapter: QQOfficialAdapterPlugin) -> None:
+    del adapter._claim_passive_fields
+    event = incoming()
+    event["timestamp"] = datetime.fromtimestamp(time.time() - 3601).astimezone().isoformat()
+    await adapter._receive_message("GROUP_MESSAGE_CREATE", event, account_id="bot", bot_name="麦麦")
+    source = dict(adapter.ctx.gateway.route_message.call_args.kwargs["message"], session_id="stream")
+    adapter.ctx.message = SimpleNamespace(get_by_id=AsyncMock(return_value=source))
+    for stream in ("", "other-stream", "stream"):
+        assert not (await adapter._reply_group_message_privately("incoming", "正文", stream_id=stream))["success"]
+    adapter._api_post.assert_not_awaited()

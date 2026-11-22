@@ -45,7 +45,7 @@ from .union_identity import UNION_IDENTITIES_FILE, UnionIdentities
 
 GATEWAY_NAME = "qq_official_gateway"
 MESSAGE_INTENTS = 1 << 25
-REPLY_LIMITS = {"group": (300, 5), "private": (3600, 4)}
+REPLY_LIMITS = {"group": (3600, 5), "private": (3600, 4)}
 # 官方引用索引（REFIDX）没有与被动回复一致的有效期，按 24 小时保留并限制条目数，防内存无限增长。
 REF_IDX_TTL_SEC = 24 * 3600
 MAX_REF_IDX_ENTRIES = 2000
@@ -822,7 +822,7 @@ class QQOfficialAdapterPlugin(MaiBotPlugin):
         group = info.get("group_info")
         scene = "group" if group else "private"
         openid = config["qq_official_group_openid" if group else "qq_official_user_openid"]
-        target = str(group["group_id"] if group else info["user_info"]["user_id"])
+        target = openid if group else str(info["user_info"]["user_id"])
         fields = await self._claim_passive_fields(scene, target, str(message["message_id"]))
         if not fields:
             raise RuntimeError("绑定命令的回复凭证已过期或耗尽，无法发送回执")
@@ -1040,7 +1040,7 @@ class QQOfficialAdapterPlugin(MaiBotPlugin):
                 self.ctx.logger.debug("忽略其它机器人消息: %s | payload=%s", data.get("id"), summarize_payload(data))
                 return
             segments, labels, is_picture, is_emoji = await self._build_attachments(data)
-            group_openid = str(data.get("group_openid") or "") if event in GROUP_EVENTS else ""
+            group_openid = str(data.get("group_openid") or "").strip() if event in GROUP_EVENTS else ""
             openid = extract_user_openid(event, data)
             author = data["author"]
             supplied_union = author.get("union_openid")
@@ -1090,7 +1090,7 @@ class QQOfficialAdapterPlugin(MaiBotPlugin):
                 self.ctx.logger.info("忽略 QQ 官方消息: %s | payload=%s", exc, summarize_payload(data))
             return
         message_id = message["message_id"]
-        key = (scene, target, message_id)
+        key = (scene, group_openid if scene == "group" else target, message_id)
         inbound_config = message.get("message_info", {}).get("additional_config", {})
         inbound_msg_idx = str(inbound_config.get("qq_official_msg_idx") or "").strip() if isinstance(inbound_config, Mapping) else ""
         inbound_ref_idx = str(inbound_config.get("qq_official_ref_msg_idx") or "").strip() if isinstance(inbound_config, Mapping) else ""
@@ -1512,6 +1512,40 @@ class QQOfficialAdapterPlugin(MaiBotPlugin):
             self._bot_profile_expires_at = time.time() + BOT_PROFILE_TTL_SEC
             return avatar
 
+    async def _reply_group_message_privately(
+        self, msg_id: str, message: str, stream_id: str = "", **kwargs: Any
+    ) -> Dict[str, Any]:
+        if not self._ready:
+            return {"success": False, "error": "QQ 官方网关未连接"}
+        msg_id, content = msg_id.strip(), message.strip()
+        if not stream_id or not msg_id or not content:
+            return {"success": False, "error": "需要当前群聊、目标消息 ID 和私聊正文"}
+        source = await self.ctx.message.get_by_id(msg_id, stream_id=stream_id, include_binary_data=False)
+        if source and source.get("success") is False:
+            return {"success": False, "error": source["error"]}
+        if not source or source["session_id"] != stream_id or not source["message_info"]["group_info"]:
+            return {"success": False, "error": "在当前群聊中找不到目标群消息"}
+        config = source["message_info"]["additional_config"] or {}
+        group_openid = config.get("qq_official_group_openid")
+        author_openid = config.get("qq_official_user_openid")
+        if not group_openid or not author_openid:
+            return {"success": False, "error": "目标消息缺少 QQ 官方群或发言人 OpenID"}
+        union = config.get("qq_official_author_union_openid") or self._group_union_map(group_openid).get(author_openid)
+        recipient = self._union_identities.reverse_map(self.config.qq_official.app_id.strip()).get(union, author_openid)
+        fields = await self._claim_passive_fields("group", group_openid, msg_id)
+        if not fields:
+            return {"success": False, "error": "目标群消息的被动回复凭证不存在、已过期或次数已耗尽"}
+        try:
+            result = await self._api_post(
+                f"/v2/users/{quote(recipient, safe='')}/messages",
+                {"msg_type": 0, "content": content, **fields},
+            )
+        except (ClientError, RuntimeError, TimeoutError) as exc:
+            return {"success": False, "error": str(exc)}
+        if not result.get("id"):
+            return {"success": False, "error": "QQ 私聊回复响应缺少消息 ID"}
+        return {"success": True, "external_message_id": str(result["id"])}
+
     @Tool(
         SET_MUTE_TOOL_NAME,
         platforms=PLATFORM,
@@ -1900,7 +1934,7 @@ class QQOfficialAdapterPlugin(MaiBotPlugin):
             scene, target, parts, reply_target_id = await asyncio.to_thread(
                 encode_message, message, reverse_map=reverse_map
             )
-            # 被动回复窗口按入站记录的统一 ID 匹配（encode 返回的 target 已反查为 OpenID）。
+            # 引用索引按入站会话目标匹配。群消息的被动凭证按原始群 OpenID 共享。
             route_target = (self._active_group_map().get(target, target) if scene == "group"
                             else self._group_user_map("").get(target, target))
             reference_scope = (self._account_id, scene, route_target)
@@ -1938,7 +1972,8 @@ class QQOfficialAdapterPlugin(MaiBotPlugin):
                     self.ctx.logger.debug(
                         "QQ 官方出站缺少引用索引，消息不携带 message_reference: target=%s", quote_target
                     )
-                passive_fields = await self._claim_passive_fields(scene, route_target, reply_to)
+                passive_target = target if scene == "group" else route_target
+                passive_fields = await self._claim_passive_fields(scene, passive_target, reply_to)
                 if not passive_fields:
                     passive_fields = self._proactive_fields()
                 result = await self._api_post(
@@ -2047,6 +2082,10 @@ class QQOfficialAdapterPlugin(MaiBotPlugin):
                 return {}
             received_at, used = reference
             ttl, limit = REPLY_LIMITS[scene]
+            if scene == "group" and used >= limit:
+                group_ids = {route_target, self._id_map["group"].get(route_target)}
+                if any(group.id in group_ids for group in self.config.qq_official.developer_admin_groups):
+                    limit = 50
             if time.time() - received_at >= ttl or used >= limit:
                 return {}
             # HTTP 超时无法证明 QQ 未接受消息，发起发送后不再复用该序号。
