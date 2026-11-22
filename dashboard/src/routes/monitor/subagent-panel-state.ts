@@ -1,7 +1,7 @@
 /**
  * 麦麦观察 - 检查器右侧栏的开合状态
  *
- * 「统计」「当前上下文」「子代理」「事项」开关在时间线工具栏里，共用挂在页面最外层的同一个右侧栏，
+ * 「上下文统计」「子代理」「事项」开关在时间线工具栏里，共用挂在页面最外层的同一个右侧栏，
  * 两者通过这个小状态库联动。
  */
 import { useSyncExternalStore } from 'react'
@@ -9,7 +9,7 @@ import { useSyncExternalStore } from 'react'
 const PANEL_OPEN_STORAGE_KEY = 'maisaka-monitor-subagent-panel-open'
 const PANEL_VIEW_STORAGE_KEY = 'maisaka-monitor-inspector-view'
 
-export type InspectorView = 'stats' | 'context' | 'subagents' | 'schedules'
+export type InspectorView = 'stats' | 'subagents' | 'schedules'
 
 export interface SubagentPanelState {
   open: boolean
@@ -23,7 +23,8 @@ export interface SubagentPanelState {
 
 function loadStoredView(): InspectorView {
   const stored = localStorage.getItem(PANEL_VIEW_STORAGE_KEY)
-  return stored === 'stats' || stored === 'context' || stored === 'schedules' ? stored : 'subagents'
+  if (stored === 'context') return 'stats'
+  return stored === 'stats' || stored === 'schedules' ? stored : 'subagents'
 }
 
 let panelState: SubagentPanelState = {

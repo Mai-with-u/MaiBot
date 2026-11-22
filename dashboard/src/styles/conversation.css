@@ -221,6 +221,10 @@
   min-width: 8rem;
   max-width: 16rem;
 }
+.observation-toolbar[data-conversation-header='true'][data-layout='toolbar'] [data-conversation-heading='true'] {
+  flex-basis: 28rem;
+  max-width: 32rem;
+}
 [data-conversation-header='true'][data-layout='toolbar'] [data-conversation-heading='true'] > .text-muted-foreground {
   display: block;
   overflow: hidden;

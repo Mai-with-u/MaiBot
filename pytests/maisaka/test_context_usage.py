@@ -8,16 +8,21 @@ from src.llm_models.payload_content.context_item import (
     ContextItemMeta,
     ContextToolCall,
     FunctionCallItem,
+    FunctionCallOutputItem,
     RoleType,
 )
 from src.maisaka.context.usage import (
     SECTION_BUILTIN_TOOLS,
+    SECTION_FORWARD_MESSAGES,
     SECTION_INSTANT_NOTICE,
     SECTION_MCP_TOOLS,
     SECTION_MESSAGES,
+    SECTION_MESSAGE_IMAGES,
     SECTION_OTHER_TOOLS,
     SECTION_PLUGIN_TOOLS,
     SECTION_SYSTEM_PROMPT,
+    SECTION_TOOL_CALLS,
+    SECTION_TOOL_RESULTS,
     measure_request_sections,
 )
 
@@ -122,10 +127,43 @@ def test_tool_call_arguments_are_counted_for_function_call_items() -> None:
 
     sections = measure_request_sections(items, history_item_count=1)
 
-    assert _section_map(sections)[SECTION_MESSAGES] == (
+    assert _section_map(sections)[SECTION_TOOL_CALLS] == (
         len("query_memory") + len('{"query": "MaiBot"}'),
         1,
     )
+
+
+def test_history_images_are_counted_separately_from_text() -> None:
+    mixed = ContextItemBuilder().set_role(RoleType.User).add_text_content("图注").add_image_content("png", "YWJj")
+    image_only = ContextItemBuilder().set_role(RoleType.User).add_image_content("png", "YWJj").build()
+    items = [mixed.build(), image_only, _build_item(RoleType.User, "通知")]
+    sections = _section_map(measure_request_sections(items, history_item_count=2))
+    assert sections == {SECTION_MESSAGES: (2, 1), SECTION_MESSAGE_IMAGES: (0, 2), SECTION_INSTANT_NOTICE: (2, 1)}
+
+
+def test_forward_preview_and_expanded_result_are_counted_once() -> None:
+    preview = _build_item(RoleType.User, "转发预览")
+    ordinary = _build_item(RoleType.User, "view_forward_message")
+    call = ContextToolCall(call_id="forward", func_name="view_forward_message", args_json=b"{}")
+    meta = ContextItemMeta.create(logical_turn_id="turn")
+    sections = measure_request_sections(
+        [
+            preview,
+            ordinary,
+            FunctionCallItem(meta=meta, tool_call=call),
+            FunctionCallOutputItem(meta=meta, call_id="forward", output="展开内容"),
+            FunctionCallOutputItem(meta=meta, call_id="other", tool_name="lookup", output="结果"),
+            FunctionCallOutputItem(meta=meta, call_id="failed", tool_name="view_forward_message", success=False, output="失败"),
+        ],
+        history_item_count=6,
+        history_sections={preview.meta.item_id: SECTION_FORWARD_MESSAGES},
+    )
+    assert _section_map(sections) == {
+        SECTION_MESSAGES: (len("view_forward_message"), 1),
+        SECTION_FORWARD_MESSAGES: (len("转发预览展开内容"), 2),
+        SECTION_TOOL_CALLS: (len("view_forward_message{}"), 1),
+        SECTION_TOOL_RESULTS: (len("结果失败"), 2),
+    }
 
 
 def test_empty_sections_are_skipped() -> None:

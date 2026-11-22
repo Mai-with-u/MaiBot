@@ -36,6 +36,8 @@ from src.common.utils.utils_config import (
 from src.config.config import BOT_CONFIG_PATH, config_manager, global_config
 from src.config.config_utils import recursive_parse_item_to_table
 from src.config.official_configs import TalkRuleGroups, TalkRulesItem, get_active_talk_rule_group
+from src.core.chat_pause import chat_pause_state
+from src.maisaka.scenes.group.scheduling import GroupTurnScheduler
 from src.platform_io import (
     AdapterIdentity,
     AdapterPolicyManager,
@@ -1500,6 +1502,44 @@ def get_chat_session_detail(session_id: str) -> Dict[str, object]:
         raise HTTPException(status_code=404, detail=f"聊天流不存在: {normalized_session_id}")
 
     return {"success": True, "detail": _chat_session_detail_to_response(chat_session)}
+
+
+@router.get("/sessions/{session_id}/scheduling")
+async def get_chat_scheduling_status(session_id: str) -> Dict[str, object]:
+    """获取观察页所选聊天流的调度快照。"""
+    return await run_on_main_loop(_read_chat_scheduling_status(session_id))
+
+
+async def _read_chat_scheduling_status(session_id: str) -> Dict[str, object]:
+    session = core_chat_manager.get_session_by_session_id(session_id)
+    if session is None:
+        session = await asyncio.to_thread(core_chat_manager.get_existing_session_by_session_id, session_id)
+    if session is None:
+        raise HTTPException(status_code=404, detail="聊天流不存在")
+
+    is_group = session.is_group_session
+    configured = ChatConfigUtils.get_talk_value(session_id, is_group_chat=is_group)
+    runtime = heartflow_manager.heartflow_chat_list.get(session_id)
+    mode = "group" if is_group else "private"
+    effective = None
+    adjustment = None
+    group_status = None
+    if runtime is not None and runtime._running:
+        effective = runtime._get_effective_reply_frequency()
+        scheduler = runtime._message_turn_scheduler
+        if runtime._focus_group is not None:
+            mode = "focus"
+        elif isinstance(scheduler, GroupTurnScheduler):
+            adjustment = runtime._talk_frequency_adjust
+            group_status = scheduler.monitor_status(effective)
+    return {
+        "mode": mode,
+        "configured_frequency": configured,
+        "effective_frequency": effective,
+        "adjustment": adjustment,
+        "paused": chat_pause_state.is_paused(session_id, is_group),
+        "group_status": group_status,
+    }
 
 
 @router.delete("/sessions/{session_id}")

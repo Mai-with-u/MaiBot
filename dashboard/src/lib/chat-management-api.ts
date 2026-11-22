@@ -2,6 +2,25 @@ import { backendApi } from '@/lib/http'
 
 export type ChatStreamType = 'group' | 'private'
 
+export interface ChatSchedulingStatus {
+  mode: ChatStreamType | 'focus'
+  configured_frequency: number
+  effective_frequency: number | null
+  adjustment: number | null
+  paused: boolean
+  group_status: {
+    view_probability: number
+    completed_rounds: number | null
+    round_limit: number | null
+    round_debt: number
+    silence: 'unscheduled' | 'scheduled' | 'sampled'
+  } | null
+}
+
+export function getChatSchedulingStatus(sessionId: string) {
+  return backendApi.get<ChatSchedulingStatus>(`/api/chat/sessions/${encodeURIComponent(sessionId)}/scheduling`)
+}
+
 export interface ChatStream {
   id: number | null
   session_id: string

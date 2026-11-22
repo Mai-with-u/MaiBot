@@ -1,8 +1,9 @@
 import { useRef, useState } from 'react'
 import { createInstance } from 'i18next'
 import { I18nextProvider } from 'react-i18next'
-import { Activity, Bot, Brain, ImagePlus, Send, Smile, Trash2 } from 'lucide-react'
+import { Activity, Bot, ImagePlus, Send, Smile, Trash2 } from 'lucide-react'
 
+import { PixelIcon } from '@/components/ui/pixel-icon'
 import { Button } from '@/components/ui/button'
 import {
   ConversationAvatar,
@@ -239,14 +240,13 @@ function ConversationReview({ thinking = false }: { thinking?: boolean }) {
                 onClearTimeline={() => setNotice('预览保留示例记录；正式页面可清空记录')}
                 tools={
                   <>
-                    {[
-                      { label: '统计', Icon: Activity, content: '2 轮 · 24,700 tokens' },
-                      { label: '上下文', Icon: Brain, content: '上下文 31 条 · 可用工具 20' },
-                      { label: '子代理', Icon: Bot, content: '当前没有子代理任务' },
-                    ].map(({ label, Icon, content }) => (
+                    {([
+                      { view: 'stats', label: '上下文统计', Icon: Activity, content: '2 轮 · 24,700 tokens · 上下文 31 条 · 可用工具 20' },
+                      { view: 'subagents', label: '子代理', Icon: Bot, content: '当前没有子代理任务' },
+                    ] as const).map(({ view, label, Icon, content }) => (
                       <Popover key={label}>
                         <PopoverTrigger asChild>
-                          <Button variant="outline" size="sm"><Icon />{label}</Button>
+                          <Button variant="outline" size="sm"><PixelIcon name={view} /><Icon />{label}</Button>
                         </PopoverTrigger>
                         <PopoverContent>{content}</PopoverContent>
                       </Popover>

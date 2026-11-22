@@ -3,7 +3,7 @@
 from copy import deepcopy
 from dataclasses import dataclass
 from datetime import datetime
-from typing import Any, List, Optional, Sequence
+from typing import Any, Dict, List, Optional, Sequence
 
 import asyncio
 import time
@@ -65,11 +65,14 @@ from src.maisaka.context.messages import (
     ReferenceMessage,
     ReferenceMessageType,
     SessionBackedMessage,
+    ToolResultMediaMessage,
     ToolResultMessage,
     build_model_output_context_messages,
     build_context_items_from_history_entry,
 )
 from src.maisaka.context.usage import (
+    SECTION_FORWARD_MESSAGES,
+    SECTION_TOOL_RESULTS,
     ContextSectionUsage,
     measure_request_sections,
     resolve_tool_definition_name,
@@ -1005,6 +1008,7 @@ class MaisakaChatLoopService:
         *,
         enable_visual_message: bool,
         include_day_boundary_time_messages: bool = False,
+        history_sections: Optional[Dict[str, str]] = None,
         deferred_tools_reminder: str = "",
         injected_user_messages: Sequence[str] | None = None,
         tail_user_messages: Sequence[str] | None = None,
@@ -1097,6 +1101,12 @@ class MaisakaChatLoopService:
                 else:
                     self._append_time_user_message(items, msg.timestamp)
 
+            if history_sections is not None:
+                # 使用历史来源而非正文识别转发，恢复后的 Focus 消息也保留这个来源标记。
+                if msg.count_in_context and msg.source.endswith(":forward"):
+                    history_sections.update((item.meta.item_id, SECTION_FORWARD_MESSAGES) for item in context_items)
+                elif isinstance(msg, ToolResultMediaMessage):
+                    history_sections.update((item.meta.item_id, SECTION_TOOL_RESULTS) for item in context_items)
             items.extend(context_items)
             history_context_items.extend(context_items)
             previous_context_timestamp = msg.timestamp
@@ -1190,11 +1200,13 @@ class MaisakaChatLoopService:
             is_group_chat=self._is_group_chat,
         )
         # 上下文可能触发表情包解码、缩放和缓存等待，在线程池执行，避免阻塞事件循环。
+        history_sections: Dict[str, str] = {}
         built_messages, history_item_count = await asyncio.to_thread(
             self._build_request_messages,
             selected_history,
             enable_visual_message=enable_visual_message,
             include_day_boundary_time_messages=request_kind == "planner",
+            history_sections=history_sections,
             deferred_tools_reminder=deferred_tools_reminder,
             injected_user_messages=injected_user_messages,
             tail_user_messages=tail_user_messages,
@@ -1305,6 +1317,7 @@ class MaisakaChatLoopService:
         context_sections = measure_request_sections(
             built_messages,
             history_item_count=history_item_count,
+            history_sections=history_sections,
             tool_definitions=all_tools,
             tool_provider_types=tool_provider_types,
         )

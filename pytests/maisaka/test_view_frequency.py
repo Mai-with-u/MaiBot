@@ -70,7 +70,7 @@ async def test_silence_samples_once_until_next_message(monkeypatch: pytest.Monke
     runtime._schedule_message_turn = Mock()
     monkeypatch.setattr(scheduler, "_context_interval", lambda: 10.0)
     monkeypatch.setattr("src.maisaka.scenes.group.scheduling.time.time", lambda: 120.0)
-    draw = Mock(return_value=0.5)
+    draw = Mock(return_value=0.3)
     monkeypatch.setattr("src.maisaka.scenes.group.scheduling.random.random", draw)
 
     scheduler.observe_message()
@@ -164,7 +164,7 @@ def test_message_after_thinking_uses_current_frequency(monkeypatch: pytest.Monke
     runtime._last_processed_index = 0
     monkeypatch.setattr(scheduler, "_arm_silence_check", Mock())
     monkeypatch.setattr("src.maisaka.scenes.group.scheduling.filter_external_messages", lambda messages, **kw: messages)
-    draw = Mock(side_effect=[0.5, 0.2])
+    draw = Mock(side_effect=[0.2, 0.1])
     monkeypatch.setattr("src.maisaka.scenes.group.scheduling.random.random", draw)
 
     scheduler.start_planner_turn("first")
@@ -252,7 +252,7 @@ def test_debt_carries_across_wait_and_frequency_changes(monkeypatch: pytest.Monk
 
 
 @pytest.mark.parametrize(
-    "frequency, draw, accepted", [(0.32, 0.31, True), (0.32, 0.32, False), (0, 0, False), (1, 0.99, True)]
+    "frequency, draw, accepted", [(0.18, 0.0323, True), (0.18, 0.0324, False), (0, 0, False), (1, 0.99, True)]
 )
 @pytest.mark.asyncio
 async def test_wait_timeout_samples_current_frequency_once(

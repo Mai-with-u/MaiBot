@@ -1,12 +1,13 @@
 /**
  * 麦麦观察 - 检查器右侧栏
  *
- * 「统计」「当前上下文」「子代理」「事项」共用一个右侧栏：卡片标题条 + 一块数据屏，
+ * 「上下文统计」「子代理」「事项」共用一个右侧栏：卡片标题条 + 一块数据屏，
  * 屏里只有分节标题和虚线分隔的行，不再嵌套卡片。
  */
-import { Activity, Bot, Brain, ChevronRight, ListTodo, X } from 'lucide-react'
+import { Activity, Bot, ChevronRight, ListTodo, X } from 'lucide-react'
 import { Fragment, useEffect, useState } from 'react'
 
+import { PixelIcon } from '@/components/ui/pixel-icon'
 import { Button } from '@/components/ui/button'
 import { DataPanel, PageFrame } from '@/components/ui/surface'
 import { backendApi } from '@/lib/http'
@@ -23,10 +24,10 @@ import { SubagentInspectorView } from './subagent-panel'
 import { ScheduleInspectorView } from './schedule-panel'
 import { useMaisakaMonitorSession } from './use-maisaka-monitor'
 
-/** 上下文分段：token 由该轮真实 prompt token 按字符占比换算 */
+/** 上下文文本分段的字符数及其占可测文本的比例。 */
 export interface MonitorContextSection {
   key: string
-  tokens: number
+  chars: number
   percent: number
 }
 
@@ -36,6 +37,8 @@ export interface MonitorStats {
   toolCalls: number
   /** 最近一轮 planner 请求的输入 token，即当前上下文占用 */
   contextTokens: number
+  /** 历史消息中的图片张数；旧事件缺少此项。 */
+  messageImages: number | null
   /** 与最近一轮 planner 请求对应的上下文分段 */
   contextSections: MonitorContextSection[]
   /** 会话累计 token 用量 */
@@ -47,6 +50,10 @@ export interface MonitorStats {
 
 /** 上下文分段的展示标签与配色，未知分段直接以 key 展示 */
 const CONTEXT_SECTION_META: Record<string, { label: string; color: string }> = {
+  forward_messages: { label: '转发消息（含解包）', color: 'hsl(var(--color-chart-2))' },
+  tool_calls: { label: '工具调用', color: 'hsl(var(--color-chart-4))' },
+  tool_results: { label: '工具结果', color: 'hsl(var(--color-chart-5))' },
+  message_text: { label: '消息（文字）', color: 'hsl(var(--color-chart-1))' },
   messages: { label: '消息', color: 'hsl(var(--color-chart-1))' },
   mcp_tools: { label: 'MCP 工具', color: 'hsl(var(--color-chart-4))' },
   builtin_tools: { label: '系统工具', color: 'hsl(var(--color-chart-2))' },
@@ -73,7 +80,8 @@ function formatTokenCount(value: number): string {
 
 /** 最近一轮上下文构成、缓存命中率与会话累计计数 */
 function StatsView({ stats }: { stats: MonitorStats }) {
-  const hasContext = stats.contextTokens > 0 && stats.contextSections.length > 0
+  const hasContext = stats.contextSections.length > 0
+  const showChars = Boolean(stats.messageImages) || stats.contextTokens === 0
   const totals: [string, string][] = [
     ['平均缓存命中率', stats.cacheHitRate === null ? '—' : `${stats.cacheHitRate.toFixed(0)}%`],
     ['累计输入', formatTokenCount(stats.totalPromptTokens)],
@@ -92,6 +100,9 @@ function StatsView({ stats }: { stats: MonitorStats }) {
       {hasContext ? (
         <>
           <div className="px-3 pt-2.5 pb-1">
+            <p className="text-muted-foreground mb-1 text-xs">
+              {showChars ? '各项占比按文本字符数计算' : '分项 token 按字符占比估算'}
+            </p>
             <div data-inspector-meter="true" className="flex h-[18px] w-full gap-0.5">
               {stats.contextSections.map((section) => (
                 <span
@@ -117,13 +128,22 @@ function StatsView({ stats }: { stats: MonitorStats }) {
                 />
                 <span className="min-w-0 flex-1 truncate">{sectionMeta.label}</span>
                 <span className="text-muted-foreground font-mono tabular-nums">{section.percent.toFixed(1)}%</span>
-                <span className="w-12 text-right font-mono tabular-nums">{formatTokenCount(section.tokens)}</span>
+                <span className="text-right font-mono tabular-nums">
+                  {showChars ? `${section.chars.toLocaleString()} 字符` : formatTokenCount(stats.contextTokens * section.percent / 100)}
+                </span>
               </InspectorRow>
             )
           })}
         </>
-      ) : (
+      ) : stats.messageImages ? null : (
         <InspectorRow className="text-muted-foreground">尚无 planner 请求数据，产生一次推理后展示上下文构成。</InspectorRow>
+      )}
+      {stats.messageImages !== null && (
+        <InspectorRow>
+          <span className="flex-1">消息（图片）</span>
+          {stats.messageImages > 0 && <span className="text-muted-foreground text-xs">无独立 token 数据</span>}
+          <span className="font-mono tabular-nums">{stats.messageImages} 张</span>
+        </InspectorRow>
       )}
       <InspectorSection title="运行累计" />
       {totals.map(([label, value]) => (
@@ -269,14 +289,13 @@ function ContextView({ sessionId }: { sessionId: string | null }) {
 // ─── 工具栏开关与右侧栏 ───────────────────────────────────────
 
 const VIEW_META: Record<InspectorView, { label: string; icon: typeof Activity }> = {
-  stats: { label: '统计', icon: Activity },
-  context: { label: '上下文', icon: Brain },
+  stats: { label: '上下文统计', icon: Activity },
   subagents: { label: '子代理', icon: Bot },
   schedules: { label: '事项', icon: ListTodo },
 }
 
 /** 时间线工具栏上的检查器开关；各视图共用一个右侧栏，选中项是按下的键。 */
-export function InspectorToggleButton({ view, disabled }: { view: InspectorView; disabled?: boolean }) {
+export function InspectorToggleButton({ view }: { view: InspectorView }) {
   const { open, view: activeView } = useSubagentPanelState()
   const { subagentTasks } = useMaisakaMonitorSession()
   const runningCount = subagentTasks.filter((task) => task.status === 'running').length
@@ -288,12 +307,12 @@ export function InspectorToggleButton({ view, disabled }: { view: InspectorView;
       size="sm"
       className="shrink-0"
       data-inspector-toggle="true"
-      disabled={disabled}
       aria-label={label}
       aria-pressed={active}
       title={active ? `收起${label}` : `在右侧栏查看${label}`}
       onClick={() => toggleInspectorView(view)}
     >
+      <PixelIcon name={view} />
       <Icon className="mr-1 h-3 w-3" />
       <span data-inspector-toggle-label="true">{label}</span>
       {view === 'subagents' && runningCount > 0 && (
@@ -310,8 +329,7 @@ export function InspectorPanel({ stats, sessionId }: { stats: MonitorStats; sess
   if (!open) return null
 
   const label = VIEW_META[view].label
-  const meta =
-    view === 'stats' ? '本聊天流累计' : view === 'subagents' ? `${subagentTasks.length} 个任务` : view === 'schedules' ? '所有聊天流' : null
+  const meta = view === 'subagents' ? `${subagentTasks.length} 个任务` : null
 
   return (
     <PageFrame
@@ -338,10 +356,14 @@ export function InspectorPanel({ stats, sessionId }: { stats: MonitorStats; sess
           </Button>
         </div>
         <DataPanel padding="none" inset className="min-h-0 flex-1 overflow-y-auto">
-          {view === 'stats' && <StatsView stats={stats} />}
-          {view === 'context' && <ContextView sessionId={sessionId} />}
+          {view === 'stats' && (
+            <>
+              <StatsView stats={stats} />
+              <ContextView key={sessionId} sessionId={sessionId} />
+            </>
+          )}
           {view === 'subagents' && <SubagentInspectorView />}
-          {view === 'schedules' && <ScheduleInspectorView />}
+          {view === 'schedules' && <ScheduleInspectorView sessionId={sessionId} />}
         </DataPanel>
       </aside>
     </PageFrame>

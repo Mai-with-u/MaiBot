@@ -1,7 +1,7 @@
 """群聊调度：按批查看、思考轮数记账与静默判定。"""
 
 from math import ceil
-from typing import TYPE_CHECKING, Optional, Tuple
+from typing import TYPE_CHECKING, Dict, Optional, Tuple
 import asyncio
 import random
 import time
@@ -17,6 +17,10 @@ if TYPE_CHECKING:
 
 logger = get_logger("maisaka_turn_scheduler")
 LOW_FREQUENCY_ROUND_LIMIT = 8
+
+
+def group_view_probability(frequency: float) -> float:
+    return min(1.0, max(0.0, frequency)) ** 2
 
 
 class GroupTurnScheduler(MessageTurnScheduler):
@@ -38,9 +42,24 @@ class GroupTurnScheduler(MessageTurnScheduler):
     def allows_timed_wakeup(self) -> bool:
         return self._round_debt == 0
 
+    def monitor_status(self, frequency: float) -> Dict[str, object]:
+        """读取群聊查看状态，不触发抽签或更改定时器。"""
+        silence = "unscheduled"
+        if self._silence_task is not None:
+            silence = "scheduled"
+        elif self._silence_handled_at > 0 and self._silence_handled_at == self._runtime._last_message_received_at:
+            silence = "sampled"
+        return {
+            "view_probability": group_view_probability(frequency),
+            "completed_rounds": self._completed_rounds if self._logical_turn_id is not None else None,
+            "round_limit": self._runtime._max_internal_rounds if self._logical_turn_id is not None else None,
+            "round_debt": self._round_debt,
+            "silence": silence,
+        }
+
     @staticmethod
     def _sample_view(frequency: float) -> Tuple[float, bool]:
-        probability = min(1.0, frequency)
+        probability = group_view_probability(frequency)
         return probability, random.random() < probability
 
     def accept_wait_timeout(self) -> bool:

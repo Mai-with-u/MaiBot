@@ -87,6 +87,8 @@ import { StageStatusLabel } from './StageStatusLabel'
 import { TimelineScrollPosition } from './TimelineScrollPosition'
 import { getStageStatusLight } from './stage-status-light'
 import { ObservationHeader } from './ObservationHeader'
+import { ChatSchedulingStatusButton } from './ChatSchedulingStatusButton'
+import { isFocusFlowId } from '@/routes/chat/observed-sessions'
 import { InspectorPanel, InspectorToggleButton, type MonitorStats } from './inspector-panel'
 import { openSubagentPanel } from './subagent-panel-state'
 import { useMaisakaMonitorSession } from './use-maisaka-monitor'
@@ -228,7 +230,12 @@ function StageStatusPanel({
     <>
       <ObservationHeader
         title={sessionName || status?.sessionName}
-        subtitle={!hideStatus && (status ? <StageStatusContent status={status} /> : '当前聊天流暂无阶段状态')}
+        subtitle={<div className="h-7 w-full items-center gap-2 overflow-hidden whitespace-nowrap [&>*]:shrink-0">
+          {sessionId && (isFocusFlowId(sessionId)
+            ? <span className="text-muted-foreground text-xs">多个聊天一起看</span>
+            : <ChatSchedulingStatusButton sessionId={sessionId} />)}
+          {!hideStatus && (status ? <StageStatusContent status={status} /> : <span>暂时看不到麦麦正在做什么</span>)}
+        </div>}
         {...navigation}
         onEditChat={sessionId ? () => setSettingsChat({
           session_id: sessionId,
@@ -237,7 +244,6 @@ function StageStatusPanel({
         tools={
           <>
             <InspectorToggleButton view="stats" />
-            <InspectorToggleButton view="context" disabled={!sessionId} />
             <InspectorToggleButton view="subagents" />
             <InspectorToggleButton view="schedules" />
           </>
@@ -2630,6 +2636,7 @@ const MonitorTimeline = memo(function MonitorTimeline({
       cycles: 0,
       toolCalls: 0,
       contextTokens: 0,
+      messageImages: null,
       contextSections: [],
       totalPromptTokens: 0,
       totalCompletionTokens: 0,
@@ -2666,7 +2673,7 @@ const MonitorTimeline = memo(function MonitorTimeline({
       cacheHitTokens += planner.prompt_cache_hit_tokens ?? 0
       cacheMissTokens += planner.prompt_cache_miss_tokens ?? 0
       // 以最近一轮真实请求代表当前上下文
-      if (planner.prompt_tokens > 0 && finalized.request?.context_sections?.length) {
+      if (finalized.request?.context_sections?.length) {
         currentStats.contextTokens = planner.prompt_tokens
         latestSections = finalized.request.context_sections
       }
@@ -2677,14 +2684,18 @@ const MonitorTimeline = memo(function MonitorTimeline({
       currentStats.cacheHitRate = (cacheHitTokens / cacheTotalTokens) * 100
     }
 
+    const imageSection = latestSections.find((section) => section.key === 'message_images')
+    if (imageSection || latestSections.some((section) => section.key === 'message_text')) {
+      currentStats.messageImages = imageSection?.count ?? 0
+    }
     const totalChars = latestSections.reduce((sum, section) => sum + section.chars, 0)
-    if (currentStats.contextTokens > 0 && totalChars > 0) {
-      // 按字符占比把真实 token 总量分摊到各分段，占比大的分段优先展示
+    if (totalChars > 0) {
+      // 分段按字符占比排序；有图片时无法按此比例拆分输入 token。
       currentStats.contextSections = latestSections
         .filter((section) => section.chars > 0)
         .map((section) => ({
           key: section.key,
-          tokens: (currentStats.contextTokens * section.chars) / totalChars,
+          chars: section.chars,
           percent: (section.chars / totalChars) * 100,
         }))
         .sort((a, b) => b.percent - a.percent)
@@ -2834,7 +2845,7 @@ const MonitorTimeline = memo(function MonitorTimeline({
           )}
         </AnimatePresence>
       </DataPanel>
-      {/* 统计、当前上下文、子代理与事项共用的检查器右侧栏 */}
+      {/* 上下文统计、子代理与事项共用的检查器右侧栏 */}
       <InspectorPanel stats={stats} sessionId={selectedSession} />
     </div>
     </ImageGalleryProvider>

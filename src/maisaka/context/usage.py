@@ -4,23 +4,31 @@
 真正的 token 总量由模型返回，前端按各分段字符占比换算出分段 token，避免在本地引入第二套
 tokenizer 造成与模型口径不一致。
 
-图片分段以 base64 形式进入请求，其字符数不代表模型侧 token 开销，因此不计入字符统计。
+图片分段以 base64 形式进入请求，其字符数不代表模型侧 token 开销，因此按张数单列，不计入字符统计。
 """
 
 from dataclasses import dataclass
-from typing import Any, Dict, List, Sequence
+from typing import Any, Dict, List, Mapping, Optional, Sequence
 import json
 
 from src.llm_models.payload_content.context_item import (
+    AssistantMessageItem,
+    ContextImagePart,
     ContextItem,
     FunctionCallItem,
+    FunctionCallOutputItem,
     SystemMessageItem,
+    UserMessageItem,
     get_item_text,
 )
 from src.llm_models.payload_content.tool_option import normalize_tool_options
 
 SECTION_SYSTEM_PROMPT = "system_prompt"
-SECTION_MESSAGES = "messages"
+SECTION_MESSAGES = "message_text"
+SECTION_MESSAGE_IMAGES = "message_images"
+SECTION_FORWARD_MESSAGES = "forward_messages"
+SECTION_TOOL_CALLS = "tool_calls"
+SECTION_TOOL_RESULTS = "tool_results"
 SECTION_INSTANT_NOTICE = "instant_notice"
 SECTION_MCP_TOOLS = "mcp_tools"
 SECTION_BUILTIN_TOOLS = "builtin_tools"
@@ -31,6 +39,10 @@ SECTION_OTHER_TOOLS = "other_tools"
 SECTION_ORDER: tuple[str, ...] = (
     SECTION_SYSTEM_PROMPT,
     SECTION_MESSAGES,
+    SECTION_MESSAGE_IMAGES,
+    SECTION_FORWARD_MESSAGES,
+    SECTION_TOOL_CALLS,
+    SECTION_TOOL_RESULTS,
     SECTION_INSTANT_NOTICE,
     SECTION_MCP_TOOLS,
     SECTION_BUILTIN_TOOLS,
@@ -97,6 +109,7 @@ def measure_request_sections(
     items: Sequence[ContextItem],
     *,
     history_item_count: int,
+    history_sections: Optional[Mapping[str, str]] = None,
     tool_definitions: Sequence[Any] = (),
     tool_provider_types: Sequence[str] = (),
 ) -> List[ContextSectionUsage]:
@@ -105,6 +118,7 @@ def measure_request_sections(
     Args:
         items: 最终发送给模型的 Context Items（系统提示词位于首位）。
         history_item_count: 紧随系统提示词之后属于历史上下文的消息条数。
+        history_sections: 按稳定 Item ID 标记转发预览及工具媒体等历史来源。
         tool_definitions: 本轮候选工具定义。
         tool_provider_types: 与 ``tool_definitions`` 一一对应的工具来源类型。
 
@@ -122,8 +136,24 @@ def measure_request_sections(
     available_history_count = len(items) - system_item_count
     resolved_history_count = min(max(history_item_count, 0), available_history_count)
     history_items = items[system_item_count : system_item_count + resolved_history_count]
+    call_names = {
+        item.tool_call.call_id: item.tool_call.func_name for item in history_items if isinstance(item, FunctionCallItem)
+    }
     for item in history_items:
-        _accumulate(sections, SECTION_MESSAGES, measure_item_chars(item), 1)
+        section = history_sections.get(item.meta.item_id, SECTION_MESSAGES) if history_sections else SECTION_MESSAGES
+        if isinstance(item, FunctionCallItem):
+            section = SECTION_TOOL_CALLS
+        elif isinstance(item, FunctionCallOutputItem):
+            tool_name = item.tool_name or call_names.get(item.call_id)
+            section = (
+                SECTION_FORWARD_MESSAGES if item.success and tool_name == "view_forward_message" else SECTION_TOOL_RESULTS
+            )
+        chars = measure_item_chars(item)
+        if chars or section != SECTION_MESSAGES:
+            _accumulate(sections, section, chars, 1)
+        if isinstance(item, (SystemMessageItem, UserMessageItem, AssistantMessageItem)):
+            images = sum(isinstance(part, ContextImagePart) for part in item.parts)
+            _accumulate(sections, SECTION_MESSAGE_IMAGES, 0, images)
 
     for item in items[system_item_count + resolved_history_count :]:
         _accumulate(sections, SECTION_INSTANT_NOTICE, measure_item_chars(item), 1)
