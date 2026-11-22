@@ -3,13 +3,14 @@ import type { MillenniumIconDef } from './millennium-icon-set'
 
 interface MillenniumIconProps {
   icon: MillenniumIconDef
+  useColorVariant?: boolean
   className?: string
   color?: string
   size?: number | string
 }
 
 /** 按 millennium-icon-set.ts 里登记的画法直接画出一个千禧图标。 */
-export function MillenniumIcon({ icon, className, color, size = 20 }: MillenniumIconProps) {
+export function MillenniumIcon({ icon, useColorVariant, className, color, size = 20 }: MillenniumIconProps) {
   const paint = icon.filled
     ? { fill: color ?? 'currentColor' }
     : {
@@ -28,6 +29,7 @@ export function MillenniumIcon({ icon, className, color, size = 20 }: Millennium
       height={size}
       aria-hidden="true"
       data-millennium-icon="true"
+      data-color-icon={useColorVariant ? icon.menuPixel ?? icon.pixel : undefined}
       className={className}
       {...paint}
     >

@@ -348,6 +348,53 @@
   outline-offset: 2px;
 }
 
+/* 会话工具栏沿用桌面软件的平面按钮，仅在交互时显出倒角。 */
+:root[data-dashboard-style='millennium'] .observation-toolbar {
+  & :is([data-conversation-header-tools], [data-conversation-header-actions]) {
+    gap: 2px;
+    align-items: center;
+    position: relative;
+    padding-block: 3px 6px;
+
+    & > [data-dashboard-separator] { display: block; }
+  }
+
+  & [data-conversation-header-tools]::before {
+    content: '';
+    width: 6px;
+    height: 16px;
+    margin-inline-end: 4px;
+    background: radial-gradient(circle at 1px 1px, var(--mil-vent) 1px, transparent 1px) 0 0 / 3px 4px;
+  }
+
+  & :is([data-conversation-header-tools], [data-conversation-header-actions]) .dashboard-button {
+    gap: 6px;
+    padding-block: 0;
+    border: 0;
+    color: var(--mil-ink);
+    background: transparent;
+    box-shadow: none;
+    transform: none;
+
+    &:hover:not(:disabled) {
+      background-color: var(--mil-key-hover);
+      box-shadow: inset 1px 1px var(--mil-hi), inset -1px -1px var(--mil-lo);
+    }
+
+    &:is([aria-pressed='true'], [data-state='open'], :active):not(:disabled) {
+      background-color: color-mix(in srgb, var(--mil-key-side) 32%, transparent);
+      box-shadow: inset 1px 1px var(--mil-lo), inset -1px -1px var(--mil-hi);
+    }
+  }
+
+  & .pixel-icon { display: inline-block; }
+  & .pixel-icon + svg { display: none; }
+  & [data-auto-scroll='false'] > .pixel-icon { filter: grayscale(1); }
+}
+
+/* 其他主题的工具栏继续显示各自的线条图标。 */
+.observation-toolbar .pixel-icon { display: none; }
+
 /* ---------- 下沉屏幕：输入框、多行文本、下拉触发器 ---------- */
 
 :root[data-dashboard-style='millennium'] select:not(.opacity-0) {

@@ -552,7 +552,7 @@ export default function ComponentGallery({ heading }: { heading?: ReactNode }) {
           >
             {group.examples.map((example) => (
               <section
-                key={example.file}
+                key={example.name}
                 data-gallery-item
                 aria-label={example.name}
                 className="mb-4 inline-block w-full break-inside-avoid align-top"

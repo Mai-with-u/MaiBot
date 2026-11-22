@@ -21,7 +21,7 @@ import { buildFutureRetroTexture } from '@/lib/theme/future-retro'
 import { Button } from '@/components/ui/button'
 import { Label } from '@/components/ui/label'
 import { Input } from '@/components/ui/input'
-import { Switch } from '@/components/ui/switch'
+import { Switch, SwitchField } from '@/components/ui/switch'
 import { Slider } from '@/components/ui/slider'
 import { applyThemePipeline, getComputedTokens } from '@/lib/theme/pipeline'
 import { DEFAULT_ACCENT_COLOR_HEX, DEFAULT_ACCENT_COLOR_HSL, hexToHSL } from '@/lib/theme/palette'
@@ -595,6 +595,13 @@ export function AppearanceTab() {
 
       {themeConfig.dashboardStyle === 'millennium' && (
         <div className="space-y-6">
+          <SwitchField
+            label="使用多彩图标"
+            checked={themeConfig.styleConfig?.millennium?.colorfulIcons === true}
+            onCheckedChange={(colorfulIcons) => updateThemeConfig({
+              styleConfig: { ...themeConfig.styleConfig, millennium: { colorfulIcons } },
+            })}
+          />
           <div>
             <h3 className="mb-1 text-base font-semibold sm:text-lg">像素字体 · 英文与数字</h3>
             <p className="text-muted-foreground mb-3 text-sm sm:mb-4">

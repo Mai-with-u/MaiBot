@@ -43,6 +43,7 @@ import { Input } from '@/components/ui/input'
 import { Kbd, ShortcutKbd } from '@/components/ui/kbd'
 import { MILLENNIUM_ICON_SET } from '@/components/ui/millennium-icon-set'
 import { MillenniumIcon } from '@/components/ui/millennium-icons'
+import { PixelIcon } from '@/components/ui/pixel-icon'
 import { PromptWarningDot } from '@/components/ui/prompt-warning-dot'
 import { SegmentedMeter } from '@/components/ui/segmented-meter'
 import { SkipNav } from '@/components/ui/skip-nav'
@@ -228,6 +229,42 @@ function StepExample() {
 
 const MenuIcon = createStreamlineIcon('desktop-chat-remix')
 
+const pixelIconPairs = [
+  ['显示器', 'desktop', 'desktop-chat-remix'], ['插件', 'plugin', 'application-add-remix'],
+  ['首页', 'home', 'allergens-fish-remix'], ['麦麦', 'maibot', 'page-setting-remix'],
+  ['模型', 'model', 'module-remix'], ['提示词', 'prompt', 'script-1-remix'],
+  ['表达学习', 'learn', 'chat-bubble-square-write-remix'], ['知识库', 'knowledge', 'user-sticker-square-remix'],
+  ['通讯录', 'contacts', 'users'], ['数据传输', 'drive', 'hard-drive'],
+  ['适配器', 'adapter', 'router-wifi-network-solid'], ['商店', 'store', 'store-2-solid'],
+  ['收藏文件', 'bookmark', 'file-bookmark-solid'], ['删除', 'trash', 'delete-2-solid'],
+  ['设置', 'wrench', 'wrench'], ['文档', 'book', 'book-open'], ['搜索', 'search', 'search'],
+  ['网络', 'globe', 'globe'], ['日历', 'calendar', 'calendar'], ['消息', 'message', 'message-square'],
+] as const
+
+function PixelIconComparison() {
+  return (
+    <table className="w-full text-center text-xs" aria-label="千禧图标新旧对照">
+      <thead className="text-muted-foreground">
+        <tr><th className="text-left">图标</th><th>旧版</th><th>重绘版</th></tr>
+      </thead>
+      <tbody>
+        {pixelIconPairs.map(([label, name, legacyName]) => {
+          const icon = MILLENNIUM_ICON_SET.find(
+            (item) => item.streamline?.includes(legacyName) || item.lucide?.includes(legacyName)
+          )!
+          return (
+            <tr key={name} className="border-border border-t">
+              <th scope="row" className="py-1.5 text-left font-normal">{label}</th>
+              <td><MillenniumIcon icon={icon} size={32} className="mx-auto" /></td>
+              <td><PixelIcon name={name} size={32} /></td>
+            </tr>
+          )
+        })}
+      </tbody>
+    </table>
+  )
+}
+
 function MillenniumIconsExample() {
   return (
     <div className="flex max-h-64 flex-wrap gap-3 overflow-auto">
@@ -363,6 +400,32 @@ export const feedbackExamples: ComponentExample[] = [
     category: '辅助模块',
     description: '千禧图标路径与名称映射。悬停查看图标名称，源码包含样式生成工具。',
     preview: <MillenniumIconsExample />,
+  },
+  {
+    file: 'pixel-icon',
+    name: 'PixelIcon',
+    category: '图标',
+    description: '千禧会话工具栏的彩色像素图标。',
+    preview: (
+      <ul className="grid grid-cols-2 gap-x-4 gap-y-2 text-xs">
+        {([
+          ['record', '思考记录'], ['stats', '统计'], ['context', '上下文'], ['subagents', '子代理'],
+          ['schedules', '事项'], ['edit', '编辑'], ['top', '回到顶部'], ['previous', '上条消息'],
+          ['bottom', '回到底部'], ['clear', '清空'],
+        ] as const).map(([name, label]) => (
+          <li key={name} className="flex items-center gap-2">
+            <PixelIcon name={name} />{label}
+          </li>
+        ))}
+      </ul>
+    ),
+  },
+  {
+    file: 'pixel-icon',
+    name: 'PixelIcon · 新旧对照',
+    category: '图标',
+    description: '千禧图标新旧对照，左列为原版，右列为彩色手绘版。',
+    preview: <PixelIconComparison />,
   },
   {
     file: 'millennium-icons',

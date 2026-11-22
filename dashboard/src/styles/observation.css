@@ -80,12 +80,13 @@
 
 /* ---------- 侧栏 ---------- */
 [data-observation-sidebar='true'] {
+  --obs-sidebar-gap: 0.875rem;
   position: relative;
   z-index: 20;
   display: flex;
   flex-shrink: 0;
   flex-direction: column;
-  gap: 0.875rem;
+  gap: var(--obs-sidebar-gap);
   width: var(--obs-sidebar-width);
   height: 100%;
   box-sizing: border-box;
@@ -111,18 +112,17 @@
 }
 /* 铭牌行整体缩小一号，下方留白再画一道分隔，和设置区分开 */
 [data-observation-brand='true'] {
+  position: relative;
   display: flex;
   flex-shrink: 0;
   align-items: center;
   justify-content: space-between;
   gap: 0.5rem;
   padding-bottom: 0.75rem;
-  border-bottom: 1px solid hsl(var(--border));
 }
-:root[data-dashboard-style='millennium'] [data-observation-brand='true'] {
-  border-bottom: 2px solid color-mix(in srgb, var(--mil-line) 22%, var(--mil-panel));
-}
-:root[data-dashboard-style='future-retro'] [data-observation-brand='true'] {
+:root[data-dashboard-style='future-retro'] [data-observation-brand='true'] > [data-dashboard-separator] {
+  height: 2px;
+  background: transparent;
   border-bottom: 2px dashed color-mix(in srgb, var(--retro-ink) 30%, transparent);
 }
 [data-observation-sidebar='true'][data-collapsed='true'] [data-observation-brand='true'] {
@@ -226,6 +226,12 @@
   flex: 1 1 0;
   max-height: none;
 }
+:root[data-dashboard-style='millennium'] [data-observation-sidebar='true'][data-collapsed='false'] [data-observation-settings='true'] {
+  --obs-settings-title-space: 6px;
+  margin-block-start: calc(var(--obs-settings-title-space) - var(--obs-sidebar-gap));
+  /* 首排键帽上方另有 2px 网格内距。 */
+  gap: calc(var(--obs-settings-title-space) - 2px);
+}
 [data-observation-section-title='true'] {
   display: flex;
   align-items: center;
@@ -271,6 +277,18 @@
   box-shadow: var(--obs-key-shadow);
 }
 :root[data-dashboard-style='millennium'] [data-observation-key='true'] { padding-bottom: 8px; }
+:root[data-dashboard-style='millennium'][data-colorful-icons='true']
+  [data-observation-key='true']:has(> :is(svg[data-color-icon], .lucide-users, .lucide-hard-drive)) {
+  --mil-icon-sprite: url('../assets/millennium-pixel-icons-12.svg');
+  gap: 3px;
+  padding-block: 2px 5px;
+}
+:root[data-dashboard-style='millennium'][data-colorful-icons='true']
+  [data-observation-key='true'] > :is(svg[data-color-icon], .lucide-users, .lucide-hard-drive) {
+  width: 24px;
+  height: 24px;
+  flex-shrink: 0;
+}
 [data-observation-sidebar='true'][data-collapsed='true'] [data-observation-key='true'] { height: 2.625rem; }
 [data-observation-key='true']:hover { background: var(--obs-key-hover); }
 [data-observation-key='true'][data-active='true'] {
@@ -301,15 +319,10 @@
   outline-offset: 1px;
 }
 
-[data-observation-rule='true'] {
-  flex-shrink: 0;
-  border-top: 1px solid hsl(var(--border));
+:root[data-dashboard-style='future-retro'] [data-observation-rule='true'][data-dashboard-separator] {
+  height: 3px;
+  background: var(--retro-ink);
 }
-:root[data-dashboard-style='millennium'] [data-observation-rule='true'] {
-  border-top: 2px solid var(--mil-lo);
-  box-shadow: 0 2px 0 var(--mil-hi);
-}
-:root[data-dashboard-style='future-retro'] [data-observation-rule='true'] { border-top: 3px solid var(--retro-ink); }
 
 /* ---------- 所有对话 ---------- */
 [data-observation-conversations='true'] {

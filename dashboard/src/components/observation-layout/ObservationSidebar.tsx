@@ -23,6 +23,7 @@ import type { MenuItem } from '@/components/layout/types'
 import { DropdownMenu, DropdownMenuContent, DropdownMenuItem, DropdownMenuTrigger } from '@/components/ui/dropdown-menu'
 import { PromptWarningDot } from '@/components/ui/prompt-warning-dot'
 import { ScrollArea } from '@/components/ui/scroll-area'
+import { Separator } from '@/components/ui/separator'
 import { Tooltip, TooltipContent, TooltipTrigger } from '@/components/ui/tooltip'
 import { toggleThemeWithTransition, useTheme } from '@/components/use-theme'
 import { promptCatalogQueryOptions } from '@/lib/prompt-query'
@@ -181,7 +182,8 @@ export function ObservationSidebar({
   const { t } = useTranslation()
   const botAvailable = useBotAvailable()
   const pathname = useRouterState({ select: (state) => state.location.pathname })
-  const { theme, setTheme } = useTheme()
+  const { theme, setTheme, themeConfig } = useTheme()
+  const dividerVariant = themeConfig.dashboardStyle === 'millennium' ? 'groove' : 'line'
   const [settingsOpen, setSettingsOpen] = useState(loadSettingsOpen)
   const [toolsOpen, setToolsOpen] = useState(false)
   const [settingsLayout, setSettingsLayout] = useState(loadSettingsLayout)
@@ -405,6 +407,7 @@ export function ObservationSidebar({
         >
           {collapsed ? <PanelLeftOpen aria-hidden="true" /> : <PanelLeftClose aria-hidden="true" />}
         </button>
+        <Separator variant={dividerVariant} className="absolute inset-x-0 bottom-0" />
       </div>
 
       <section ref={settingsSection} data-observation-settings="true">
@@ -548,7 +551,7 @@ export function ObservationSidebar({
         )}
       </section>
 
-      <div data-observation-rule="true" aria-hidden="true" />
+      <Separator variant={dividerVariant} data-observation-rule="true" />
 
       {botAvailable && <ObservationConversations collapsed={collapsed} />}
 

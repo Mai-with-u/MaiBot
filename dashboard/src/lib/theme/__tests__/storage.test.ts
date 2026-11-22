@@ -41,15 +41,8 @@ describe('loadThemeConfig', () => {
       styleTokenOverrides: {},
       styleCustomCSS: {},
       styleBackgroundConfig: {},
-      dashboardStyle: 'future-retro',
-      styleConfig: {
-        futureRetro: {
-          paperWarmth: 100,
-          textureStyle: 'fine',
-          textureIntensity: 55,
-          panelDepth: 100,
-        },
-      },
+      dashboardStyle: 'millennium',
+      styleConfig: DEFAULT_DASHBOARD_STYLE_CONFIG,
     })
   })
 
@@ -97,6 +90,7 @@ describe('loadThemeConfig', () => {
     expect(config.styleCustomCSS).toEqual({ modern: '.a { color: red; }' })
     expect(config.styleBackgroundConfig).toEqual({ modern: { card: { type: 'none' } } })
     expect(config.styleConfig).toEqual({
+      millennium: { colorfulIcons: false },
       futureRetro: {
         paperWarmth: 100,
         textureStyle: 'none',

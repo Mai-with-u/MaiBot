@@ -101,6 +101,7 @@ export function ThemeProvider({
     }
 
     root.dataset.dashboardStyle = dashboardStyle
+    root.dataset.colorfulIcons = String(displayedThemeConfig.styleConfig?.millennium?.colorfulIcons === true)
     applyMillenniumFonts(loadMillenniumFont(), loadMillenniumCjkFont())
     root.dataset.retroTextureStyle = futureRetroConfig.textureStyle
     root.style.setProperty('--retro-paper-warmth', `${futureRetroConfig.paperWarmth}%`)

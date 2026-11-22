@@ -1,3 +1,6 @@
+import menuSprite from '@/assets/millennium-menu-icons.svg'
+import millenniumSprite from '@/assets/millennium-pixel-icons.svg'
+
 /**
  * 千禧风格的手绘图标，全部登记在这一份表里。
  *
@@ -8,7 +11,16 @@
  * 没登记的图标保持原样。
  */
 
+export const millenniumNames = [
+  'desktop', 'plugin', 'adapter', 'store', 'bookmark', 'trash',
+  'wrench', 'book', 'search', 'globe', 'calendar', 'message',
+] as const
+
+export const menuIconNames = ['home', 'maibot', 'model', 'prompt', 'learn', 'knowledge', 'contacts', 'drive'] as const
+
 export interface MillenniumIconDef {
+  menuPixel?: typeof menuIconNames[number]
+  pixel?: typeof millenniumNames[number]
   /** SVG 路径，24x24 网格 */
   path: string
   /** 顶替的侧栏/菜单图标名称 */
@@ -27,22 +39,32 @@ export const MILLENNIUM_ICON_STROKE_WIDTH = 2.5
 
 export const MILLENNIUM_ICON_SET: MillenniumIconDef[] = [
   {
+    pixel: 'desktop',
+    lucide: ['monitor'],
     streamline: ['desktop-chat-remix'],
     path: 'M3 4h18v12H3zM9 20h6M12 16v4M7 8h6M7 12h10',
   },
   {
-    streamline: ['page-setting-remix', 'horizontal-slider-2-solid'],
+    menuPixel: 'maibot',
+    streamline: ['page-setting-remix'],
     path: 'M4 7h10M18 7h2M4 17h4M12 17h8M14 4v6M8 14v6',
   },
   {
+    streamline: ['horizontal-slider-2-solid'],
+    path: 'M4 7h10M18 7h2M4 17h4M12 17h8M14 4v6M8 14v6',
+  },
+  {
+    menuPixel: 'model',
     streamline: ['module-remix'],
     path: 'M12 3l8 4v10l-8 4-8-4V7zM4 7l8 4 8-4M12 11v10',
   },
   {
+    menuPixel: 'prompt',
     streamline: ['script-1-remix'],
     path: 'M6 3h9l4 4v14H6zM15 3v4h4M9 12h7M9 16h7',
   },
   {
+    menuPixel: 'learn',
     streamline: ['chat-bubble-square-write-remix'],
     path: 'M4 4h11M4 4v16h16V9M9 15l10-10 2 2-10 10H9z',
   },
@@ -51,26 +73,37 @@ export const MILLENNIUM_ICON_SET: MillenniumIconDef[] = [
     path: 'M9 3L7 21M17 3l-2 18M4 9h17M3 15h17',
   },
   {
+    menuPixel: 'knowledge',
     streamline: ['user-sticker-square-remix'],
     path: 'M4 4h16v6H4zM4 10h16v10H4zM8 7h1M8 14h8M8 17h5',
   },
   {
+    pixel: 'plugin',
+    lucide: ['puzzle'],
     streamline: ['application-add-remix'],
     path: 'M4 4h7v7H4zM4 13h7v7H4zM13 13h7v7h-7M16.5 4v7M13 7.5h7',
   },
   {
+    pixel: 'adapter',
+    lucide: ['router'],
     streamline: ['router-wifi-network-solid'],
     path: 'M3 14h18v6H3zM7 17h1M11 17h1M17 14V8M13 7l4-4 4 4',
   },
   {
+    pixel: 'store',
+    lucide: ['store'],
     streamline: ['store-2-solid'],
     path: 'M3 9l2-5h14l2 5v3H3zM5 12v8h14v-8M10 20v-5h4v5',
   },
   {
+    pixel: 'bookmark',
+    lucide: ['file-bookmark'],
     streamline: ['file-bookmark-solid'],
     path: 'M6 3h9l4 4v14H6zM15 3v4h4M9 11h4v6l-2-2-2 2z',
   },
   {
+    pixel: 'trash',
+    lucide: ['trash', 'trash-2'],
     streamline: ['delete-2-solid'],
     path: 'M4 7h16M9 7V4h6v3M6 7v13h12V7M10 11v6M14 11v6',
   },
@@ -79,12 +112,14 @@ export const MILLENNIUM_ICON_SET: MillenniumIconDef[] = [
     path: 'M9 5l7 7-7 7',
   },
   {
+    pixel: 'wrench',
     lucide: ['settings', 'settings-2', 'cog', 'wrench'],
     filled: true,
     evenOdd: true,
     path: 'M14 2h4v2h-2v2h-2v2h2v2h2V8h2V6h2v6h-2v2h-6v2h-2v2h-2v2H8v2H2v-6h2v-2h2v-2h2v-2h2V4h2V2zM4 18v2h2v-2z',
   },
   {
+    pixel: 'book',
     lucide: ['book-open'],
     strokeWidth: 2,
     path: 'M12 6h-2V4H3v14h7v2h4v-2h7V4h-7v2zM12 6v14M6 8h3M6 12h3M15 8h3M15 12h3',
@@ -95,11 +130,13 @@ export const MILLENNIUM_ICON_SET: MillenniumIconDef[] = [
     path: 'M2 2h8v2H4v16h6v2H2zM8 10h10V8h-2V6h-2V4h2v2h2v2h2v2h2v4h-2v2h-2v2h-2v2h-2v-2h2v-2h2v-2H8z',
   },
   {
+    pixel: 'search',
     streamline: ['search-bar-solid'],
     lucide: ['search'],
     path: 'M4 4h11v11H4zM15 15l6 6',
   },
   {
+    pixel: 'globe',
     lucide: ['globe', 'earth'],
     path: 'M12 3a9 9 0 1 0 0 18 9 9 0 1 0 0-18zM3 12h18M12 3c-5 5-5 13 0 18M12 3c5 5 5 13 0 18',
     strokeWidth: 2,
@@ -154,6 +191,7 @@ export const MILLENNIUM_ICON_SET: MillenniumIconDef[] = [
     path: 'M4 4h16v16H4zM12 8v5h4',
   },
   {
+    pixel: 'calendar',
     lucide: ['calendar', 'calendar-days', 'calendar-clock'],
     path: 'M4 5h16v16H4zM8 3v4M16 3v4M4 10h16M8 14h2M14 14h2M8 18h2M14 18h2',
   },
@@ -166,6 +204,7 @@ export const MILLENNIUM_ICON_SET: MillenniumIconDef[] = [
     path: 'M2 12l5-5h10l5 5-5 5H7zM4 3l16 18',
   },
   {
+    pixel: 'message',
     lucide: ['message-circle', 'message-square'],
     path: 'M4 4h16v12H10l-4 4v-4H4z',
   },
@@ -178,6 +217,7 @@ export const MILLENNIUM_ICON_SET: MillenniumIconDef[] = [
     path: 'M9 4h6v6H9zM5 20v-6h14v6',
   },
   {
+    menuPixel: 'contacts',
     lucide: ['users', 'users-round'],
     path: 'M6 5h5v5H6zM3 20v-6h11v6M16 6h3v4h-3M17 14h4v6',
   },
@@ -198,6 +238,11 @@ export const MILLENNIUM_ICON_SET: MillenniumIconDef[] = [
     streamline: ['edit-pdf-solid'],
     lucide: ['pencil', 'pen', 'pen-line', 'square-pen', 'edit', 'edit-2', 'edit-3', 'pencil-line'],
     path: 'M4 20h4L20 8l-4-4L4 16z',
+  },
+  {
+    menuPixel: 'drive',
+    lucide: ['hard-drive'],
+    path: 'M5 5h14l3 10v4H2v-4L5 5zM2 14h20M5 17h2M16 17h3',
   },
   {
     lucide: ['database'],
@@ -245,6 +290,7 @@ export const MILLENNIUM_ICON_SET: MillenniumIconDef[] = [
     path: 'M3 7h4l2-3h6l2 3h4v13H3zM9 11h6v5H9z',
   },
   {
+    menuPixel: 'home',
     streamline: ['allergens-fish-remix'],
     lucide: ['house', 'home'],
     path: 'M3 11l9-8 9 8M6 10v10h12V10M10 20v-5h4v5',
@@ -279,10 +325,26 @@ export function buildMillenniumLucideCss(): string {
   const toSelector = (names: string[]) => names.map((name) => `.lucide-${name}`).join(',')
   const all = toSelector(replaced.flatMap((icon) => icon.lucide ?? []))
 
+  const colorfulScope = ":root[data-dashboard-style='millennium'][data-colorful-icons='true']"
+  const pixelRules = MILLENNIUM_ICON_SET.flatMap(({ pixel, menuPixel, lucide }) => {
+    if (!pixel && !menuPixel) return []
+    const slots: readonly string[] = menuPixel ? menuIconNames : millenniumNames
+    const icon = (menuPixel ?? pixel)!
+    const background = menuPixel ? `url("${menuSprite}")` : `var(--mil-icon-sprite, url("${millenniumSprite}"))`
+    const selectors = [`${colorfulScope} svg[data-color-icon='${icon}']`]
+    if (lucide?.length) selectors.push(`${colorfulScope} svg.lucide:is(${toSelector(lucide)})`)
+    const position = slots.indexOf(icon) * 100 / (slots.length - 1)
+    return [
+      `${selectors.join(',')}{mask:none;background:transparent ${background} ${position}% center/${slots.length * 100}% 100% no-repeat;image-rendering:pixelated}`,
+      `${selectors.map((selector) => selector + '>*').join(',')}{display:none}`,
+    ]
+  })
+
   return [
     `${scope}:is(${all}){-webkit-mask:var(--mil-icon) center/100% 100% no-repeat;mask:var(--mil-icon) center/100% 100% no-repeat;background-color:currentColor}`,
     `${scope}:is(${all})>*{display:none}`,
     ...replaced.map((icon) => `${scope}:is(${toSelector(icon.lucide ?? [])}){--mil-icon:${toMaskUrl(icon)}}`),
+    ...pixelRules,
   ].join(' ')
 }
 

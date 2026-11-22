@@ -41,6 +41,7 @@ export function StreamlineIcon({
       return (
         <MillenniumIcon
           icon={millenniumIcon}
+          useColorVariant
           className={cn('inline-block shrink-0', className)}
           color={color}
           size={size}

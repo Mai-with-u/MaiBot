@@ -129,6 +129,7 @@ function normalizeStyleConfig(value: unknown): DashboardStyleConfig {
       : DEFAULT_FUTURE_RETRO_STYLE_CONFIG.textureStyle
 
   return {
+    millennium: { colorfulIcons: isRecord(config.millennium) && config.millennium.colorfulIcons === true },
     futureRetro: {
       paperWarmth: clampPercent(
         futureRetro.paperWarmth,

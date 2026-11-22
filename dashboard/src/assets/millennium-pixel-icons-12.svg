@@ -1,0 +1,65 @@
+<svg xmlns="http://www.w3.org/2000/svg" shape-rendering="crispEdges" width="144" height="12" viewBox="0 0 144 12">
+  <g id="显示器" transform="translate(0 0)">
+    <path fill="#464035" d="M1 1h10v1h-10zM1 2h1v1h-1zM10 2h1v1h-1zM1 3h1v1h-1zM10 3h1v1h-1zM1 4h1v1h-1zM10 4h1v1h-1zM1 5h1v1h-1zM10 5h1v1h-1zM1 6h10v1h-10zM5 7h2v1h-2zM3 8h6v1h-6z" />
+    <path fill="#F9F4DE" d="M2 2h8v1h-8zM2 3h1v1h-1zM9 3h1v1h-1zM2 4h1v1h-1zM9 4h1v1h-1zM2 5h8v1h-8z" />
+    <path fill="#86AABC" d="M3 3h6v1h-6zM3 4h6v1h-6z" />
+  </g>
+  <g id="插件" transform="translate(12 0)">
+    <path fill="#464035" d="M4 1h2v1h-2zM3 2h1v1h-1zM6 2h1v1h-1zM1 3h3v1h-3zM6 3h3v1h-3zM1 4h1v1h-1zM8 4h1v1h-1zM1 5h3v1h-3zM8 5h2v1h-2zM3 6h1v1h-1zM10 6h1v1h-1zM1 7h3v1h-3zM8 7h2v1h-2zM1 8h1v1h-1zM8 8h1v1h-1zM1 9h8v1h-8z" />
+    <path fill="#568A70" d="M4 2h2v1h-2zM4 3h2v1h-2zM9 6h1v1h-1z" />
+    <path fill="#F9F4DE" d="M2 4h6v1h-6zM4 5h4v1h-4zM4 6h5v1h-5zM4 7h4v1h-4zM2 8h6v1h-6z" />
+  </g>
+  <g id="适配器" transform="translate(24 0)">
+    <path fill="#464035" d="M4 1h1v1h-1zM7 1h1v1h-1zM4 2h1v1h-1zM7 2h1v1h-1zM2 3h8v1h-8zM2 4h1v1h-1zM9 4h1v1h-1zM2 5h1v1h-1zM9 5h1v1h-1zM3 6h1v1h-1zM8 6h1v1h-1zM4 7h4v1h-4zM5 8h1v1h-1zM5 9h3v1h-3z" />
+    <path fill="#F9F4DE" d="M3 4h1v1h-1zM8 4h1v1h-1zM3 5h6v1h-6zM4 6h4v1h-4z" />
+    <path fill="#86AABC" d="M4 4h4v1h-4z" />
+  </g>
+  <g id="商店" transform="translate(36 0)">
+    <path fill="#464035" d="M4 1h4v1h-4zM3 2h1v1h-1zM8 2h1v1h-1zM2 3h1v1h-1zM9 3h1v1h-1zM1 4h10v1h-10zM1 5h1v1h-1zM10 5h1v1h-1zM2 6h1v1h-1zM9 6h1v1h-1zM2 7h1v1h-1zM9 7h1v1h-1zM3 8h6v1h-6z" />
+    <path fill="#F9F4DE" d="M4 2h1v1h-1zM7 2h1v1h-1zM3 3h1v1h-1zM8 3h1v1h-1zM2 5h8v1h-8zM3 6h1v1h-1zM5 6h1v1h-1zM7 6h1v1h-1zM3 7h5v1h-5z" />
+    <path fill="#E4B859" d="M4 6h1v1h-1zM6 6h1v1h-1zM8 6h1v1h-1z" />
+    <path fill="#ACA799" d="M8 7h1v1h-1z" />
+  </g>
+  <g id="收藏文件" transform="translate(48 0)">
+    <path fill="#464035" d="M2 1h6v1h-6zM2 2h1v1h-1zM4 2h1v1h-1zM6 2h1v1h-1zM8 2h1v1h-1zM2 3h1v1h-1zM4 3h1v1h-1zM6 3h1v1h-1zM8 3h2v1h-2zM2 4h1v1h-1zM4 4h1v1h-1zM6 4h1v1h-1zM8 4h3v1h-3zM2 5h1v1h-1zM4 5h2v1h-2zM10 5h1v1h-1zM2 6h1v1h-1zM10 6h1v1h-1zM2 7h1v1h-1zM4 7h4v1h-4zM10 7h1v1h-1zM2 8h1v1h-1zM10 8h1v1h-1zM2 9h9v1h-9z" />
+    <path fill="#F9F4DE" d="M3 2h1v1h-1zM7 2h1v1h-1zM3 3h1v1h-1zM7 3h1v1h-1zM3 4h1v1h-1zM7 4h1v1h-1zM3 5h1v1h-1zM6 5h4v1h-4zM3 6h7v1h-7zM3 7h1v1h-1zM8 7h2v1h-2zM3 8h7v1h-7z" />
+    <path fill="#E4B859" d="M5 2h1v1h-1zM5 3h1v1h-1zM5 4h1v1h-1z" />
+  </g>
+  <g id="删除" transform="translate(60 0)">
+    <path fill="#464035" d="M4 1h4v1h-4zM4 2h1v1h-1zM7 2h1v1h-1zM2 3h8v1h-8zM2 4h1v1h-1zM9 4h1v1h-1zM3 5h1v1h-1zM8 5h1v1h-1zM3 6h1v1h-1zM8 6h1v1h-1zM3 7h1v1h-1zM8 7h1v1h-1zM3 8h1v1h-1zM8 8h1v1h-1zM3 9h6v1h-6z" />
+    <path fill="#F9F4DE" d="M5 2h2v1h-2zM3 4h6v1h-6zM4 5h4v1h-4zM4 6h1v1h-1zM6 6h2v1h-2zM4 7h1v1h-1zM6 7h2v1h-2zM4 8h4v1h-4z" />
+    <path fill="#ACA799" d="M5 6h1v1h-1zM5 7h1v1h-1z" />
+  </g>
+  <g id="设置" transform="translate(72 0)">
+    <path fill="#464035" d="M7 1h3v1h-3zM6 2h1v1h-1zM8 2h1v1h-1zM5 3h1v1h-1zM8 3h1v1h-1zM10 3h1v1h-1zM5 4h1v1h-1zM8 4h3v1h-3zM5 5h1v1h-1zM10 5h1v1h-1zM4 6h1v1h-1zM7 6h3v1h-3zM3 7h1v1h-1zM6 7h1v1h-1zM2 8h1v1h-1zM5 8h1v1h-1zM1 9h1v1h-1zM4 9h1v1h-1zM2 10h2v1h-2z" />
+    <path fill="#86AABC" d="M7 2h1v1h-1zM6 3h2v1h-2zM6 4h2v1h-2zM6 5h4v1h-4zM5 6h2v1h-2zM4 7h2v1h-2zM3 8h2v1h-2zM3 9h1v1h-1z" />
+    <path fill="#F9F4DE" d="M2 9h1v1h-1z" />
+  </g>
+  <g id="文档" transform="translate(84 0)">
+    <path fill="#464035" d="M1 1h4v1h-4zM7 1h4v1h-4zM1 2h1v1h-1zM5 2h2v1h-2zM10 2h1v1h-1zM1 3h1v1h-1zM5 3h2v1h-2zM10 3h1v1h-1zM1 4h1v1h-1zM5 4h2v1h-2zM10 4h1v1h-1zM1 5h1v1h-1zM5 5h2v1h-2zM10 5h1v1h-1zM1 6h1v1h-1zM5 6h2v1h-2zM10 6h1v1h-1zM1 7h1v1h-1zM5 7h2v1h-2zM10 7h1v1h-1zM1 8h4v1h-4zM7 8h4v1h-4zM5 9h2v1h-2z" />
+    <path fill="#F9F4DE" d="M2 2h3v1h-3zM7 2h3v1h-3zM2 3h3v1h-3zM7 3h3v1h-3zM2 4h1v1h-1zM4 4h1v1h-1zM7 4h1v1h-1zM9 4h1v1h-1zM2 5h3v1h-3zM7 5h3v1h-3zM2 6h3v1h-3zM7 6h3v1h-3z" />
+    <path fill="#ACA799" d="M3 4h1v1h-1zM8 4h1v1h-1z" />
+    <path fill="#86AABC" d="M2 7h3v1h-3zM7 7h3v1h-3z" />
+  </g>
+  <g id="搜索" transform="translate(96 0)">
+    <path fill="#464035" d="M3 1h4v1h-4zM2 2h1v1h-1zM7 2h1v1h-1zM1 3h1v1h-1zM8 3h1v1h-1zM1 4h1v1h-1zM8 4h1v1h-1zM2 5h1v1h-1zM7 5h1v1h-1zM3 6h5v1h-5zM7 7h1v1h-1zM9 7h1v1h-1zM8 8h1v1h-1zM10 8h1v1h-1zM9 9h2v1h-2z" />
+    <path fill="#F9F4DE" d="M3 2h2v1h-2zM2 3h1v1h-1z" />
+    <path fill="#86AABC" d="M5 2h2v1h-2zM3 3h5v1h-5zM2 4h6v1h-6zM3 5h4v1h-4z" />
+    <path fill="#E4B859" d="M8 7h1v1h-1zM9 8h1v1h-1z" />
+  </g>
+  <g id="网络" transform="translate(108 0)">
+    <path fill="#464035" d="M4 1h4v1h-4zM2 2h2v1h-2zM8 2h2v1h-2zM2 3h1v1h-1zM9 3h1v1h-1zM1 4h1v1h-1zM10 4h1v1h-1zM1 5h1v1h-1zM10 5h1v1h-1zM1 6h1v1h-1zM10 6h1v1h-1zM2 7h1v1h-1zM9 7h1v1h-1zM2 8h2v1h-2zM8 8h2v1h-2zM4 9h4v1h-4z" />
+    <path fill="#568A70" d="M4 2h1v1h-1zM3 3h3v1h-3zM2 4h3v1h-3zM5 5h2v1h-2zM5 6h3v1h-3zM6 7h2v1h-2z" />
+    <path fill="#F9F4DE" d="M5 2h3v1h-3zM6 3h3v1h-3zM5 4h5v1h-5zM2 5h3v1h-3zM7 5h3v1h-3zM2 6h3v1h-3zM8 6h2v1h-2zM3 7h3v1h-3zM8 7h1v1h-1zM4 8h4v1h-4z" />
+  </g>
+  <g id="日历" transform="translate(120 0)">
+    <path fill="#464035" d="M3 1h1v1h-1zM8 1h1v1h-1zM1 2h10v1h-10zM1 3h1v1h-1zM10 3h1v1h-1zM1 4h10v1h-10zM1 5h1v1h-1zM10 5h1v1h-1zM1 6h1v1h-1zM4 6h2v1h-2zM7 6h2v1h-2zM10 6h1v1h-1zM1 7h1v1h-1zM10 7h1v1h-1zM1 8h10v1h-10z" />
+    <path fill="#BA7766" d="M2 3h8v1h-8z" />
+    <path fill="#F9F4DE" d="M2 5h8v1h-8zM2 6h2v1h-2zM6 6h1v1h-1zM9 6h1v1h-1zM2 7h8v1h-8z" />
+  </g>
+  <g id="消息" transform="translate(132 0)">
+    <path fill="#464035" d="M2 2h8v1h-8zM1 3h1v1h-1zM10 3h1v1h-1zM1 4h1v1h-1zM10 4h1v1h-1zM1 5h1v1h-1zM10 5h1v1h-1zM1 6h1v1h-1zM10 6h1v1h-1zM2 7h3v1h-3zM7 7h3v1h-3zM4 8h1v1h-1zM6 8h1v1h-1zM4 9h2v1h-2z" />
+    <path fill="#F9F4DE" d="M2 3h8v1h-8zM2 4h2v1h-2zM8 4h2v1h-2zM2 5h8v1h-8zM2 6h8v1h-8zM5 7h2v1h-2zM5 8h1v1h-1z" />
+    <path fill="#86AABC" d="M4 4h4v1h-4z" />
+  </g>
+</svg>

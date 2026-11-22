@@ -169,6 +169,7 @@ export type FutureRetroStyleConfig = {
 }
 
 export type DashboardStyleConfig = {
+  millennium?: { colorfulIcons: boolean }
   futureRetro: FutureRetroStyleConfig
 }
 
@@ -182,6 +183,7 @@ export const DEFAULT_FUTURE_RETRO_STYLE_CONFIG: FutureRetroStyleConfig = {
 }
 
 export const DEFAULT_DASHBOARD_STYLE_CONFIG: DashboardStyleConfig = {
+  millennium: { colorfulIcons: false },
   futureRetro: DEFAULT_FUTURE_RETRO_STYLE_CONFIG,
 }
 
