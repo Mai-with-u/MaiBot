@@ -112,6 +112,25 @@ def test_expression_intent_follows_conversation_analysis(replyer, mai_replier: b
     assert user_text.index("对方提出交换条件。") < user_text.index(expected)
 
 
+@pytest.mark.parametrize("voice_mode", ["voice_only", "with_text"])
+def test_mai_replier_attachment_hints_follow_analysis(replyer, voice_mode: str) -> None:
+    with use_locale("zh-CN"):
+        items = replyer.generator._build_reply_request_messages(
+            chat_history=[], reply_message=None, reply_reason="", mai_replier=True,
+            reply_tool_args={
+                "chat_anlyze": "对方想看猫图。",
+                "attach_pic": [{"msg_id": "42", "index": 0}, {"msg_id": "42", "index": 1}],
+                "attach_emoji": {"emotion": "开心"},
+                "attach_voice": voice_mode,
+                "expression_intent": {"focus": "第二张图"},
+            },
+        )
+    assert (
+        "“对方想看猫图。”\n这条回复会和2张图一起发送\n这条回复会和表情包一起发送\n"
+        "这条回复会以语音形式发送\n\n表达重点是第二张图。"
+    ) in get_item_text(items[1])
+
+
 @pytest.mark.parametrize("locale, expected", [
     ("zh-CN", "表达重点是拒绝交换。"),
     ("en-US", "Focus on 拒绝交换."),

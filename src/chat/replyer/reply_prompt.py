@@ -62,6 +62,12 @@ REPLY_RECENT_IMAGE_COUNT = 3
 REPLY_RECENT_IMAGE_MAX_SIDE = 640
 REPLY_OLDER_IMAGE_MAX_SIDE = 128
 
+MAI_REPLIER_ATTACHMENT_HINTS = {
+    "zh-CN": ("这条回复会和{count}张图一起发送", "这条回复会和表情包一起发送", "这条回复会以语音形式发送"),
+    "en-US": ("Images sent with this reply: {count}", "This reply will be sent with a sticker", "This reply will be sent as audio"),
+    "ja-JP": ("この返信には画像が{count}枚添付されます", "この返信にはスタンプが添付されます", "この返信は音声で送信されます"),
+}
+
 
 def _resize_reply_image(part: ContextImagePart, max_side: int) -> ContextImagePart:
     """等比例缩小本次请求的图片，小图保持原样；缩放时取首帧并保留透明度。"""
@@ -143,10 +149,10 @@ class ChatReplyPromptMixin:
             chat_attention_block="" if mai_replier else self._build_chat_attention_block(session_id),
             attention_drift_block="" if mai_replier else scene.prompts.attention_drift_block(),
         ).strip()
+        args = reply_tool_args or {}
         if not mai_replier:
             # 普通回复保留附件参考和重复回复提醒。
             extra_blocks = [reply_requirements]
-            args = reply_tool_args or {}
             extra_blocks.append(str(args.get("_duplicate_target_reply_reminder", "")).strip())
             attachment_prompt = self._build_reply_attachment_prompt(
                 chat_history=chat_history, reply_message=reply_message, reply_tool_args=reply_tool_args,
@@ -154,7 +160,7 @@ class ChatReplyPromptMixin:
             if attachment_prompt.strip():
                 extra_blocks.append("【额外发送内容参考】\n" + attachment_prompt.strip())
             reply_requirements = "\n\n".join(block for block in extra_blocks if block.strip())
-        requested_style = str((reply_tool_args or {}).get("reply_style") or "").strip()
+        requested_style = str(args.get("reply_style") or "").strip()
         # think_level=0 的轻量回复在未指定风格时使用简短表达。
         if not mai_replier and not requested_style and think_level == 0:
             requested_style = "简短表达"
@@ -165,8 +171,7 @@ class ChatReplyPromptMixin:
             chat_history=chat_history,
             reply_message=reply_message,
             reply_reason=reply_reason,
-            chat_anlyze=str((reply_tool_args or {}).get("chat_anlyze") or ""),
-            expression_intent=(reply_tool_args or {}).get("expression_intent"),
+            reply_tool_args=args,
             expression_habits=expression_habits,
             reply_requirements=reply_requirements,
             mai_replier=mai_replier,
@@ -311,16 +316,28 @@ class ChatReplyPromptMixin:
         chat_history: List[LLMContextMessage],
         reply_message: Optional[SessionMessage],
         reply_reason: str,
-        chat_anlyze: str,
+        reply_tool_args: Dict[str, Any],
         expression_habits: str,
         reply_requirements: str,
         mai_replier: bool = False,
-        expression_intent: Optional[Dict[str, Any]] = None,
     ) -> Dict[str, str]:
         """准备回复模板的占位符内容。"""
 
-        combined_reference = self._build_chat_anlyze_message(reply_reason, chat_anlyze)
-        intent_guidance = self._build_expression_intent_guidance(expression_intent)
+        combined_reference = self._build_chat_anlyze_message(reply_reason, str(reply_tool_args.get("chat_anlyze") or ""))
+        if mai_replier:
+            image_hint, emoji_hint, voice_hint = MAI_REPLIER_ATTACHMENT_HINTS.get(
+                get_locale(), MAI_REPLIER_ATTACHMENT_HINTS["zh-CN"],
+            )
+            lines = [combined_reference] if combined_reference else []
+            image_count = len(self._normalize_attachment_items(reply_tool_args.get("attach_pic")))
+            if image_count:
+                lines.append(image_hint.format(count=image_count))
+            if reply_tool_args.get("attach_emoji"):
+                lines.append(emoji_hint)
+            if reply_tool_args.get("attach_voice") in ("voice_only", "with_text"):
+                lines.append(voice_hint)
+            combined_reference = "\n".join(lines)
+        intent_guidance = self._build_expression_intent_guidance(reply_tool_args.get("expression_intent"))
         combined_reference = "\n\n".join(block for block in (combined_reference, intent_guidance) if block)
         reply_target_block = self._build_reply_target_block(reply_message, chat_history)
         if reply_target_block:
