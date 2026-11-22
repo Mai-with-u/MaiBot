@@ -7,7 +7,7 @@
  */
 export interface GroupNickName {
   group_id: string
-  group_nick_name: string
+  group_cardname: string
 }
 
 /**

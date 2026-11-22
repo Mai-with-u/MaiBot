@@ -673,16 +673,16 @@ function PersonDetailDialog({
                   <div key={index} className="text-sm flex items-center gap-2">
                     <span className="font-mono text-xs text-muted-foreground">{item.group_id}</span>
                     <span>→</span>
-                    <span>{item.group_nick_name}</span>
+                    <span>{item.group_cardname}</span>
                   </div>
                 ))}
               </div>
             </div>
           )}
 
-          {/* 时间信息 */}
+          {/* 认识次数与时间 */}
           <div className="grid grid-cols-3 gap-4">
-            <InfoItem icon={Clock} label="认识时间" value={formatTime(person.know_times)} />
+            <InfoItem icon={MessageSquare} label="认识次数" value={person.know_times === null ? '-' : `${person.know_times} 次`} />
             <InfoItem icon={Clock} label="首次记录" value={formatTime(person.know_since)} />
             <InfoItem icon={Clock} label="最后更新" value={formatTime(person.last_know)} />
           </div>
