@@ -243,7 +243,12 @@ def _convert_context_items(
 
 
 def _convert_tool_options(tool_options: Sequence[ToolOption] | None) -> List[Dict[str, Any]]:
-    """将 MaiBot function tools 转换为 Responses 原生工具定义。"""
+    """将 MaiBot function tools 转换为 Responses 原生工具定义。
+
+    MaiBot 的参数 schema 是在执行时校验的普通 JSON Schema，包含 ``not``、按操作选填等
+    strict 模式不支持的写法；省略 ``strict`` 时 Responses 会尝试把 schema 规范化为
+    strict 模式并在编译期直接拒绝（HTTP 400），因此必须显式声明 ``strict: false``。
+    """
 
     tools: List[Dict[str, Any]] = []
     for tool_option in tool_options or []:
@@ -253,6 +258,7 @@ def _convert_tool_options(tool_options: Sequence[ToolOption] | None) -> List[Dic
                 "name": tool_option.name,
                 "description": tool_option.description,
                 "parameters": tool_option.parameters_schema or {"type": "object", "properties": {}, "required": []},
+                "strict": False,
             }
         )
     return tools
