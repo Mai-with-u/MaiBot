@@ -261,6 +261,11 @@ class MaisakaReasoningEngine:
             deferred_tool_specs.append(tool_spec)
 
         self._runtime.update_deferred_tool_specs(deferred_tool_specs)
+        if global_config.capabilities.load_all_tools:
+            active_specs = [*visible_builtin_tool_specs, *deferred_tool_specs]
+            self._runtime.set_current_action_tool_names([spec.name for spec in active_specs])
+            return [spec.to_llm_definition() for spec in active_specs], ""
+
         selected_history, _ = self._runtime._chat_loop_service.select_llm_context_messages(
             self._runtime._chat_history,
             request_kind="planner",

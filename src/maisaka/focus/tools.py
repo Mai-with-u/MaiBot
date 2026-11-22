@@ -12,6 +12,7 @@ from jsonschema import ValidationError, validate
 import asyncio
 import json
 
+from src.config.config import global_config
 from src.core.tooling import (
     ToolAvailabilityContext,
     ToolExecutionContext,
@@ -183,13 +184,16 @@ class FocusToolRouter:
         return spec.metadata.get("visibility") == "visible"
 
     def definitions(self) -> List[Dict[str, Any]]:
-        definitions = []
-        for route in self.routes.values():
-            if self.is_default_visible(route.spec):
-                definitions.append(route.spec.to_llm_definition())
-        return definitions
+        load_all = global_config.capabilities.load_all_tools
+        return [
+            route.spec.to_llm_definition()
+            for route in self.routes.values()
+            if load_all or self.is_default_visible(route.spec)
+        ]
 
     def deferred_notice(self) -> str:
+        if global_config.capabilities.load_all_tools:
+            return ""
         session_ids = {sid for sid, runtime in self.group.members.items() if self.group.is_member_valid(runtime)}
         lines = [
             f"- {name}: {route.spec.description}"

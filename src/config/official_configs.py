@@ -1042,6 +1042,19 @@ class CapabilitiesConfig(ConfigBase):
     )
     """启用聊天附件登记、文件工具、插件 SDK 和 WebUI 文件入口；默认关闭，不依赖 WebUI 开关。关闭后拒绝新的文件操作，不删除已有原件。"""
 
+    load_all_tools: bool = Field(
+        default=False,
+        json_schema_extra={
+            "label": {
+                "zh_CN": "加载所有工具",
+                "en_US": "Load all tools",
+                "ja_JP": "すべてのツールを読み込む",
+            },
+            "x-widget": "switch",
+        },
+    )
+    """每轮向 Planner 加载所有已注册且当前会话可用的工具。可能略微增加输入消耗、加快反应速度，也可能略微影响工具调用准确性。"""
+
     tool_result_condense: bool = Field(
         default=False,
         json_schema_extra={

@@ -1,4 +1,4 @@
-"""验证工具定义只在历史末尾加载，搜索不改变后续请求的顶层声明。"""
+"""验证按需发现和全量加载工具时的顶层声明与执行范围。"""
 
 from copy import deepcopy
 from dataclasses import replace
@@ -10,6 +10,7 @@ import json
 
 import pytest
 
+from src.config.config import global_config
 from src.config.model_configs import ModelInfo
 from src.core.tooling import ToolExecutionResult, ToolInvocation, ToolSpec
 from src.llm_models.model_client.base_client import ResponseRequest
@@ -64,13 +65,16 @@ def append_search(chat, result):
 
 
 @pytest.mark.asyncio
-async def test_search_keeps_top_level_tools_and_directory_stable_across_rounds():
+@pytest.mark.parametrize("load_all", [False, True])
+async def test_search_keeps_top_level_tools_and_directory_stable_across_rounds(monkeypatch, load_all):
+    monkeypatch.setattr(global_config.capabilities, "load_all_tools", load_all)
     chat = runtime()
     engine = MaisakaReasoningEngine(chat)
     engine._turn_passive_replyer = False
     before, directory = await engine._build_action_tool_definitions()
-    assert [tool["name"] for tool in before] == ["tool_search"]
-    assert "plugin_query" in directory
+    assert [tool["name"] for tool in before] == (["tool_search", "plugin_query"] if load_all else ["tool_search"])
+    assert ("plugin_query" in directory) is not load_all
+    assert chat.is_action_tool_currently_available("plugin_query") is load_all
     result = await handle_tool(BuiltinToolRuntimeContext(engine, chat), ToolInvocation(tool_name="tool_search", arguments={"query": "plugin_query"}))
     append_search(chat, result)
     after, next_directory = await engine._build_action_tool_definitions()
@@ -82,12 +86,12 @@ async def test_search_keeps_top_level_tools_and_directory_stable_across_rounds()
     assert payload["instruction"] == TOOL_LOADED_INSTRUCTION
     assert payload["tools"][0]["parameters"]["required"] == ["query"]
     assert "next_action" not in payload
-    # 删除加载历史后执行状态随上下文清除，但顶层声明和目录仍保持稳定。
+    # 按需加载时，删除加载历史会清除执行状态；全量加载时工具依然可执行。
     chat._chat_history.clear()
     trimmed, trimmed_directory = await engine._build_action_tool_definitions()
     assert trimmed == before
     assert trimmed_directory == directory
-    assert not chat.is_action_tool_currently_available("plugin_query")
+    assert chat.is_action_tool_currently_available("plugin_query") is load_all
 
 
 @pytest.mark.asyncio
@@ -135,7 +139,9 @@ async def test_invalid_search_arguments_fail_explicitly(arguments):
 
 
 @pytest.mark.asyncio
-async def test_focus_search_routes_target_and_keeps_definitions_stable():
+@pytest.mark.parametrize("load_all", [False, True])
+async def test_focus_search_routes_target_and_keeps_definitions_stable(monkeypatch, load_all):
+    monkeypatch.setattr(global_config.capabilities, "load_all_tools", load_all)
     spec = plugin_spec()
     chat = runtime(spec)
     chat.expand_message_id_aliases = lambda arguments: arguments
@@ -152,8 +158,11 @@ async def test_focus_search_routes_target_and_keeps_definitions_stable():
     router = FocusToolRouter(group)
     await router.refresh()
     before = deepcopy(router.definitions())
-    assert [tool["name"] for tool in before] == ["tool_search"]
+    assert [tool["name"] for tool in before] == (["tool_search", "plugin_query"] if load_all else ["tool_search"])
     notice = router.deferred_notice()
+    assert ("plugin_query" in notice) is not load_all
+    if load_all:
+        assert before[1]["parameters_schema"]["properties"]["session_id"]["enum"] == [chat.session_id]
     _, result, _, _ = await router.invoke("tool_search", {"query": "plugin_query", "session_id": chat.session_id}, "search", "")
     schema = json.loads(result.get_history_content())["tools"][0]["parameters"]
     assert schema["properties"]["session_id"]["enum"] == [chat.session_id]
