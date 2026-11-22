@@ -69,6 +69,7 @@ export interface UseDataListResult<TItem, TFilters, TId> {
   resetFilters: () => void
   // 多选（参数变即清空；toggleAll 只针对当前页可见项）
   selectedIds: Set<TId>
+  replaceSelection: (ids: Set<TId>) => void
   toggle: (id: TId) => void
   toggleAll: () => void
   isSelected: (id: TId) => boolean
@@ -246,6 +247,7 @@ export function useDataList<TItem, TFilters, TId = string>(
     selectedIds,
     toggle,
     toggleAll,
+    replaceSelection: setSelectedIds,
     isSelected,
     clearSelection,
     selectedCount: selectedIds.size,

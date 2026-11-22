@@ -15,6 +15,7 @@ export interface Emoji {
   description: string
   query_count: number
   is_registered: boolean
+  is_locked: boolean
   is_banned: boolean
   status: EmojiStatus
   emotion: string | null
@@ -51,6 +52,7 @@ export interface EmojiDetailResponse {
 export interface EmojiUpdateRequest {
   description?: string
   is_registered?: boolean
+  is_locked?: boolean
   is_banned?: boolean
   emotion?: string
 }
@@ -79,11 +81,14 @@ export interface EmojiStats {
   total: number
   recent_count?: number
   collecting_enabled?: boolean
+  max_reg_num?: number
+  do_replace?: boolean
   registered: number
   banned: number
   unregistered: number
   known: number
   unknown: number
+  locked: number
   adopted: number
   discarded: number
   formats: Record<string, number>

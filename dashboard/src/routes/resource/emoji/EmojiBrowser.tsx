@@ -1,6 +1,7 @@
+import { useEffect } from 'react'
 import type { LearningBrowserTabs } from '../learning'
 import type { ComponentProps, ReactNode } from 'react'
-import { ArrowUpDown, MoreHorizontal, Plus } from 'lucide-react'
+import { ArrowUpDown, MoreHorizontal } from 'lucide-react'
 
 import { Button } from '@/components/ui/button'
 import {
@@ -28,32 +29,33 @@ import {
   DropdownMenuTrigger,
 } from '@/components/ui/dropdown-menu'
 import type { EmojiStats, EmojiStatus } from '@/types/emoji'
+import { emojiPageSizes } from './useEmojiPageSize'
 import { EmojiList } from './EmojiList'
 
 export interface EmojiFilters {
-  status: EmojiStatus | 'all'
+  status: EmojiStatus | 'locked' | 'all'
   format: string
   sortBy: string
   sortOrder: 'desc' | 'asc'
 }
 
-interface EmojiBrowserProps extends ComponentProps<typeof EmojiList> {
+interface EmojiBrowserProps extends Omit<ComponentProps<typeof EmojiList>, 'columns' | 'rows'> {
   browserTabs?: LearningBrowserTabs
   stats: EmojiStats | null
   filters: EmojiFilters
   onFilterChange: <K extends keyof EmojiFilters>(key: K, value: EmojiFilters[K]) => void
   search: string
   onSearchChange: (value: string) => void
-  cardSize: 'small' | 'medium' | 'large'
-  onCardSizeChange: (size: 'small' | 'medium' | 'large') => void
+  onSelectPage: () => void
+  onSelectAll: () => void
+  selectionBusy?: boolean
   total: number
   page: number
   pageSize: number
-  pageSizeOptions: number[]
   onPageChange: (page: number) => void
   onPageSizeChange: (size: number) => void
-  onUpload: () => void
   onOpenCache: () => void
+  quickSettings?: ReactNode
   batchActions?: ReactNode
   error?: string
   onRetry: () => void
@@ -67,22 +69,41 @@ export function EmojiBrowser({
   onFilterChange,
   search,
   onSearchChange,
-  cardSize,
-  onCardSizeChange,
+  onSelectPage,
+  onSelectAll,
+  selectionBusy,
   total,
   page,
   pageSize,
-  pageSizeOptions,
   onPageChange,
   onPageSizeChange,
-  onUpload,
   onOpenCache,
+  quickSettings,
   batchActions,
   error,
   onRetry,
   ...listProps
 }: EmojiBrowserProps) {
+  const rows = pageSize === 8 ? 2 : 3
+  const columns = pageSize / rows
+  const pages = Math.ceil(total / pageSize)
+  useEffect(() => {
+    function turnPage(event: KeyboardEvent) {
+      if (event.defaultPrevented || event.isComposing || event.altKey || event.ctrlKey || event.metaKey || event.shiftKey) return
+      if (document.querySelector('[role="dialog"], [role="alertdialog"], [role="menu"], [role="listbox"], [data-radix-popper-content-wrapper]')) return
+      if (event.target instanceof Element && event.target.closest('input, textarea, select, [contenteditable="true"], [role="tablist"], [role="combobox"], [role="slider"]')) return
+      const direction = { ArrowLeft: -1, PageUp: -1, ArrowRight: 1, PageDown: 1 }[event.key]
+      if (!direction || listProps.loading || error) return
+      event.preventDefault()
+      const next = page + direction
+      if (next >= 1 && next <= pages) onPageChange(next)
+    }
+    window.addEventListener('keydown', turnPage)
+    return () => window.removeEventListener('keydown', turnPage)
+  }, [page, pages, listProps.loading, error, onPageChange])
+
   const states = [
+    { value: 'locked' as const, label: '已锁定', count: stats?.locked, color: 'bg-blue-500' },
     { value: 'adopted' as const, label: '已注册', count: stats?.adopted, color: 'bg-green-500' },
     {
       value: 'known' as const,
@@ -107,6 +128,7 @@ export function EmojiBrowser({
   const summary = (
     <>
       <MetricStrip
+        responsiveCompact
         items={[
           { label: '总数量', value: stats?.total.toLocaleString() ?? '—' },
           {
@@ -119,18 +141,13 @@ export function EmojiBrowser({
       />
       {stats?.collecting_enabled != null && (
         <StatusIndicator
+          variant="inline"
           status={stats.collecting_enabled ? 'on' : 'off'}
           title="是否自动将候选表情注册为可发送的表情。关闭后，聊天表情仍会为识别而缓存。"
         >
-          {stats.collecting_enabled ? '自动注册已开启' : '自动注册已关闭'}
-        </StatusIndicator>
-      )}
-      {stats && (
-        <StatusIndicator
-          status={stats.adopted > 0 ? 'on' : 'off'}
-          title="已注册表情可供麦麦选用"
-        >
-          {stats.adopted > 0 ? '有可用表情' : '暂无可用表情'}
+          <span className="whitespace-nowrap text-xs">
+            {stats.collecting_enabled ? '自动注册开' : '自动注册关'}
+          </span>
         </StatusIndicator>
       )}
     </>
@@ -213,6 +230,7 @@ export function EmojiBrowser({
                 </Button>
               </div>
             </section>
+            {quickSettings}
           </SectionPanel>
         }
       >
@@ -223,28 +241,11 @@ export function EmojiBrowser({
             placeholder="搜索标签、描述或哈希..."
             actions={
               <>
-                <div className="flex gap-1" role="group" aria-label="卡片大小">
-                  {(['small', 'medium', 'large'] as const).map((size, index) => (
-                    <Button
-                      key={size}
-                      variant="outline"
-                      size="icon-sm"
-                      aria-pressed={cardSize === size}
-                      aria-label={`${['小', '中', '大'][index]}卡片`}
-                      onClick={() => onCardSizeChange(size)}
-                    >
-                      <span
-                        aria-hidden="true"
-                        className={
-                          ['h-2 w-2 bg-current', 'h-3 w-3 bg-current', 'h-4 w-4 bg-current'][index]
-                        }
-                      />
-                    </Button>
-                  ))}
-                </div>
-                <Button size="sm" onClick={onUpload}>
-                  <Plus />
-                  上传
+                <Button size="sm" variant="outline" disabled={!listProps.emojiList.length || selectionBusy} onClick={onSelectPage}>
+                  {listProps.emojiList.length > 0 && listProps.emojiList.every((item) => listProps.selectedIds.has(item.id)) ? '取消本页选择' : '选择本页'}
+                </Button>
+                <Button size="sm" variant="outline" title="选择当前搜索和筛选下的所有表情" disabled={!total || selectionBusy} onClick={onSelectAll}>
+                  选择全部
                 </Button>
                 <DropdownMenu>
                   <DropdownMenuTrigger asChild>
@@ -261,7 +262,7 @@ export function EmojiBrowser({
           >
             {batchActions}
           </DataToolbar>
-          <div className="min-h-0 flex-1 overflow-y-auto p-3" aria-busy={listProps.loading}>
+          <div className="min-h-0 flex-1 overflow-hidden p-3" aria-busy={listProps.loading}>
             {error ? (
               <div className="space-y-3 py-12 text-center">
                 <p className="text-destructive text-sm">{error}</p>
@@ -270,14 +271,14 @@ export function EmojiBrowser({
                 </Button>
               </div>
             ) : (
-              <EmojiList {...listProps} />
+              <EmojiList {...listProps} columns={columns} rows={rows} />
             )}
           </div>
           <DataPagination
             total={total}
             page={page}
             pageSize={pageSize}
-            pageSizeOptions={pageSizeOptions}
+            pageSizeOptions={emojiPageSizes.desktop}
             onPageChange={onPageChange}
             onPageSizeChange={onPageSizeChange}
             disabled={listProps.loading || !!error}

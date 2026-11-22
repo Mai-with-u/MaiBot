@@ -1,9 +1,9 @@
 import type { LearningBrowserTabs } from '../learning'
-import { useEffect, useState } from 'react'
+import { useEffect, useRef, useState } from 'react'
 import { createPortal } from 'react-dom'
 
 import { skipToken, useMutation, useQuery } from '@tanstack/react-query'
-import { ArrowUpDown, Plus, Search, SlidersHorizontal, Trash2 } from 'lucide-react'
+import { ArrowUpDown, Ban, Lock, Search, SlidersHorizontal, Trash2 } from 'lucide-react'
 
 import { Button } from '@/components/ui/button'
 import { Input } from '@/components/ui/input'
@@ -46,8 +46,10 @@ import {
   deleteEmoji,
   getEmojiDetail,
   getEmojiList,
+  getEmojiSelectionIds,
   getEmojiStats,
   registerEmoji,
+  updateEmoji,
 } from '@/lib/emoji-api'
 import { cn } from '@/lib/utils'
 import type { Emoji, EmojiStats } from '@/types/emoji'
@@ -55,23 +57,19 @@ import type { Emoji, EmojiStats } from '@/types/emoji'
 import { EmojiCacheMaintenancePanel } from './EmojiCacheMaintenancePanel'
 import { EmojiDetailDialog, EmojiEditDialog, EmojiUploadDialog } from './EmojiDialogs'
 import { EmojiBrowser, type EmojiFilters } from './EmojiBrowser'
+import { EmojiQuickSettings } from './EmojiQuickSettings'
+import { emojiPageSizes, useEmojiPageSize } from './useEmojiPageSize'
 import { MobileEmojiGrid } from './MobileEmojiGrid'
 
 // 页面可见时每 10 秒同步后台收录和使用状态，离开页面后停止轮询。
 const EMOJI_REFRESH_INTERVAL = 10_000
+const batchStatusLabels = { register: '注册', lock: '锁定', ban: '禁用' } as const
 
-// 与表情包列表接口的每页上限一致；补齐整行时不能把 100 向上凑成 102 或 104。
-const EMOJI_MAX_PAGE_SIZE = 100
-
-function alignEmojiPageSize(preferredSize: number, columns: number): number {
-  const rows = Math.min(
-    Math.ceil(preferredSize / columns),
-    Math.floor(EMOJI_MAX_PAGE_SIZE / columns)
-  )
-  return rows * columns
-}
-
-export function EmojiManagementPage({ browserTabs }: { browserTabs?: LearningBrowserTabs }) {
+export function EmojiManagementPage({ browserTabs, uploadOpen, onUploadOpenChange }: {
+  browserTabs?: LearningBrowserTabs
+  uploadOpen: boolean
+  onUploadOpenChange: (open: boolean) => void
+}) {
   const [selectedEmoji, setSelectedEmoji] = useState<Emoji | null>(null)
   const [detailDialogOpen, setDetailDialogOpen] = useState(false)
   const detailEmojiId = selectedEmoji?.id
@@ -83,24 +81,11 @@ export function EmojiManagementPage({ browserTabs }: { browserTabs?: LearningBro
   const [deleteDialogOpen, setDeleteDialogOpen] = useState(false)
   const [batchDeleteDialogOpen, setBatchDeleteDialogOpen] = useState(false)
   const [cacheOpen, setCacheOpen] = useState(false)
-  const [cardSize, setCardSize] = useState<'small' | 'medium' | 'large'>('medium')
-  const [uploadDialogOpen, setUploadDialogOpen] = useState(false)
   // 手机端：长按进入多选，筛选收进底部弹层
   const isMobile = useMediaQuery('(max-width: 1023.98px)')
-  const isWideGrid = useMediaQuery('(min-width: 1280px)')
-  const gridColumns = isMobile
-    ? 3
-    : {
-        small: isWideGrid ? 8 : 6,
-        medium: isWideGrid ? 6 : 4,
-        large: isWideGrid ? 4 : 3,
-      }[cardSize]
-  const [preferredPageSize, setPreferredPageSize] = useState(24)
-  const alignedPageSize = alignEmojiPageSize(preferredPageSize, gridColumns)
-  const pageSizeOptions = [24, 48, 72, 96].map((value) => ({
-    value,
-    count: alignEmojiPageSize(value, gridColumns),
-  }))
+  const [mobilePageSize, setMobilePageSize] = useEmojiPageSize('mobile')
+  const [desktopPageSize, setDesktopPageSize] = useEmojiPageSize('desktop')
+  const preferredPageSize = isMobile ? mobilePageSize : desktopPageSize
   const [mobileSelecting, setMobileSelecting] = useState(false)
   const [mobileFilterOpen, setMobileFilterOpen] = useState(false)
   const selecting = isMobile && mobileSelecting
@@ -111,7 +96,7 @@ export function EmojiManagementPage({ browserTabs }: { browserTabs?: LearningBro
   // 翻页保留选中项，改参重置页码但保留选择，搜索内建 300ms 防抖。
   const list = useDataList<Emoji, EmojiFilters, number>({
     domain: 'emoji',
-    initialPageSize: alignedPageSize,
+    initialPageSize: preferredPageSize,
     preserveSelectionOnParamsChange: true,
     getId: (emoji) => emoji.id,
     initialFilters: {
@@ -143,8 +128,8 @@ export function EmojiManagementPage({ browserTabs }: { browserTabs?: LearningBro
   // 分页数量必须与实际网格列数一致，避免每个非末页都留出缺角。
   const { setPageSize } = list
   useEffect(() => {
-    if (pageSize !== alignedPageSize) setPageSize(alignedPageSize)
-  }, [alignedPageSize, pageSize, setPageSize])
+    if (pageSize !== preferredPageSize) setPageSize(preferredPageSize)
+  }, [preferredPageSize, pageSize, setPageSize])
   // 删除末页最后一项后，真实查询也回到有效页，不能只修正分页文案。
   useEffect(() => {
     if (!list.isPending && !list.isFetching && !list.isError && list.page > list.totalPages) {
@@ -162,6 +147,32 @@ export function EmojiManagementPage({ browserTabs }: { browserTabs?: LearningBro
   const refreshData = () => {
     list.invalidate()
     void statsQuery.refetch()
+  }
+
+  const selectionRequest = useRef<AbortController | null>(null)
+  const [selectingResults, setSelectingResults] = useState(false)
+  useEffect(() => {
+    setSelectingResults(false)
+    return () => selectionRequest.current?.abort()
+  }, [list.searchInput, list.filters, isMobile])
+
+  async function selectResults() {
+    const request = new AbortController()
+    selectionRequest.current = request
+    setSelectingResults(true)
+    try {
+      const { status, format } = list.filters
+      const ids = await getEmojiSelectionIds({
+        search: list.searchInput.trim() || undefined,
+        status: status === 'all' ? undefined : status,
+        format: format === 'all' ? undefined : format,
+      }, request.signal)
+      if (!request.signal.aborted) list.replaceSelection(new Set(ids))
+    } catch (error) {
+      if (!request.signal.aborted) toast({ title: '选择全部失败', description: String(error), variant: 'destructive' })
+    } finally {
+      if (!request.signal.aborted) setSelectingResults(false)
+    }
   }
 
   // 多选时页头标题换成已选数量，底部换成批量操作栏
@@ -251,6 +262,15 @@ export function EmojiManagementPage({ browserTabs }: { browserTabs?: LearningBro
     banMutation.mutate(emoji)
   }
 
+  const lockMutation = useMutation({
+    mutationFn: (emoji: Emoji) => updateEmoji(emoji.id, { is_locked: !emoji.is_locked }),
+    meta: { errorTitle: '更新表情包锁定状态失败' },
+    onSuccess: ({ data }) => {
+      if (data) setSelectedEmoji((current) => current?.id === data.id ? data : current)
+      refreshData()
+    },
+  })
+
   // 批量删除（失败由全局 mutation 错误 toast 呈现）
   const batchDeleteMutation = useMutation({
     mutationFn: (emojiIds: number[]) => batchDeleteEmojis(emojiIds),
@@ -267,19 +287,40 @@ export function EmojiManagementPage({ browserTabs }: { browserTabs?: LearningBro
     },
   })
 
-  // 手机多选：批量注册 / 封禁，逐个调用单项接口
+  // 限制同时发出的请求数，避免跨页全选时一次发出数千次请求。
   const batchStatusMutation = useMutation({
-    mutationFn: async ({ ids, action }: { ids: number[]; action: 'register' | 'ban' }) => {
-      await Promise.all(ids.map((id) => (action === 'register' ? registerEmoji(id) : banEmoji(id))))
-      return action
+    mutationFn: async ({ ids, action }: { ids: number[]; action: keyof typeof batchStatusLabels }) => {
+      const apply = { register: registerEmoji, ban: banEmoji, lock: (id: number) => updateEmoji(id, { is_locked: true }) }[action]
+      const failedIds = new Set<number>()
+      let firstError = ''
+      for (let start = 0; start < ids.length; start += 4) {
+        const group = ids.slice(start, start + 4)
+        const results = await Promise.allSettled(group.map(id => apply(id)))
+        results.forEach((result, index) => {
+          if (result.status === 'rejected') {
+            failedIds.add(group[index])
+            firstError ||= String(result.reason)
+          }
+        })
+      }
+      return { failedIds, firstError }
     },
     meta: { errorTitle: '批量操作失败' },
-    onSuccess: (action, { ids }) => {
-      toast({
-        title: '成功',
-        description: `已${action === 'register' ? '注册' : '封禁'} ${ids.length} 个表情包`,
-      })
-      exitMobileSelecting()
+    onSuccess: ({ failedIds, firstError }, { ids, action }) => {
+      if (failedIds.size) {
+        list.replaceSelection(failedIds)
+        toast({
+          title: `已${batchStatusLabels[action]} ${ids.length - failedIds.size} 个，失败 ${failedIds.size} 个`,
+          description: firstError,
+          variant: 'destructive',
+        })
+      } else {
+        toast({
+          title: '成功',
+          description: `已${batchStatusLabels[action]} ${ids.length} 个表情包`,
+        })
+        exitMobileSelecting()
+      }
       refreshData()
     },
   })
@@ -289,12 +330,18 @@ export function EmojiManagementPage({ browserTabs }: { browserTabs?: LearningBro
     batchDeleteMutation.mutate(Array.from(list.selectedIds))
   }
 
+  const quickSettings = stats?.max_reg_num != null && stats.collecting_enabled != null && stats.do_replace != null && (
+    <EmojiQuickSettings maxCount={stats.max_reg_num} autoRegister={stats.collecting_enabled}
+      replaceWhenFull={stats.do_replace} onSaved={() => statsQuery.refetch()} />
+  )
+
   // 获取格式选项
   const formatOptions = stats ? Object.keys(stats.formats) : []
   const statusOptions = stats
     ? [
         { value: 'known' as const, label: '认识', count: stats.known },
         { value: 'unknown' as const, label: '不认识', count: stats.unknown },
+        { value: 'locked' as const, label: '已锁定', count: stats.locked },
         { value: 'adopted' as const, label: '据为己用', count: stats.adopted },
         { value: 'discarded' as const, label: '丢弃', count: stats.discarded },
       ]
@@ -304,25 +351,22 @@ export function EmojiManagementPage({ browserTabs }: { browserTabs?: LearningBro
     <div className="flex h-full min-h-0 min-w-0 flex-col p-3 pb-4 max-lg:h-auto sm:p-4">
       {!isMobile && (
         <EmojiBrowser
+          quickSettings={quickSettings}
           browserTabs={browserTabs}
           stats={stats}
           filters={list.filters}
           onFilterChange={list.setFilter}
           search={list.searchInput}
           onSearchChange={list.setSearchInput}
-          cardSize={cardSize}
-          onCardSizeChange={setCardSize}
-          columns={gridColumns}
+          onSelectPage={list.toggleAll}
+          onSelectAll={selectResults}
+          selectionBusy={selectingResults || list.isFetching}
           emojiList={emojiList}
           loading={loading}
           total={total}
           page={page}
           pageSize={pageSize}
-          pageSizeOptions={pageSizeOptions.map((option) => option.count)}
-          onPageSizeChange={(size) => {
-            const option = pageSizeOptions.find((item) => item.count === size)
-            if (option) setPreferredPageSize(option.value)
-          }}
+          onPageSizeChange={setDesktopPageSize}
           onPageChange={list.goToPage}
           selectedIds={list.selectedIds}
           onToggleSelect={list.toggle}
@@ -330,8 +374,8 @@ export function EmojiManagementPage({ browserTabs }: { browserTabs?: LearningBro
           onViewDetail={handleViewDetail}
           onRegister={handleRegister}
           onBan={handleBan}
+          onToggleLock={(emoji) => lockMutation.mutate(emoji)}
           onDelete={handleDelete}
-          onUpload={() => setUploadDialogOpen(true)}
           onOpenCache={() => setCacheOpen(true)}
           error={list.isError ? list.error?.message : undefined}
           onRetry={() => list.refetch()}
@@ -341,15 +385,21 @@ export function EmojiManagementPage({ browserTabs }: { browserTabs?: LearningBro
                 <span className="text-muted-foreground mr-auto text-xs">
                   已选择 {list.selectedCount} 个表情包
                 </span>
-                <Button variant="outline" size="xs" onClick={list.toggleAll}>
-                  全选本页
-                </Button>
-                <Button variant="outline" size="xs" onClick={list.clearSelection}>
+                <Button variant="outline" size="xs" disabled={batchStatusMutation.isPending} onClick={list.clearSelection}>
                   取消选择
                 </Button>
+                {(['lock', 'ban'] as const).map(action => (
+                  <Button key={action} variant="outline" size="xs" disabled={batchStatusMutation.isPending}
+                    onClick={() => batchStatusMutation.mutate({ ids: Array.from(list.selectedIds), action })}>
+                    {action === 'lock' ? <Lock /> : <Ban />}
+                    {batchStatusMutation.isPending && batchStatusMutation.variables.action === action
+                      ? `${batchStatusLabels[action]}中…` : `批量${batchStatusLabels[action]}`}
+                  </Button>
+                ))}
                 <Button
                   variant="destructive"
                   size="xs"
+                  disabled={batchStatusMutation.isPending}
                   onClick={() => setBatchDeleteDialogOpen(true)}
                 >
                   <Trash2 />
@@ -464,6 +514,9 @@ export function EmojiManagementPage({ browserTabs }: { browserTabs?: LearningBro
               >
                 编辑
               </Button>
+              <Button variant="outline" onClick={() => lockMutation.mutate(selectedEmoji)} disabled={lockMutation.isPending}>
+                {selectedEmoji.is_locked ? '解除锁定' : '锁定'}
+              </Button>
               {selectedEmoji.status !== 'adopted' ? (
                 <Button
                   variant="outline"
@@ -487,7 +540,6 @@ export function EmojiManagementPage({ browserTabs }: { browserTabs?: LearningBro
               )}
               <Button
                 variant="destructive"
-                className="col-span-2"
                 onClick={() => {
                   setDetailDialogOpen(false)
                   handleDelete(selectedEmoji)
@@ -510,12 +562,12 @@ export function EmojiManagementPage({ browserTabs }: { browserTabs?: LearningBro
 
       {/* 上传对话框 */}
       <EmojiUploadDialog
-        open={uploadDialogOpen}
-        onOpenChange={setUploadDialogOpen}
+        open={uploadOpen}
+        onOpenChange={onUploadOpenChange}
         onSuccess={refreshData}
       />
 
-      {/* 手机页头右上角：多选时为全选 / 完成，平时为筛选与新增 */}
+      {/* 手机页头右上角：多选时为全选 / 完成，平时为筛选与排序 */}
       <MobileHeaderActions>
         {selecting ? (
           <>
@@ -537,7 +589,6 @@ export function EmojiManagementPage({ browserTabs }: { browserTabs?: LearningBro
             </button>
           </>
         ) : (
-          <>
             <button
               type="button"
               aria-label="筛选与排序"
@@ -550,19 +601,6 @@ export function EmojiManagementPage({ browserTabs }: { browserTabs?: LearningBro
             >
               <SlidersHorizontal className="h-5 w-5" strokeWidth={1.7} />
             </button>
-            <button
-              type="button"
-              aria-label="新增表情包"
-              onClick={() => setUploadDialogOpen(true)}
-              data-mobile-header-button="true"
-              className={cn(
-                'flex h-11 w-11 items-center justify-center rounded-full',
-                MOBILE_GLASS_CLASS
-              )}
-            >
-              <Plus className="h-[22px] w-[22px]" strokeWidth={1.7} />
-            </button>
-          </>
         )}
       </MobileHeaderActions>
 
@@ -574,15 +612,16 @@ export function EmojiManagementPage({ browserTabs }: { browserTabs?: LearningBro
             aria-label="批量操作"
             data-mobile-batch-toolbar="true"
             className={cn(
-              'fixed inset-x-4 bottom-[calc(env(safe-area-inset-bottom)+14px)] z-40 grid h-[62px] grid-cols-3 items-center rounded-full px-2',
+              'fixed inset-x-4 bottom-[calc(env(safe-area-inset-bottom)+14px)] z-40 grid h-[62px] grid-cols-4 items-center rounded-full px-2',
               MOBILE_GLASS_CLASS
             )}
           >
-            {[
+            {([
               { key: 'register', label: '注册' },
+              { key: 'lock', label: '锁定' },
               { key: 'ban', label: '禁用' },
               { key: 'delete', label: '删除' },
-            ].map((action) => (
+            ] as const).map((action) => (
               <button
                 key={action.key}
                 type="button"
@@ -594,7 +633,7 @@ export function EmojiManagementPage({ browserTabs }: { browserTabs?: LearningBro
                   else
                     batchStatusMutation.mutate({
                       ids,
-                      action: action.key as 'register' | 'ban',
+                      action: action.key,
                     })
                 }}
                 className={cn(
@@ -615,10 +654,10 @@ export function EmojiManagementPage({ browserTabs }: { browserTabs?: LearningBro
           <DialogHeader>
             <DialogTitle>筛选与排序</DialogTitle>
             <DialogDescription className="sr-only">
-              调整表情包的排序、格式与每页数量
+              调整表情包的排序、格式、每页数量和注册设置
             </DialogDescription>
           </DialogHeader>
-          <div className="space-y-4">
+          <div className="min-h-0 space-y-4 overflow-y-auto">
             <div className="space-y-2">
               <Label>排序方式</Label>
               <div className="flex gap-2">
@@ -672,20 +711,21 @@ export function EmojiManagementPage({ browserTabs }: { browserTabs?: LearningBro
               <Label>每页显示</Label>
               <Select
                 value={preferredPageSize.toString()}
-                onValueChange={(value) => setPreferredPageSize(parseInt(value))}
+                onValueChange={(value) => setMobilePageSize(Number(value))}
               >
                 <SelectTrigger aria-label="每页显示">
                   <SelectValue />
                 </SelectTrigger>
                 <SelectContent>
-                  {pageSizeOptions.map((option) => (
-                    <SelectItem key={option.value} value={option.value.toString()}>
-                      {option.count}
+                  {emojiPageSizes.mobile.map((count) => (
+                    <SelectItem key={count} value={String(count)}>
+                      {count}
                     </SelectItem>
                   ))}
                 </SelectContent>
               </Select>
             </div>
+            {quickSettings}
           </div>
           <DialogFooter>
             <Button onClick={() => setMobileFilterOpen(false)}>完成</Button>

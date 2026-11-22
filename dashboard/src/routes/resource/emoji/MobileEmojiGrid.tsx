@@ -113,6 +113,7 @@ export function MobileEmojiGrid({
               className="bg-muted relative aspect-square overflow-hidden select-none [-webkit-touch-callout:none]"
             >
               <EmojiThumbnail src={getEmojiThumbnailUrl(emoji.id)} alt="" />
+              {emoji.is_locked && <span className="absolute top-1 left-1 bg-background/90 px-1 text-[10px]">已锁定</span>}
               {emoji.status !== 'adopted' && (
                 <span className="absolute bottom-1.5 left-1.5 rounded-[5px] bg-black/55 px-1.5 py-px text-[11px] text-white">
                   {emoji.status === 'discarded' ? '已禁用' : '待审核'}

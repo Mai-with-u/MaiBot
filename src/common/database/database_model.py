@@ -161,6 +161,8 @@ class Images(SQLModel, table=True):
     is_registered: bool = Field(default=False)  # 是否已经注册
     is_banned: bool = Field(default=False)  # 被手动禁用
 
+    is_locked: bool = Field(default=False, sa_column_kwargs={"server_default": "0"})  # 禁止自动替换
+
     no_file_flag: bool = Field(default=False)  # 文件不存在标记，如果为True表示文件已经不存在，仅保留描述字段
 
     record_time: datetime = Field(

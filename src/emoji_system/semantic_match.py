@@ -6,7 +6,7 @@ from hashlib import sha256
 from math import exp, isfinite
 from typing import Dict, List, Optional, Tuple
 
-from pydantic import BaseModel, Field, field_validator
+from pydantic import BaseModel, Field, field_validator, model_validator
 
 import asyncio
 import json
@@ -61,8 +61,8 @@ def _select_match(
 
 
 class EmojiTags(BaseModel):
-    emotion_tags: List[str] = Field(max_length=5)
-    content_tags: List[str] = Field(min_length=1, max_length=5)
+    emotion_tags: List[str]
+    content_tags: List[str]
 
     @field_validator("emotion_tags", "content_tags", mode="before")
     @classmethod
@@ -72,10 +72,29 @@ class EmojiTags(BaseModel):
         return value
 
     def embedding_texts(self) -> Dict[str, str]:
-        texts = {"content": "、".join(self.content_tags)}
+        texts = {"content": "、".join(self.content_tags)} if self.content_tags else {}
         if self.emotion_tags:
             texts["emotion"] = "、".join(self.emotion_tags)
         return texts
+
+
+class RecognizedEmojiTags(EmojiTags):
+    emotion_tags: List[str] = Field(max_length=5)
+    content_tags: List[str] = Field(max_length=5)
+
+    @field_validator("emotion_tags", "content_tags", mode="before")
+    @classmethod
+    def normalize_tags(cls, value: object) -> object:
+        tags = super().normalize_tags(value)
+        if isinstance(tags, list):
+            return [tag for tag in tags if not isinstance(tag, str) or len(tag) <= 20]
+        return tags
+
+    @model_validator(mode="after")
+    def require_tags(self) -> "RecognizedEmojiTags":
+        if not (self.emotion_tags or self.content_tags):
+            raise ValueError("识别结果至少需要一个有效标签")
+        return self
 
 
 def _config_key() -> Optional[str]:
@@ -170,9 +189,26 @@ def get_emoji_tags(emoji_hash: str) -> Optional[EmojiTags]:
     return _read_tags(emoji_hash).get(emoji_hash)
 
 
-def _save_tags(emoji_hash: str, tags: EmojiTags) -> None:
+def find_emoji_hashes_by_tag(keyword: str) -> List[str]:
+    """按已入库的情绪或内容标签子串查找表情。"""
+    if not _index_path.exists():
+        return []
+    with closing(_open_index()) as connection:
+        rows = connection.execute(
+            """SELECT image_hash FROM emoji_tags
+               WHERE EXISTS (
+                   SELECT 1 FROM json_tree(emoji_tags.tags) AS tag
+                   WHERE tag.type = 'text' AND instr(lower(tag.value), lower(?)) > 0
+               )""",
+            (keyword,),
+        )
+        return [image_hash for (image_hash,) in rows]
+
+
+def save_emoji_tags(emoji_hash: str, tags: EmojiTags, *, overwrite: bool = True) -> None:
     with closing(_open_index()) as connection, connection:
-        connection.execute("INSERT OR REPLACE INTO emoji_tags VALUES (?, ?)", (emoji_hash, tags.model_dump_json()))
+        action = "REPLACE" if overwrite else "IGNORE"
+        connection.execute(f"INSERT OR {action} INTO emoji_tags VALUES (?, ?)", (emoji_hash, tags.model_dump_json()))
 
 
 async def _index_emoji(emoji: MaiEmoji, config_key: Optional[str]) -> None:
@@ -182,8 +218,8 @@ async def _index_emoji(emoji: MaiEmoji, config_key: Optional[str]) -> None:
             tags = await asyncio.to_thread(get_emoji_tags, emoji.file_hash)
             if tags is None:
                 raw = await emoji_manager.analyze_emoji_image(emoji, "emoji_grouped_tags")
-                tags = validate_llm_json(raw, EmojiTags)
-                await asyncio.to_thread(_save_tags, emoji.file_hash, tags)
+                tags = validate_llm_json(raw, RecognizedEmojiTags)
+                await asyncio.to_thread(save_emoji_tags, emoji.file_hash, tags, overwrite=False)
     if config_key and tags is not None:
         for axis, label in tags.embedding_texts().items():
             await _index_description(label, config_key, axis)
@@ -197,18 +233,27 @@ def _axis_key(config_key: str, axis: str) -> str:
 async def _index_description(label: str, config_key: str, axis: str) -> None:
     # 注册和定时补算可能同时命中同一个描述。串行去重也避免集中占用 Embedding 服务。
     async with _index_lock:
-        try:
-            axis_key = _axis_key(config_key, axis)
-            if _config_key() != config_key or label in await asyncio.to_thread(_read_index, axis_key):
-                return
-            client = EmbeddingServiceClient(request_type="emoji.index")
-            result = await client.embed_text(label)
-            if not result.embedding or not all(map(isfinite, result.embedding)) or not any(result.embedding):
-                raise ValueError("表情描述的嵌入向量无效。")
-            if _config_key() == config_key:
-                await asyncio.to_thread(_save_vector, axis_key, label, _model_key(result), result.embedding)
-        except Exception:
-            logger.warning("表情包描述索引计算失败，下次维护时重试", exc_info=True)
+        axis_key = _axis_key(config_key, axis)
+        if _config_key() != config_key:
+            raise ValueError("计算期间 Embedding 模型配置已更改，请重试")
+        if label in await asyncio.to_thread(_read_index, axis_key):
+            return
+        client = EmbeddingServiceClient(request_type="emoji.index")
+        result = await client.embed_text(label)
+        if not result.embedding or not all(map(isfinite, result.embedding)) or not any(result.embedding):
+            raise ValueError("表情描述的嵌入向量无效。")
+        if _config_key() != config_key:
+            raise ValueError("计算期间 Embedding 模型配置已更改，请重试")
+        await asyncio.to_thread(_save_vector, axis_key, label, _model_key(result), result.embedding)
+
+
+async def index_upload_tags(tags: EmojiTags) -> None:
+    """在注册前为用户确认的标签完成索引，复用已有向量。"""
+    config_key = _config_key()
+    if not config_key:
+        raise ValueError("请先配置用于表情标签的 Embedding 模型")
+    for axis, label in tags.embedding_texts().items():
+        await _index_description(label, config_key, axis)
 
 
 def schedule_emoji_index(emoji_hash: str) -> None:

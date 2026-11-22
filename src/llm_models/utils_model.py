@@ -341,6 +341,7 @@ class LLMOrchestrator:
         max_tokens: Optional[int] = None,
         interrupt_flag: asyncio.Event | None = None,
         session_id: str = "",
+        model_name: Optional[str] = None,
     ) -> LLMResponseResult:
         """为图像生成响应。
 
@@ -369,6 +370,7 @@ class LLMOrchestrator:
         execution_result = await self._execute_request(
             request_type=RequestType.RESPONSE,
             context_factory=context_factory,
+            model_name=model_name,
             temperature=temperature,
             max_tokens=max_tokens,
             interrupt_flag=interrupt_flag,

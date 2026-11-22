@@ -28,6 +28,7 @@ class EmojiResponse(BaseModel):
     query_count: int
     usage_count: int
     is_registered: bool
+    is_locked: bool
     is_banned: bool
     status: EmojiStatus
     emotion: Optional[str]
@@ -60,6 +61,7 @@ class EmojiUpdateRequest(BaseModel):
 
     description: Optional[str] = None
     is_registered: Optional[bool] = None
+    is_locked: bool = False
     is_banned: Optional[bool] = None
     emotion: Optional[str] = None
 
@@ -165,6 +167,7 @@ def emoji_to_response(image: Images) -> EmojiResponse:
         usage_count=image.query_count,
         is_registered=image.is_registered,
         is_banned=image.is_banned,
+        is_locked=image.is_locked,
         status=get_emoji_status(image),
         emotion=emotion,
         record_time=image.record_time.timestamp() if image.record_time else 0.0,

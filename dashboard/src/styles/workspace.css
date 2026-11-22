@@ -121,12 +121,17 @@
   flex-wrap: nowrap;
 }
 [data-dashboard-folder-tabs] > [data-learning-tabs] {
-  flex: 1 1 auto;
+  flex: 0 1 auto;
+  max-width: 100%;
+  justify-content: flex-start;
 }
 [data-dashboard-folder-tabs]:has([data-learning-tabs]) > [data-dashboard-folder-tabs-trailing] {
-  flex-shrink: 0;
+  max-width: 100%;
+  flex: none;
+  flex-wrap: nowrap;
+  justify-content: flex-end;
 }
-@container (max-width: 960px) {
+@container (max-width: 1080px) {
   [data-learning-create] {
     width: var(--control-height-sm);
     padding-inline: 0;
@@ -135,9 +140,7 @@
     display: none;
   }
   :root [data-dashboard-folder-tabs][data-size='large'] [data-learning-tabs] [data-dashboard-tabs-trigger='true'] {
-    flex: 1 1 0;
-    min-width: 0;
-    max-width: 10.5rem;
+    min-width: max-content;
     column-gap: clamp(4px, 1cqi, 10px);
     padding-inline: clamp(4px, 1.5cqi, 16px) !important;
   }

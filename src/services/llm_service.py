@@ -420,6 +420,7 @@ class LLMServiceClient:
             prompt=prompt,
             image_base64=image_base64,
             image_format=image_format,
+            model_name=active_options.model_name,
             temperature=active_options.temperature,
             max_tokens=active_options.max_tokens,
             interrupt_flag=active_options.interrupt_flag,

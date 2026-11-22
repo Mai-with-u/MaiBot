@@ -2,11 +2,12 @@
 
 from datetime import datetime, timedelta
 from pathlib import Path
-from typing import Any, Dict, List, Optional
+from typing import TYPE_CHECKING, Annotated, Any, Dict, List, Optional, Tuple
 
-from fastapi import APIRouter, HTTPException, Query
+from fastapi import APIRouter, Form, HTTPException, Query
 from fastapi.responses import FileResponse, JSONResponse
 from PIL import Image
+from pydantic import ValidationError
 from sqlalchemy import event, func
 from sqlmodel import Session, col, select
 
@@ -16,10 +17,11 @@ import io
 import os
 import re
 
+from src.common.data_models.image_data_model import MaiEmoji
 from src.common.database.database import get_db_session
 from src.common.database.database_model import Images, ImageType
 from src.common.utils.image_path import StoredImagePathError, resolve_stored_image_path, serialize_stored_image_path
-from src.config.config import global_config
+from src.config.config import config_manager, global_config
 
 from .schemas import (
     BatchDeleteRequest,
@@ -53,6 +55,10 @@ from .support import (
     get_thumbnail_executor,
     logger,
 )
+
+
+if TYPE_CHECKING:
+    from src.emoji_system.semantic_match import EmojiTags
 
 
 def _index_emoji_after_commit(session: Session, emoji: Images) -> None:
@@ -98,6 +104,8 @@ def _apply_emoji_status_filter(statement: Any, status: Optional[str]) -> Any:
         return statement
 
     description_text = func.trim(func.coalesce(col(Images.description), ""))
+    if status == "locked":
+        return statement.where(col(Images.is_locked).is_(True))
     if status == "discarded":
         return statement.where(col(Images.is_banned).is_(True))
     if status == "adopted":
@@ -230,6 +238,41 @@ async def _review_emoji_record_for_registration(
     return await emoji_manager.review_emoji_for_registration(target_emoji)
 
 
+def _filter_emoji_query(
+    statement: Any, search: Optional[str], status: Optional[str], image_format: Optional[str],
+    is_registered: Optional[bool] = None, is_banned: Optional[bool] = None,
+) -> Any:
+    if search:
+        from src.emoji_system.semantic_match import find_emoji_hashes_by_tag
+
+        statement = statement.where(
+            col(Images.description).contains(search, autoescape=True)
+            | col(Images.image_hash).contains(search, autoescape=True)
+            | col(Images.image_hash).in_(find_emoji_hashes_by_tag(search))
+        )
+
+    statement = _apply_emoji_status_filter(statement, status)
+    statement = _apply_emoji_format_filter(statement, image_format)
+
+    if status is None:
+        if is_registered is not None:
+            statement = statement.where(col(Images.is_registered) == is_registered)
+
+        if is_banned is not None:
+            statement = statement.where(col(Images.is_banned) == is_banned)
+    return statement
+
+
+@router.get("/selection-ids")
+def get_emoji_selection_ids(
+    search: Optional[str] = None, status: Optional[str] = None, format: Optional[str] = None,
+) -> List[int]:
+    """返回当前筛选命中的全部 ID，供跨页选择。"""
+    statement = select(Images.id).where(col(Images.image_type) == ImageType.EMOJI)
+    with get_db_session() as session:
+        return list(session.exec(_filter_emoji_query(statement, search, status, format)).all())
+
+
 @router.get("/list", response_model=EmojiListResponse)
 def get_emoji_list(
     page: int = Query(1, ge=1, description="页码"),
@@ -247,7 +290,7 @@ def get_emoji_list(
     Args:
         page: 页码，从 1 开始。
         page_size: 每页数量，范围为 1-100。
-        search: 搜索关键词，用于匹配描述或哈希。
+        search: 搜索关键词，用于匹配标签、描述或哈希。
         is_registered: 是否已注册筛选条件。
         is_banned: 是否被禁用筛选条件。
         sort_by: 排序字段。
@@ -259,21 +302,8 @@ def get_emoji_list(
     try:
         statement = select(Images).where(col(Images.image_type) == ImageType.EMOJI)
 
-        if search:
-            statement = statement.where(
-                (col(Images.description).contains(search)) | (col(Images.image_hash).contains(search))
-            )
-
-        statement = _apply_emoji_status_filter(statement, status)
-        statement = _apply_emoji_format_filter(statement, format)
-
-        if status is None:
-            if is_registered is not None:
-                statement = statement.where(col(Images.is_registered) == is_registered)
-
-            if is_banned is not None:
-                statement = statement.where(col(Images.is_banned) == is_banned)
-
+        statement = _filter_emoji_query(statement, search, status, format, is_registered, is_banned)
+        count_statement = select(func.count()).select_from(statement.subquery())
         sort_field_map = {
             "usage_count": col(Images.query_count),
             "query_count": col(Images.query_count),
@@ -282,7 +312,7 @@ def get_emoji_list(
             "last_used_time": col(Images.last_used_time),
         }
         sort_field = sort_field_map.get(sort_by or "register_time", col(Images.register_time))
-        statement = statement.order_by(sort_field.asc() if sort_order == "asc" else sort_field.desc())
+        statement = statement.order_by(sort_field.asc() if sort_order == "asc" else sort_field.desc(), col(Images.id))
 
         offset = (page - 1) * page_size
         statement = statement.offset(offset).limit(page_size)
@@ -290,18 +320,6 @@ def get_emoji_list(
         with get_db_session() as session:
             emojis = session.exec(statement).all()
 
-            count_statement = select(func.count()).select_from(Images).where(col(Images.image_type) == ImageType.EMOJI)
-            if search:
-                count_statement = count_statement.where(
-                    (col(Images.description).contains(search)) | (col(Images.image_hash).contains(search))
-                )
-            count_statement = _apply_emoji_status_filter(count_statement, status)
-            count_statement = _apply_emoji_format_filter(count_statement, format)
-            if status is None:
-                if is_registered is not None:
-                    count_statement = count_statement.where(col(Images.is_registered) == is_registered)
-                if is_banned is not None:
-                    count_statement = count_statement.where(col(Images.is_banned) == is_banned)
             total = session.exec(count_statement).one()
             data = [emoji_to_response(emoji) for emoji in emojis]
 
@@ -396,6 +414,8 @@ async def update_emoji(
                 emoji.description = update_data["description"]
             if "is_registered" in update_data:
                 emoji.is_registered = update_data["is_registered"]
+            if "is_locked" in update_data:
+                emoji.is_locked = update_data["is_locked"]
             if "is_banned" in update_data:
                 emoji.is_banned = update_data["is_banned"]
             if "register_time" in update_data:
@@ -516,6 +536,7 @@ def get_emoji_stats() -> Dict[str, Any]:
                 )
             )
 
+            locked = session.exec(_apply_emoji_status_filter(total_statement, "locked")).one()
             total = session.exec(total_statement).one()
             recent_count = session.exec(
                 select(func.count())
@@ -559,12 +580,15 @@ def get_emoji_stats() -> Dict[str, Any]:
                 "total": total,
                 "recent_count": recent_count,
                 "collecting_enabled": global_config.emoji.steal_emoji,
+                "max_reg_num": global_config.emoji.max_reg_num,
+                "do_replace": global_config.emoji.do_replace,
                 "registered": registered,
                 "banned": banned,
                 "unregistered": total - registered,
                 "known": known,
                 "unknown": unknown,
                 "adopted": registered,
+                "locked": locked,
                 "discarded": banned,
                 "formats": formats,
                 "top_used": top_used_list,
@@ -804,115 +828,168 @@ def batch_delete_emojis(
         raise HTTPException(status_code=500, detail=f"批量删除失败: {str(e)}") from e
 
 
+_MAX_UPLOAD_BYTES = 10 * 1024 * 1024
+
+
+def _read_upload_image(file: EmojiFile) -> Tuple[bytes, str]:
+    data = file.file.read(_MAX_UPLOAD_BYTES + 1)
+    if len(data) > _MAX_UPLOAD_BYTES:
+        raise HTTPException(413, "单张表情不能超过 10 MB")
+    try:
+        with Image.open(io.BytesIO(data)) as image:
+            image_format = image.format
+            image.verify()
+    except (OSError, ValueError, SyntaxError) as exc:
+        raise HTTPException(400, "无法读取图片，请检查文件是否完整") from exc
+    if image_format not in {"JPEG", "PNG", "GIF", "WEBP"}:
+        raise HTTPException(400, "请选择 JPG、PNG、GIF 或 WebP 图片")
+    return data, image_format.lower()
+
+
+@router.get("/recognize/models")
+def get_recognition_models() -> List[str]:
+    """优先列出视觉任务中的模型，再列出其他支持视觉输入的 LLM。"""
+    config = config_manager.get_model_config()
+    configured = config.model_task_config.vlm.model_list
+    eligible = [m.name for m in config.models if m.model_type == "llm" and (m.visual or m.name in configured)]
+    return list(dict.fromkeys([name for name in configured if name in eligible] + eligible))
+
+
+@router.post("/recognize")
+async def recognize_upload(
+    file: EmojiFile, model_name: Annotated[Optional[str], Form()] = None,
+) -> Dict[str, List[str]]:
+    """生成可编辑的标签草稿，确认上传时才保存。"""
+    from src.common.llm_json import validate_llm_json
+    from src.common.runtime_loop import run_on_main_loop
+    from src.emoji_system.emoji_manager import emoji_manager
+    from src.emoji_system.semantic_match import RecognizedEmojiTags
+
+    if model_name is not None and model_name not in get_recognition_models():
+        raise HTTPException(422, "选定的视觉模型已不可用，请重新选择")
+    data, image_format = await asyncio.to_thread(_read_upload_image, file)
+    try:
+        raw = await run_on_main_loop(
+            emoji_manager.analyze_emoji_bytes(data, image_format, "emoji_grouped_tags", model_name=model_name)
+        )
+        return validate_llm_json(raw, RecognizedEmojiTags).model_dump()
+    except ValidationError as exc:
+        logger.exception("视觉模型返回的表情标签格式错误")
+        raise HTTPException(502, "视觉模型返回的标签格式有误，可以重试或手动填写") from exc
+    except Exception as exc:
+        logger.exception("上传前识别表情失败")
+        raise HTTPException(502, "视觉模型识别失败，请检查 VLM 配置和后端日志") from exc
+
+
+def _find_upload_duplicate(session: Session, emoji_hash: str, overwrite: bool) -> Optional[Images]:
+    # 在读取哈希前取得 SQLite 写锁，使并发上传依次完成检查和保存。
+    session.connection().exec_driver_sql("BEGIN IMMEDIATE")
+    existing = session.exec(select(Images).where(
+        col(Images.image_hash) == emoji_hash,
+        col(Images.image_type) == ImageType.EMOJI,
+    )).first()
+    if existing is not None and not overwrite:
+        raise HTTPException(409, "表情库中已有相同图片，请确认是否覆盖")
+    return existing
+
+
+def _upload_hash_exists(emoji_hash: str) -> bool:
+    with get_db_session() as session:
+        return session.exec(select(Images.id).where(
+            col(Images.image_hash) == emoji_hash, col(Images.image_type) == ImageType.EMOJI,
+        )).first() is not None
+
+
+def _commit_upload(
+    file_content: bytes, img_format: str, emoji_hash: str, final_description: str,
+    tags: "Optional[EmojiTags]", overwrite: bool,
+) -> Tuple[EmojiUploadResponse, MaiEmoji]:
+    from src.emoji_system.semantic_match import save_emoji_tags
+
+    current_time = datetime.now()
+
+    with get_db_session() as session:
+        emoji = _find_upload_duplicate(session, emoji_hash, overwrite)
+        if emoji is None:
+            emoji = Images(
+                image_type=ImageType.EMOJI,
+                full_path=_save_uploaded_emoji_file(file_content, emoji_hash, img_format),
+                image_hash=emoji_hash,
+                description=final_description,
+                record_time=current_time,
+            )
+            message = "表情包上传成功并已注册"
+        else:
+            if emoji.no_file_flag or _resolve_existing_emoji_file_path(emoji.full_path) is None:
+                emoji.full_path = _save_uploaded_emoji_file(file_content, emoji_hash, img_format)
+                emoji.no_file_flag = False
+            emoji.description = final_description
+            message = "表情包已存在，已更新标签并注册"
+
+        emoji.is_locked = True
+        emoji.is_registered = True
+        emoji.is_banned = False
+        emoji.register_time = current_time
+        session.add(emoji)
+        session.flush()
+        if tags is not None:
+            event.listen(session, "after_commit", lambda _: save_emoji_tags(emoji_hash, tags), once=True)
+        else:
+            _index_emoji_after_commit(session, emoji)
+        return EmojiUploadResponse(success=True, message=message, data=emoji_to_response(emoji)), MaiEmoji.from_db_instance(emoji)
+
+
 @router.post("/upload", response_model=EmojiUploadResponse)
 async def upload_emoji(
     file: EmojiFile,
     description: DescriptionForm = "",
     emotion: EmotionForm = "",
     is_registered: IsRegisteredForm = True,
+    tags_json: Annotated[Optional[str], Form()] = None,
+    overwrite: Annotated[bool, Form()] = False,
 ) -> EmojiUploadResponse:
-    """上传并注册表情包。
+    """索引完成后提交表情，并在返回前更新主循环的可发送列表。"""
+    from src.common.runtime_loop import run_on_main_loop
+    from src.emoji_system.emoji_manager import emoji_manager
+    from src.emoji_system.semantic_match import EmojiTags, index_upload_tags
 
-    Args:
-        file: 上传的表情包文件。
-        description: 表情包描述。
-        emotion: 情绪标签。
-        is_registered: 是否上传后直接注册。
-
-    Returns:
-        EmojiUploadResponse: 上传结果和新表情包数据。
-    """
-    try:
-        if not file.content_type:
-            raise HTTPException(status_code=400, detail="无法识别文件类型")
-
-        allowed_types = ["image/jpeg", "image/png", "image/gif", "image/webp"]
-        if file.content_type not in allowed_types:
-            raise HTTPException(
-                status_code=400,
-                detail=f"不支持的文件类型: {file.content_type}，支持: {', '.join(allowed_types)}",
-            )
-
-        file_content = await file.read()
-        if not file_content:
-            raise HTTPException(status_code=400, detail="文件内容为空")
-
+    file_content, img_format = await asyncio.to_thread(_read_upload_image, file)
+    emoji_hash = await asyncio.to_thread(lambda: hashlib.sha256(file_content).hexdigest())
+    final_description = _normalize_emoji_description(description=description, emotion=emotion)
+    tags = None
+    if tags_json is not None:
         try:
-            with Image.open(io.BytesIO(file_content)) as img:
-                img.verify()
-        except Exception as e:
-            raise HTTPException(status_code=400, detail=f"无效的图片文件: {str(e)}") from e
+            tags = EmojiTags.model_validate_json(tags_json)
+        except ValidationError as exc:
+            raise HTTPException(422, "情绪标签和内容标签须为字符串数组") from exc
+        if not (tags.emotion_tags or tags.content_tags):
+            raise HTTPException(422, "请填写情绪或内容标签")
+        final_description = ",".join(tags.emotion_tags or tags.content_tags)
+        if not overwrite and await asyncio.to_thread(_upload_hash_exists, emoji_hash):
+            raise HTTPException(409, "表情库中已有相同图片，请确认是否覆盖")
 
-        with Image.open(io.BytesIO(file_content)) as img:
-            img_format = img.format.lower() if img.format else "png"
+    async def index_and_register() -> EmojiUploadResponse:
+        if tags is not None:
+            try:
+                await index_upload_tags(tags)
+            except Exception as exc:
+                logger.exception(f"上传表情标签索引失败: hash={emoji_hash}")
+                raise HTTPException(502, f"标签索引计算失败：{exc}") from exc
+        response, emoji = await asyncio.to_thread(
+            _commit_upload, file_content, img_format, emoji_hash, final_description, tags, overwrite,
+        )
+        emoji_manager.publish_registered_emoji(emoji)
+        return response
 
-        emoji_hash = hashlib.sha256(file_content).hexdigest()
-        final_description = _normalize_emoji_description(description=description, emotion=emotion)
-        current_time = datetime.now()
-
-        with get_db_session() as session:
-            existing_statement = select(Images).where(
-                col(Images.image_hash) == emoji_hash,
-                col(Images.image_type) == ImageType.EMOJI,
-            )
-            if existing_emoji := session.exec(existing_statement).first():
-                if _resolve_existing_emoji_file_path(existing_emoji.full_path) is None or existing_emoji.no_file_flag:
-                    existing_emoji.full_path = _save_uploaded_emoji_file(file_content, emoji_hash, img_format)
-                    existing_emoji.no_file_flag = False
-                existing_emoji.description = final_description
-                existing_emoji.is_registered = True
-                existing_emoji.is_banned = False
-                existing_emoji.register_time = current_time
-                session.add(existing_emoji)
-                _index_emoji_after_commit(session, existing_emoji)
-                session.flush()
-                return EmojiUploadResponse(
-                    success=True,
-                    message="表情包已存在，已标记为据为己用",
-                    data=emoji_to_response(existing_emoji),
-                )
-
-        full_path = _save_uploaded_emoji_file(file_content, emoji_hash, img_format)
-
-        with get_db_session() as session:
-            emoji = Images(
-                image_type=ImageType.EMOJI,
-                full_path=full_path,
-                image_hash=emoji_hash,
-                description=final_description,
-                query_count=0,
-                is_registered=True,
-                is_banned=False,
-                record_time=current_time,
-                register_time=current_time,
-                last_used_time=None,
-            )
-            session.add(emoji)
-            _index_emoji_after_commit(session, emoji)
-            session.flush()
-
-            logger.info(
-                f"表情包已上传: ID={emoji.id}, hash={emoji_hash}, registered={emoji.is_registered}"
-            )
-            message = "表情包上传成功"
-            message += "并已注册"
-            return EmojiUploadResponse(
-                success=True,
-                message=message,
-                data=emoji_to_response(emoji),
-            )
-    except HTTPException:
-        raise
-    except Exception as e:
-        logger.exception(f"上传表情包失败: {e}")
-        raise HTTPException(status_code=500, detail=f"上传失败: {str(e)}") from e
+    return await run_on_main_loop(index_and_register())
 
 
 @router.post("/batch/upload")
-async def batch_upload_emoji(
+def batch_upload_emoji(
     files: EmojiFiles,
     emotion: EmotionForm = "",
     is_registered: IsRegisteredForm = True,
+    overwrite: Annotated[bool, Form()] = False,
 ) -> Dict[str, Any]:
     """批量上传表情包。
 
@@ -949,7 +1026,7 @@ async def batch_upload_emoji(
                     )
                     continue
 
-                file_content = await file.read()
+                file_content = file.file.read()
                 if not file_content:
                     results["failed"] += 1
                     results["details"].append({"filename": file.filename, "success": False, "error": "文件内容为空"})
@@ -970,15 +1047,13 @@ async def batch_upload_emoji(
                 final_description = _normalize_emoji_description(emotion=emotion)
 
                 with get_db_session() as session:
-                    existing_statement = select(Images).where(
-                        col(Images.image_hash) == emoji_hash,
-                        col(Images.image_type) == ImageType.EMOJI,
-                    )
-                    if existing_emoji := session.exec(existing_statement).first():
+                    existing_emoji = _find_upload_duplicate(session, emoji_hash, overwrite)
+                    if existing_emoji is not None:
                         if _resolve_existing_emoji_file_path(existing_emoji.full_path) is None or existing_emoji.no_file_flag:
                             existing_emoji.full_path = _save_uploaded_emoji_file(file_content, emoji_hash, img_format)
                             existing_emoji.no_file_flag = False
                         existing_emoji.description = final_description
+                        existing_emoji.is_locked = True
                         existing_emoji.is_registered = True
                         existing_emoji.is_banned = False
                         existing_emoji.register_time = current_time
@@ -991,15 +1066,14 @@ async def batch_upload_emoji(
                         )
                         continue
 
-                full_path = _save_uploaded_emoji_file(file_content, emoji_hash, img_format)
-
-                with get_db_session() as session:
+                    full_path = _save_uploaded_emoji_file(file_content, emoji_hash, img_format)
                     emoji = Images(
                         image_type=ImageType.EMOJI,
                         full_path=full_path,
                         image_hash=emoji_hash,
                         description=final_description,
                         query_count=0,
+                        is_locked=True,
                         is_registered=True,
                         is_banned=False,
                         record_time=current_time,
@@ -1013,6 +1087,11 @@ async def batch_upload_emoji(
                     results["uploaded"] += 1
                     detail = {"filename": file.filename, "success": True, "id": emoji.id}
                     results["details"].append(detail)
+            except HTTPException as exc:
+                results["failed"] += 1
+                results["details"].append(
+                    {"filename": file.filename, "success": False, "status": exc.status_code, "error": exc.detail}
+                )
             except Exception as e:
                 results["failed"] += 1
                 results["details"].append({"filename": file.filename, "success": False, "error": str(e)})

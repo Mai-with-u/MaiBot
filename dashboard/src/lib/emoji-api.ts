@@ -18,6 +18,10 @@ import type {
 
 const API_BASE = '/api/webui/emoji'
 
+export function getEmojiSelectionIds(query: { search?: string; status?: EmojiStatus | 'locked'; format?: string }, signal: AbortSignal) {
+  return backendApi.get<number[]>(`${API_BASE}/selection-ids`, { query, signal, errorMessage: '选择全部表情失败' })
+}
+
 /**
  * 获取表情包列表
  */
@@ -27,7 +31,7 @@ export async function getEmojiList(params: {
   search?: string
   is_registered?: boolean
   is_banned?: boolean
-  status?: EmojiStatus
+  status?: EmojiStatus | 'locked'
   format?: string
   sort_by?: string
   sort_order?: 'asc' | 'desc'
@@ -143,10 +147,23 @@ export async function batchDeleteEmojis(emojiIds: number[]): Promise<{
 }
 
 /**
- * 获取表情包上传 URL（供 Uppy 使用）
+ * 获取表情包上传 URL
  */
 export function getEmojiUploadUrl(): string {
   return `${API_BASE}/upload`
+}
+
+export function getEmojiRecognitionModels(signal: AbortSignal) {
+  return backendApi.get<string[]>(`${API_BASE}/recognize/models`, { signal, errorMessage: '获取识别模型失败' })
+}
+
+export function recognizeEmoji(file: File, signal: AbortSignal, modelName?: string) {
+  const body = new FormData()
+  body.append('file', file)
+  if (modelName) body.append('model_name', modelName)
+  return backendApi.post<{ emotion_tags: string[]; content_tags: string[] }>(`${API_BASE}/recognize`, {
+    body, signal, errorMessage: '自动识别失败',
+  })
 }
 
 /**

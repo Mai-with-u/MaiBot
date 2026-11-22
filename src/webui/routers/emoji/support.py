@@ -1,11 +1,11 @@
-import os
-import threading
 from concurrent.futures import ThreadPoolExecutor
 from pathlib import Path
+from tempfile import NamedTemporaryFile
 from typing import Dict, Set, Tuple
-
 from PIL import Image
 from sqlmodel import col, select
+import os
+import threading
 
 from src.common.database.database import get_db_session
 from src.common.database.database_model import Images, ImageType
@@ -81,6 +81,7 @@ def _generate_thumbnail(source_path: str, file_hash: str) -> Path:
         if cache_path.exists():
             return cache_path
 
+        temp_path: Path | None = None
         try:
             with Image.open(source_path) as img:
                 if getattr(img, "n_frames", 1) > 1:
@@ -94,11 +95,18 @@ def _generate_thumbnail(source_path: str, file_hash: str) -> Path:
                     img = img.convert("RGB")
 
                 img.thumbnail(THUMBNAIL_SIZE, Image.Resampling.LANCZOS)
-                img.save(cache_path, "WEBP", quality=THUMBNAIL_QUALITY, method=6)
+                # 读取端以缓存文件存在作为就绪信号，编码完成后再原子发布。
+                with NamedTemporaryFile(dir=cache_path.parent, suffix=".tmp", delete=False) as output:
+                    temp_path = Path(output.name)
+                    img.save(output, "WEBP", quality=THUMBNAIL_QUALITY, method=6)
+                temp_path.replace(cache_path)
                 logger.debug(f"生成缩略图: {file_hash} -> {cache_path}")
         except Exception as e:
-            logger.warning(f"生成缩略图失败 {file_hash}: {e}，将返回原图")
+            logger.warning(f"生成缩略图失败 {file_hash}: {e}")
             raise
+        finally:
+            if temp_path is not None:
+                temp_path.unlink(missing_ok=True)
 
     return cache_path
 

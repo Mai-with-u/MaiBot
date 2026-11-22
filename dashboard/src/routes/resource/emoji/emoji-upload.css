@@ -1,0 +1,93 @@
+.emoji-upload-body {
+  min-height: 0;
+  overflow-y: auto;
+}
+
+.emoji-upload-layout {
+  display: grid;
+  grid-template-columns: minmax(14.5rem, 29%) minmax(0, 1fr);
+  border-block-start: 1px solid hsl(var(--border));
+}
+
+.emoji-upload-queue,
+.emoji-upload-editor {
+  display: flex;
+  flex-direction: column;
+  gap: 1rem;
+  min-width: 0;
+  padding-block: 1rem;
+}
+
+.emoji-upload-queue {
+  padding-inline-end: 1rem;
+  border-inline-end: 1px solid hsl(var(--border));
+}
+
+.emoji-upload-editor {
+  padding-inline-start: 1.25rem;
+}
+
+.emoji-upload-strip {
+  display: grid;
+  grid-template-columns: repeat(2, minmax(0, 1fr));
+  grid-auto-rows: max-content;
+  align-content: start;
+  height: clamp(12rem, 42vh, 24rem);
+  overflow: auto;
+  overscroll-behavior: contain;
+  gap: .5rem;
+  padding: .5rem;
+}
+
+.emoji-upload-screen,
+.emoji-upload-tile {
+  border: 1px solid hsl(var(--border));
+  border-radius: var(--radius);
+}
+
+.emoji-upload-tile {
+  position: relative;
+  aspect-ratio: 1;
+  overflow: hidden;
+  padding: .25rem;
+  background: hsl(var(--background));
+  cursor: pointer;
+}
+
+.emoji-upload-tile[aria-pressed='true'],
+.emoji-upload-tile:focus-visible {
+  outline: 2px solid hsl(var(--ring));
+  outline-offset: -2px;
+}
+
+:root[data-dashboard-style='millennium'] .emoji-upload-screen {
+  border: 2px solid var(--mil-line);
+  border-radius: 0;
+  background: var(--mil-screen-tex) var(--mil-screen);
+  background-size: 4px 4px;
+  box-shadow: var(--mil-sunk);
+}
+
+:root[data-dashboard-style='millennium'] .emoji-upload-tile {
+  border: 2px solid var(--mil-lo);
+  border-radius: 0;
+  background: var(--mil-key);
+}
+
+:root[data-dashboard-style='millennium'] .emoji-upload-tile[aria-pressed='true'] {
+  border-color: var(--mil-accent-text);
+  background: var(--mil-on);
+  outline-color: var(--mil-accent-text);
+}
+
+@media (max-width: 639px) {
+  .emoji-upload-layout { grid-template-columns: minmax(0, 1fr); }
+  .emoji-upload-queue { border-inline-end: 0; padding-inline-end: 0; }
+  .emoji-upload-editor { padding: 0; }
+  .emoji-upload-strip {
+    grid-template-columns: none;
+    grid-auto-flow: column;
+    grid-auto-columns: 4.5rem;
+    height: auto;
+  }
+}

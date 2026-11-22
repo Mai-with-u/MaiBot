@@ -2,7 +2,7 @@ from collections import deque
 from datetime import datetime
 from pathlib import Path
 from time import perf_counter
-from typing import Any, Deque, Literal, Optional
+from typing import Any, Deque, Literal, Optional, Set
 
 import asyncio
 import hashlib
@@ -12,10 +12,11 @@ import re
 
 from rapidfuzz.distance import Levenshtein
 from rich.traceback import install
-from sqlmodel import select
+from sqlmodel import col, select, update
 
 from src.common.paths import get_instance_root
 from src.common.data_models.image_data_model import MaiEmoji
+from src.common.data_models.llm_service_data_models import LLMImageOptions
 from src.common.database.database import get_db_session, get_db_session_manual
 from src.common.database.database_model import Images, ImageType
 from src.common.logger import get_logger
@@ -553,7 +554,7 @@ class EmojiManager:
             self._emoji_num = 0
             raise e
 
-    def register_emoji_to_db(self, emoji: MaiEmoji) -> EmojiRegisterStatus:
+    def register_emoji_to_db(self, emoji: MaiEmoji, *, replace_hash: Optional[str] = None) -> EmojiRegisterStatus:
         # sourcery skip: extract-method
         """Register an emoji in the database without moving its source file."""
         if not emoji or not isinstance(emoji, MaiEmoji):
@@ -595,30 +596,36 @@ class EmojiManager:
                     emoji.last_used_time = existing_record.last_used_time
                     emoji.register_time = register_time
 
-                    logger.info(
-                        f"[register_emoji] Updated existing record and registered emoji, ID: {existing_record.id}, path: {emoji.full_path}"
-                    )
-                    return "registered"
-        except Exception as e:
-            logger.error(f"[register_emoji] Database query failed: {e}")
-            return "failed"
+                else:
+                    image_record = emoji.to_db_instance()
+                    image_record.is_registered = True
+                    image_record.is_banned = False
+                    image_record.no_file_flag = False
+                    image_record.register_time = datetime.now()
+                    session.add(image_record)
+                    session.flush()
+                    emoji.register_time = image_record.register_time
 
-        try:
-            with get_db_session() as session:
-                image_record = emoji.to_db_instance()
-                image_record.is_registered = True
-                image_record.is_banned = False
-                image_record.no_file_flag = False
-                image_record.register_time = datetime.now()
-                session.add(image_record)
-                session.flush()
-                emoji.register_time = image_record.register_time
-                record_id = image_record.id
-                logger.info(f"[register_emoji] Registered emoji to database, ID: {record_id}, path: {emoji.full_path}")
+                if replace_hash is not None:
+                    # 模型决策期间可能有人锁定旧表情。换入和换出必须同时提交。
+                    removed = session.exec(
+                        update(Images)
+                        .where(
+                            col(Images.image_hash) == replace_hash,
+                            col(Images.image_type) == ImageType.EMOJI,
+                            col(Images.is_registered).is_(True),
+                            col(Images.is_locked).is_(False),
+                        )
+                        .values(is_registered=False)
+                    )
+                    if removed.rowcount != 1:
+                        session.rollback()
+                        return "skipped"
         except Exception as e:
             logger.error(f"[register_emoji] Failed to write database record: {e}")
             return "failed"
 
+        logger.info(f"[register_emoji] 表情包已注册: {emoji.file_hash}")
         return "registered"
 
     def delete_emoji(self, emoji: MaiEmoji, keep_desc: bool = True) -> bool:
@@ -763,6 +770,12 @@ class EmojiManager:
         logger.debug(f"[获取表情包] 已注册表情包内存列表未命中，哈希值: {emoji_hash}")
         return None
 
+    def publish_registered_emoji(self, emoji: MaiEmoji) -> None:
+        """在主循环中更新刚提交的可发送表情。"""
+        self.emojis = [item for item in self.emojis if item.file_hash != emoji.file_hash]
+        self.emojis.append(emoji)
+        self._emoji_num = len(self.emojis)
+
     def get_emoji_by_hash_from_db(self, emoji_hash: str) -> Optional[MaiEmoji]:
         """
         根据哈希值从数据库获取表情包对象
@@ -874,9 +887,21 @@ class EmojiManager:
             return (bool): 是否成功替换了一个表情包
         """
         # sourcery skip: use-getitem-for-re-match-groups
-        probabilities = [1 / (emoji.query_count + 1) for emoji in self.emojis]
+        def eligible_hashes() -> Set[str]:
+            with get_db_session() as session:
+                statement = select(Images.image_hash).filter_by(
+                    image_type=ImageType.EMOJI, is_registered=True, is_locked=False, is_banned=False,
+                )
+                return set(session.exec(statement).all())
+
+        eligible = await asyncio.to_thread(eligible_hashes)
+        eligible.discard(new_emoji.file_hash)
+        candidates = [emoji for emoji in self.emojis if emoji.file_hash in eligible]
+        if not candidates:
+            return False
+        probabilities = [1 / (emoji.query_count + 1) for emoji in candidates]
         selected_emojis = random.choices(
-            self.emojis, weights=probabilities, k=min(MAX_EMOJI_FOR_PROMPT, len(self.emojis))
+            candidates, weights=probabilities, k=min(MAX_EMOJI_FOR_PROMPT, len(candidates))
         )
         emoji_info_list: list[str] = []
         for i, emoji in enumerate(selected_emojis):
@@ -924,22 +949,18 @@ class EmojiManager:
             if 0 <= emoji_index < len(selected_emojis):
                 emoji_to_unregister = selected_emojis[emoji_index]
                 logger.info(f"[决策] 取消注册表情包: {emoji_to_unregister.description}")
-                if self.unregister_emoji(emoji_to_unregister):
-                    register_status = self.register_emoji_to_db(new_emoji)
-                    if register_status == "registered":
-                        from .semantic_match import schedule_emoji_index
+                register_status = await asyncio.to_thread(
+                    self.register_emoji_to_db, new_emoji, replace_hash=emoji_to_unregister.file_hash
+                )
+                if register_status == "registered":
+                    from .semantic_match import schedule_emoji_index
 
-                        self.emojis.append(new_emoji)
-                        self._emoji_num = len(self.emojis)
-                        schedule_emoji_index(new_emoji.file_hash)
-                        logger.info(f"[register_emoji] 成功替换并注册新表情包: {new_emoji.description}")
-                        return True
-                    if register_status == "skipped":
-                        logger.info(f"[register_emoji] Replacement emoji was already registered: {new_emoji.description}")
-                    else:
-                        logger.error(f"[register_emoji] Failed to register replacement emoji: {new_emoji.description}")
-                else:
-                    logger.error("[错误] 取消注册表情包失败，无法完成替换")
+                    self.emojis = [item for item in self.emojis if item.file_hash != emoji_to_unregister.file_hash]
+                    self.emojis.append(new_emoji)
+                    self._emoji_num = len(self.emojis)
+                    schedule_emoji_index(new_emoji.file_hash)
+                    logger.info(f"[register_emoji] 成功替换并注册新表情包: {new_emoji.description}")
+                    return True
             else:
                 logger.error(f"[决策] 无效的表情包编号: {emoji_index + 1}")
         else:
@@ -1038,6 +1059,12 @@ class EmojiManager:
             await emoji.calculate_hash_format()
         image_format = emoji.image_format
         image_bytes = emoji.image_bytes or await asyncio.to_thread(emoji.read_image_bytes, emoji.full_path)
+        return await self.analyze_emoji_bytes(image_bytes, image_format, prompt_name, session_id=session_id)
+
+    async def analyze_emoji_bytes(
+        self, image_bytes: bytes, image_format: str, prompt_name: str, *, session_id: str = "", model_name: Optional[str] = None,
+    ) -> str:
+        """使用同一视觉流程识别已保存或待上传的表情。"""
         if image_format == "gif":
             image_bytes = await asyncio.to_thread(ImageUtils.gif_2_static_image, image_bytes)
         template = prompt_manager.get_prompt(prompt_name)
@@ -1045,7 +1072,8 @@ class EmojiManager:
         prompt = await prompt_manager.render_prompt(template)
         image_base64 = await asyncio.to_thread(ImageUtils.image_bytes_to_base64, image_bytes)
         result = await emoji_manager_vlm.generate_response_for_image(
-            prompt, image_base64, "jpg" if image_format == "gif" else image_format, session_id=session_id,
+            prompt, image_base64, "jpg" if image_format == "gif" else image_format,
+            options=LLMImageOptions(model_name=model_name), session_id=session_id,
         )
         return result.response
 

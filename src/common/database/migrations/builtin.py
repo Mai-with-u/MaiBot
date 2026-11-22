@@ -60,6 +60,7 @@ from .v51_to_v52 import migrate_v51_to_v52
 from .v52_to_v53 import migrate_v52_to_v53
 from .v53_to_v54 import migrate_v53_to_v54
 from .v54_to_v55 import migrate_v54_to_v55
+from .v55_to_v56 import migrate_v55_to_v56
 from .version_store import SQLiteUserVersionStore
 
 EMPTY_SCHEMA_VERSION = 0
@@ -118,7 +119,8 @@ V52_SCHEMA_VERSION = 52
 V53_SCHEMA_VERSION = 53
 V54_SCHEMA_VERSION = 54
 V55_SCHEMA_VERSION = 55
-LATEST_SCHEMA_VERSION = V55_SCHEMA_VERSION
+V56_SCHEMA_VERSION = 56
+LATEST_SCHEMA_VERSION = V56_SCHEMA_VERSION
 
 _LEGACY_V1_EXCLUSIVE_TABLES = (
     "chat_streams",
@@ -2065,6 +2067,11 @@ def build_default_migration_registry() -> MigrationRegistry:
                 version_from=V54_SCHEMA_VERSION, version_to=V55_SCHEMA_VERSION,
                 name="v54_to_v55", description="移除旧记忆点与名称设定原因字段。",
                 handler=migrate_v54_to_v55,
+            ),
+            MigrationStep(
+                version_from=V55_SCHEMA_VERSION, version_to=V56_SCHEMA_VERSION,
+                name="v55_to_v56", description="为表情包添加自动替换锁定标记。",
+                handler=migrate_v55_to_v56,
             ),
         ]
     )

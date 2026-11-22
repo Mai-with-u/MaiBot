@@ -1,6 +1,5 @@
 import { useState } from 'react'
 import { Button } from '@/components/ui/button'
-import { useMediaQuery } from '@/hooks/use-media-query'
 import { EmojiBrowser, type EmojiFilters } from '@/routes/resource/emoji/EmojiBrowser'
 import type { Emoji } from '@/types/emoji'
 
@@ -29,6 +28,7 @@ const samples: Emoji[] = Array.from({ length: 276 }, (_, i) => ({
   usage_count: i % 13,
   status: i < 240 ? 'adopted' : i < 252 ? 'known' : i < 264 ? 'unknown' : 'discarded',
   is_registered: i < 240,
+  is_locked: i < 5,
   is_banned: i >= 264,
   emotion: null,
   record_time: 0,
@@ -45,19 +45,13 @@ export function EmojiReview() {
     sortOrder: 'desc',
   })
   const [search, setSearch] = useState('')
-  const [size, setSize] = useState<'small' | 'medium' | 'large'>('medium')
   const [page, setPage] = useState(1)
-  const [pageSize, setPageSize] = useState(24)
+  const [pageSize, setPageSize] = useState(18)
   const [selected, setSelected] = useState(new Set<number>())
   const [notice, setNotice] = useState('示例数据；操作仅在预览页生效')
-  const wide = useMediaQuery('(min-width: 1280px)')
-  const mobile = useMediaQuery('(max-width: 1023px)')
-  const columns = mobile
-    ? 3
-    : { small: wide ? 8 : 6, medium: wide ? 6 : 4, large: wide ? 4 : 3 }[size]
   const items = samples.filter(
     (item) =>
-      (filters.status === 'all' || item.status === filters.status) &&
+      (filters.status === 'all' || (filters.status === 'locked' ? item.is_locked : item.status === filters.status)) &&
       (filters.format === 'all' || item.format === filters.format) &&
       `${item.description} ${item.emoji_hash}`.includes(search)
   )
@@ -73,6 +67,7 @@ export function EmojiReview() {
           total: 276,
           registered: 240,
           adopted: 240,
+          locked: 5,
           banned: 12,
           discarded: 12,
           known: 12,
@@ -93,15 +88,22 @@ export function EmojiReview() {
           setSearch(value)
           setPage(1)
         }}
-        cardSize={size}
-        onCardSizeChange={setSize}
-        columns={columns}
+        onSelectPage={() => {
+          const visible = ordered.slice((page - 1) * pageSize, page * pageSize)
+          const next = new Set(selected)
+          const clear = visible.every((item) => next.has(item.id))
+          for (const item of visible) {
+            if (clear) next.delete(item.id)
+            else next.add(item.id)
+          }
+          setSelected(next)
+        }}
+        onSelectAll={() => setSelected(new Set(ordered.map((item) => item.id)))}
         emojiList={ordered.slice((page - 1) * pageSize, page * pageSize)}
         loading={false}
         total={items.length}
         page={page}
         pageSize={pageSize}
-        pageSizeOptions={[24, 48, 72, 96]}
         onPageChange={setPage}
         onPageSizeChange={(value) => {
           setPageSize(value)
@@ -116,12 +118,12 @@ export function EmojiReview() {
             return next
           })
         }
-        onUpload={() => setNotice('正式页面会打开上传窗口')}
         onOpenCache={() => setNotice('正式页面会打开缓存维护窗口')}
         onViewDetail={(item) => setNotice(`查看详情：${item.description}`)}
         onEdit={() => setNotice('正式页面会打开编辑窗口')}
         onRegister={() => setNotice('正式页面可注册表情')}
         onBan={() => setNotice('正式页面可禁用表情')}
+        onToggleLock={() => setNotice('正式页面可锁定或解锁表情')}
         onDelete={() => setNotice('正式页面会先确认删除')}
         onRetry={() => {}}
         batchActions={

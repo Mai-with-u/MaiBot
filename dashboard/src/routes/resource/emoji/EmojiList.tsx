@@ -1,5 +1,5 @@
 import type { ReactNode } from 'react'
-import { Ban, CheckCircle2, Edit, Trash2 } from 'lucide-react'
+import { Ban, CheckCircle2, Edit, LockKeyhole, LockKeyholeOpen, Trash2 } from 'lucide-react'
 
 import { Badge } from '@/components/ui/badge'
 import { Button } from '@/components/ui/button'
@@ -19,6 +19,7 @@ const statusLabel: Record<Emoji['status'], string> = {
 interface EmojiListProps {
   emojiList: Emoji[]
   loading: boolean
+  rows: number
   columns: number
   selectedIds: Set<number>
   onToggleSelect: (id: number) => void
@@ -26,6 +27,7 @@ interface EmojiListProps {
   onViewDetail: (emoji: Emoji) => void
   onRegister: (emoji: Emoji) => void
   onBan: (emoji: Emoji) => void
+  onToggleLock: (emoji: Emoji) => void
   onDelete: (emoji: Emoji) => void
   /** 预览可传入本地示例图片；正式页面使用真实缩略图。 */
   renderThumbnail?: (emoji: Emoji) => ReactNode
@@ -35,6 +37,7 @@ interface EmojiListProps {
 export function EmojiList({
   emojiList,
   loading,
+  rows,
   columns,
   selectedIds,
   onToggleSelect,
@@ -42,6 +45,7 @@ export function EmojiList({
   onViewDetail,
   onRegister,
   onBan,
+  onToggleLock,
   onDelete,
   renderThumbnail,
 }: EmojiListProps) {
@@ -56,12 +60,12 @@ export function EmojiList({
 
   return (
     <div
-      className="grid items-start gap-x-3 gap-y-4"
-      style={{ gridTemplateColumns: `repeat(${columns}, minmax(0, 1fr))` }}
+      className="grid h-full min-h-0 gap-x-3 gap-y-3"
+      style={{ gridTemplateColumns: `repeat(${columns}, minmax(0, 1fr))`, gridTemplateRows: `repeat(${rows}, minmax(0, 1fr))` }}
     >
       {emojiList.map((emoji) => (
-        <article key={emoji.id} className="group min-w-0">
-          <Card variant="flat" className="relative aspect-square">
+        <article key={emoji.id} className="group flex min-h-0 min-w-0 flex-col">
+          <Card variant="flat" className="relative aspect-square min-h-0 w-full shrink">
             <button
               type="button"
               className="focus-visible:outline-ring absolute inset-0 flex cursor-pointer items-center justify-center overflow-hidden p-1 focus-visible:outline-2 focus-visible:outline-offset-2"
@@ -80,7 +84,7 @@ export function EmojiList({
             </button>
             <Badge
               variant="outline"
-              className="bg-background/90 pointer-events-none absolute top-1 left-1 px-1 py-0 text-[10px]"
+              className="bg-background/90 pointer-events-none absolute top-1 left-1 origin-top-left scale-[0.8] px-1 py-0 text-[10px]"
             >
               {emoji.format.toUpperCase()}
             </Badge>
@@ -108,7 +112,7 @@ export function EmojiList({
               <div
                 role="toolbar"
                 aria-label="表情包操作"
-                className="bg-background/85 text-muted-foreground/60 flex min-w-0 flex-nowrap"
+                className="bg-background/85 text-muted-foreground/60 flex min-w-0 origin-bottom-left scale-[0.8] flex-nowrap"
               >
                 <Button
                   variant="ghost"
@@ -150,17 +154,27 @@ export function EmojiList({
                 >
                   <Trash2 />
                 </Button>
+                <Button
+                  variant="ghost"
+                  size="icon-xs"
+                  title={emoji.is_locked ? '解除锁定' : '锁定，防止自动替换'}
+                  aria-label="锁定表情包"
+                  aria-pressed={emoji.is_locked}
+                  onClick={() => onToggleLock(emoji)}
+                >
+                  {emoji.is_locked ? <LockKeyhole /> : <LockKeyholeOpen />}
+                </Button>
               </div>
               <span
                 title={`使用 ${emoji.usage_count} 次`}
-                className="bg-foreground text-background pointer-events-none shrink-0 px-1 text-[10px] leading-4 tabular-nums"
+                className="bg-foreground text-background pointer-events-none shrink-0 origin-bottom-right scale-[0.8] px-1 text-[10px] leading-4 tabular-nums"
               >
                 ×{emoji.usage_count}
               </span>
             </div>
           </Card>
           <p
-            className="text-muted-foreground mt-1.5 line-clamp-2 min-h-8 text-xs leading-4 break-all"
+            className="text-muted-foreground mt-1.5 line-clamp-2 shrink-0 text-xs leading-4 break-all"
             title={emoji.description?.trim() || '暂无描述'}
           >
             {emoji.description?.trim() || '暂无描述'}

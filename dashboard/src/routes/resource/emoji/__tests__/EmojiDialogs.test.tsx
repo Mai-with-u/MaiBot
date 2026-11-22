@@ -1,8 +1,9 @@
-import { act, cleanup, fireEvent, render, screen, waitFor } from '@testing-library/react'
+import { cleanup, fireEvent, render, screen, waitFor } from '@testing-library/react'
 import userEvent from '@testing-library/user-event'
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest'
 
 import { EmojiDetailDialog, EmojiEditDialog, EmojiUploadDialog } from '../EmojiDialogs'
+import { ApiError } from '@/lib/http/errors'
 import type { Emoji } from '@/types/emoji'
 
 // 稳定引用的 mock：toast / http.post / updateEmoji / 假 Uppy 类
@@ -17,46 +18,7 @@ const hoisted = vi.hoisted(() => {
     >()
   const updateEmojiMock = vi.fn<(id: number, data: Record<string, unknown>) => Promise<unknown>>()
 
-  interface FakeUppyFile {
-    id: string
-    name: string
-    preview?: string
-    data: File
-  }
-
-  // 假 Uppy：只实现组件用到的 on/off/getFiles/cancelAll，emit 用于测试驱动“下一步”
-  class FakeUppy {
-    static instances: FakeUppy[] = []
-    files: FakeUppyFile[] = []
-    private handlers = new Map<string, Set<() => void>>()
-
-    constructor(_options?: unknown) {
-      FakeUppy.instances.push(this)
-    }
-
-    on(event: string, handler: () => void) {
-      if (!this.handlers.has(event)) this.handlers.set(event, new Set())
-      this.handlers.get(event)!.add(handler)
-      return this
-    }
-
-    off(event: string, handler: () => void) {
-      this.handlers.get(event)?.delete(handler)
-      return this
-    }
-
-    getFiles() {
-      return this.files
-    }
-
-    cancelAll() {}
-
-    emit(event: string) {
-      this.handlers.get(event)?.forEach((handler) => handler())
-    }
-  }
-
-  return { toastMock, postMock, updateEmojiMock, FakeUppy }
+  return { toastMock, postMock, updateEmojiMock, recognize: vi.fn() }
 })
 
 vi.mock('@/hooks/use-toast', () => ({ useToast: () => ({ toast: hoisted.toastMock }) }))
@@ -64,25 +26,20 @@ vi.mock('@/lib/http', () => ({ backendApi: { post: hoisted.postMock } }))
 vi.mock('@/lib/emoji-api', () => ({
   getEmojiOriginalUrl: (id: number) => `/mock-original/${id}`,
   getEmojiUploadUrl: () => '/mock-upload',
+  getEmojiRecognitionModels: async () => ['视觉 A', '视觉 B'],
   updateEmoji: hoisted.updateEmojiMock,
+  recognizeEmoji: hoisted.recognize,
 }))
 // Markdown 内部依赖 react-markdown，桩成透传 div
 vi.mock('@/components/ui/markdown', () => ({
   Markdown: ({ children }: { children: string }) => <div data-testid="markdown">{children}</div>,
 }))
-vi.mock('@uppy/react/dashboard', () => ({
-  default: () => <div data-testid="uppy-dashboard" />,
-}))
-vi.mock('@uppy/core', () => ({ default: hoisted.FakeUppy }))
-
 afterEach(() => {
   cleanup()
   vi.clearAllMocks()
 })
 
-beforeEach(() => {
-  hoisted.FakeUppy.instances.length = 0
-})
+
 
 function makeEmoji(overrides: Partial<Emoji> = {}): Emoji {
   return {
@@ -94,6 +51,7 @@ function makeEmoji(overrides: Partial<Emoji> = {}): Emoji {
     query_count: 0,
     is_registered: true,
     is_banned: false,
+    is_locked: false,
     status: 'adopted',
     emotion: '开心',
     record_time: 1_710_000_000,
@@ -255,138 +213,6 @@ describe('EmojiEditDialog', () => {
   })
 })
 
-// 拿到组件在 useMemo 中创建的最后一个假 Uppy 实例
-function latestUppy() {
-  const instance = hoisted.FakeUppy.instances.at(-1)
-  expect(instance).toBeDefined()
-  return instance!
-}
-
-function makeUppyFile(id: string, name: string) {
-  return { id, name, data: new File(['x'], name, { type: 'image/png' }) }
-}
-
-describe('EmojiUploadDialog', () => {
-  it('初始处于选择步骤并渲染 Uppy Dashboard', () => {
-    render(<EmojiUploadDialog open onOpenChange={vi.fn()} onSuccess={vi.fn()} />)
-    expect(screen.getByText('上传表情包 - 选择文件')).toBeInTheDocument()
-    expect(screen.getByTestId('uppy-dashboard')).toBeInTheDocument()
-  })
-
-  it('单文件：填写标签后上传成功并关闭对话框', async () => {
-    const user = userEvent.setup()
-    const onOpenChange = vi.fn()
-    const onSuccess = vi.fn()
-    hoisted.postMock.mockResolvedValue(new Response())
-    render(<EmojiUploadDialog open onOpenChange={onOpenChange} onSuccess={onSuccess} />)
-
-    const uppy = latestUppy()
-    uppy.files = [makeUppyFile('f1', 'a.png')]
-    act(() => uppy.emit('upload'))
-
-    expect(await screen.findByText('上传表情包 - 填写信息')).toBeInTheDocument()
-    const uploadButton = screen.getByRole('button', { name: '上传' })
-    // 情感标签必填，未填写时上传按钮禁用
-    expect(uploadButton).toBeDisabled()
-
-    await user.type(screen.getByPlaceholderText('输入一个标签'), 'happy')
-    expect(uploadButton).toBeEnabled()
-    await user.click(uploadButton)
-
-    await waitFor(() => expect(hoisted.postMock).toHaveBeenCalledTimes(1))
-    const [url, options] = hoisted.postMock.mock.calls[0]
-    expect(url).toBe('/mock-upload')
-    expect(options.parse).toBe('response')
-    expect(options.body.get('description')).toBe('happy')
-    expect((options.body.get('file') as File).name).toBe('a.png')
-
-    await waitFor(() =>
-      expect(hoisted.toastMock).toHaveBeenCalledWith(
-        expect.objectContaining({ title: '上传成功', description: '成功上传 1 个表情包' })
-      )
-    )
-    expect(onOpenChange).toHaveBeenCalledWith(false)
-    expect(onSuccess).toHaveBeenCalledTimes(1)
-  })
-
-  it('多文件：逐个填写完成度更新，部分失败时提示且不关闭', async () => {
-    const user = userEvent.setup()
-    const onOpenChange = vi.fn()
-    const onSuccess = vi.fn()
-    render(<EmojiUploadDialog open onOpenChange={onOpenChange} onSuccess={onSuccess} />)
-
-    const uppy = latestUppy()
-    uppy.files = [makeUppyFile('f1', 'a.png'), makeUppyFile('f2', 'b.png')]
-    act(() => uppy.emit('upload'))
-
-    expect(await screen.findByText('上传表情包 - 批量编辑')).toBeInTheDocument()
-    const progressText = (text: string) =>
-      screen.getByText((_, element) => element?.tagName === 'SPAN' && element.textContent === text)
-    expect(progressText('编辑表情包信息(0/2 已完成)')).toBeInTheDocument()
-    expect(screen.getByText('未完成')).toBeInTheDocument()
-
-    // 选中第一个文件并填写标签
-    await user.click(screen.getByText('a.png'))
-    await user.type(screen.getByPlaceholderText('输入一个标签'), 'x')
-    expect(progressText('编辑表情包信息(1/2 已完成)')).toBeInTheDocument()
-
-    // 选中第二个文件并填写标签，全部完成
-    await user.click(screen.getByText('b.png'))
-    const inputs = screen.getAllByPlaceholderText('输入一个标签')
-    await user.type(inputs[inputs.length - 1], 'y')
-    expect(screen.getByText('全部完成')).toBeInTheDocument()
-
-    // 第一个上传成功、第二个失败 → 部分失败提示，onSuccess 仍触发但不关闭
-    hoisted.postMock.mockResolvedValueOnce(new Response())
-    hoisted.postMock.mockRejectedValueOnce(new Error('网络炸了'))
-    await user.click(screen.getByRole('button', { name: '上传全部 (2)' }))
-
-    await waitFor(() =>
-      expect(hoisted.toastMock).toHaveBeenCalledWith(
-        expect.objectContaining({
-          title: '部分上传失败',
-          description: '成功 1 个,失败 1 个',
-          variant: 'destructive',
-        })
-      )
-    )
-    expect(onSuccess).toHaveBeenCalledTimes(1)
-    expect(onOpenChange).not.toHaveBeenCalled()
-  })
-
-  it('编辑步骤点击返回回到文件选择步骤', async () => {
-    render(<EmojiUploadDialog open onOpenChange={vi.fn()} onSuccess={vi.fn()} />)
-    const uppy = latestUppy()
-    uppy.files = [makeUppyFile('f1', 'a.png')]
-    act(() => uppy.emit('upload'))
-    expect(await screen.findByText('上传表情包 - 填写信息')).toBeInTheDocument()
-    fireEvent.click(screen.getByRole('button', { name: '返回' }))
-    expect(await screen.findByText('上传表情包 - 选择文件')).toBeInTheDocument()
-  })
-
-  it('多个标签合并为逗号分隔的 description，空标签被过滤', async () => {
-    const user = userEvent.setup()
-    hoisted.postMock.mockResolvedValue(new Response())
-    render(<EmojiUploadDialog open onOpenChange={vi.fn()} onSuccess={vi.fn()} />)
-    const uppy = latestUppy()
-    uppy.files = [makeUppyFile('f1', 'a.png')]
-    act(() => uppy.emit('upload'))
-    await screen.findByText('上传表情包 - 填写信息')
-
-    await user.type(screen.getByPlaceholderText('输入一个标签'), '开心')
-    // 添加第二个标签并填写，第三个留空
-    await user.click(screen.getByRole('button', { name: '添加标签' }))
-    await user.click(screen.getByRole('button', { name: '添加标签' }))
-    const inputs = screen.getAllByPlaceholderText('输入一个标签')
-    expect(inputs).toHaveLength(3)
-    await user.type(inputs[1], '高兴')
-
-    await user.click(screen.getByRole('button', { name: '上传' }))
-    await waitFor(() => expect(hoisted.postMock).toHaveBeenCalledTimes(1))
-    expect(hoisted.postMock.mock.calls[0][1].body.get('description')).toBe('开心,高兴')
-  })
-})
-
 // jsdom 未实现 Pointer Capture，Radix Select 打开下拉时会调用
 function stubPointerCapture() {
   if (!Element.prototype.hasPointerCapture) {
@@ -398,23 +224,6 @@ function stubPointerCapture() {
   if (!Element.prototype.releasePointerCapture) {
     Element.prototype.releasePointerCapture = () => {}
   }
-}
-
-// disabled 按钮的 native click 不会进 React onClick，改为直接调 fiber props
-function invokeReactClick(element: HTMLElement) {
-  const propsKey = Object.keys(element).find((key) => key.startsWith('__reactProps$'))
-  if (!propsKey) {
-    throw new Error('未找到 React props')
-  }
-  const props = (
-    element as unknown as Record<
-      string,
-      { onClick?: (event: { preventDefault: () => void; stopPropagation: () => void }) => void }
-    >
-  )[propsKey]
-  act(() => {
-    props.onClick?.({ preventDefault() {}, stopPropagation() {} })
-  })
 }
 
 describe('EmojiDetailDialog 覆盖补全', () => {
@@ -562,106 +371,189 @@ describe('EmojiEditDialog 覆盖补全', () => {
   })
 })
 
-describe('EmojiUploadDialog 覆盖补全', () => {
-  it('upload 事件在没有文件时保持选择步骤', () => {
+describe('EmojiUploadDialog', () => {
+  const image = (name: string) => new File(['image'], name, { type: 'image/png' })
+  const choose = (...files: File[]) => fireEvent.change(screen.getByLabelText('选择表情包文件'), { target: { files } })
+  const submit = () => screen.getByRole('button', { name: /确认上传/ })
+
+  it('手动只填内容即可上传，并保留确认的标签', async () => {
     render(<EmojiUploadDialog open onOpenChange={vi.fn()} onSuccess={vi.fn()} />)
-    const uppy = latestUppy()
-    uppy.files = []
-    act(() => uppy.emit('upload'))
-    expect(screen.getByText('上传表情包 - 选择文件')).toBeInTheDocument()
+    expect(screen.getByRole('button', { name: '浏览文件' })).toBeVisible()
+    choose(image('cat.png'))
+    expect(submit()).toBeDisabled()
+    fireEvent.change(screen.getByLabelText('内容标签'), { target: { value: '橙猫、举爪' } })
+    fireEvent.click(submit())
+    await waitFor(() => expect(hoisted.postMock).toHaveBeenCalledOnce())
+    expect(JSON.parse(String(hoisted.postMock.mock.calls[0][1].body.get('tags_json')))).toEqual({
+      emotion_tags: [], content_tags: ['橙猫', '举爪'],
+    })
+    expect(hoisted.recognize).not.toHaveBeenCalled()
   })
 
-  it('关闭对话框时调用 cancelAll，再次打开回到选择步骤', async () => {
-    const props = { onOpenChange: vi.fn(), onSuccess: vi.fn() }
-    const { rerender } = render(<EmojiUploadDialog open {...props} />)
-    const uppy = latestUppy()
-    const cancelAll = vi.spyOn(uppy, 'cancelAll')
-    uppy.files = [makeUppyFile('f1', 'a.png')]
-    act(() => uppy.emit('upload'))
-    expect(await screen.findByText('上传表情包 - 填写信息')).toBeInTheDocument()
-
-    rerender(<EmojiUploadDialog open={false} {...props} />)
-    expect(cancelAll).toHaveBeenCalled()
-
-    rerender(<EmojiUploadDialog open {...props} />)
-    expect(await screen.findByText('上传表情包 - 选择文件')).toBeInTheDocument()
+  it('AI 返回草稿后可修改，点击确认才上传', async () => {
+    hoisted.recognize.mockResolvedValue({ emotion_tags: ['开心'], content_tags: ['猫'] })
+    render(<EmojiUploadDialog open onOpenChange={vi.fn()} onSuccess={vi.fn()} />)
+    choose(image('cat.png'))
+    fireEvent.click(screen.getByRole('button', { name: '自动识别' }))
+    await screen.findByRole('radio', { name: '视觉 A' })
+    fireEvent.click(screen.getByRole('button', { name: '开始识别' }))
+    await screen.findByDisplayValue('猫')
+    expect(screen.getByLabelText('情绪标签')).toHaveValue('开心')
+    expect(hoisted.postMock).not.toHaveBeenCalled()
+    fireEvent.change(screen.getByLabelText('内容标签'), { target: { value: '橙猫' } })
+    fireEvent.click(submit())
+    await waitFor(() => expect(hoisted.postMock).toHaveBeenCalledOnce())
+    expect(String(hoisted.postMock.mock.calls[0][1].body.get('tags_json'))).toContain('橙猫')
   })
 
-  it('文件自带 preview 时直接使用，不调用 createObjectURL', async () => {
-    render(<EmojiUploadDialog open onOpenChange={vi.fn()} onSuccess={vi.fn()} />)
-    const createSpy = vi.spyOn(URL, 'createObjectURL')
-    const uppy = latestUppy()
-    uppy.files = [
-      {
-        id: 'f1',
-        name: 'pred.png',
-        preview: 'blob:already-there',
-        data: new File(['x'], 'pred.png', { type: 'image/png' }),
-      },
-    ]
-    act(() => uppy.emit('upload'))
-    const img = await screen.findByAltText('pred.png')
-    expect(img).toHaveAttribute('src', 'blob:already-there')
-    expect(createSpy).not.toHaveBeenCalled()
+  it.each([true, false])('重复图片仅在确认后覆盖：%s', async (overwrite) => {
+    hoisted.postMock.mockRejectedValueOnce(new ApiError('重复图片', { status: 409 })).mockResolvedValue({})
+    const onSuccess = vi.fn()
+    render(<EmojiUploadDialog open onOpenChange={vi.fn()} onSuccess={onSuccess} />)
+    choose(image('cat.png'))
+    fireEvent.change(screen.getByLabelText('内容标签'), { target: { value: '猫' } })
+    fireEvent.click(submit())
+    await screen.findByRole('alertdialog')
+    expect(hoisted.postMock.mock.calls[0][1].body.has('overwrite')).toBe(false)
+    fireEvent.click(screen.getByRole('button', { name: overwrite ? '确认覆盖' : '跳过这张' }))
+    await waitFor(() => expect(hoisted.toastMock).toHaveBeenCalled())
+    expect(hoisted.postMock).toHaveBeenCalledTimes(overwrite ? 2 : 1)
+    expect(onSuccess).toHaveBeenCalledTimes(overwrite ? 1 : 0)
+    if (overwrite) expect(hoisted.postMock.mock.calls[1][1].body.get('overwrite')).toBe('true')
   })
 
-  it('未填标签时强制触发提交会弹出必填 toast', async () => {
+  it.each([true, false])('同批后续重复表情沿用勾选的处理方式：覆盖=%s', async (overwrite) => {
+    hoisted.postMock.mockImplementation(async (_, { body }) => {
+      if (!body.has('overwrite')) throw new ApiError('重复图片', { status: 409 })
+      return {}
+    })
     render(<EmojiUploadDialog open onOpenChange={vi.fn()} onSuccess={vi.fn()} />)
-    const uppy = latestUppy()
-    uppy.files = [makeUppyFile('f1', 'a.png')]
-    act(() => uppy.emit('upload'))
-    await screen.findByText('上传表情包 - 填写信息')
-    const uploadButton = screen.getByRole('button', { name: '上传' })
-    expect(uploadButton).toBeDisabled()
-    invokeReactClick(uploadButton)
-    await waitFor(() =>
-      expect(hoisted.toastMock).toHaveBeenCalledWith(
-        expect.objectContaining({
-          title: '请填写必填项',
-          description: '每个表情包的情感标签都是必填的',
-          variant: 'destructive',
-        })
-      )
-    )
+    choose(image('one.png'), image('two.png'))
+    fireEvent.click(screen.getByRole('button', { name: '追加内容标签' }))
+    fireEvent.change(screen.getByLabelText('追加的内容标签'), { target: { value: '猫' } })
+    fireEvent.click(screen.getByRole('button', { name: '追加到全部' }))
+    fireEvent.click(submit())
+    fireEvent.click(await screen.findByRole('checkbox', { name: '应用到全部重复表情' }))
+    fireEvent.click(screen.getByRole('button', { name: overwrite ? '确认覆盖' : '跳过这张' }))
+    await waitFor(() => expect(hoisted.toastMock).toHaveBeenCalled())
+    expect(hoisted.postMock).toHaveBeenCalledTimes(overwrite ? 4 : 2)
+    hoisted.postMock.mockResolvedValue({})
   })
 
-  it('多文件：键盘选中、添加/移除标签后返回选择步骤', async () => {
-    const user = userEvent.setup()
+  it.each(['内容标签', '情绪标签'])('整批追加%s时保留原标签并去重', async (label) => {
     render(<EmojiUploadDialog open onOpenChange={vi.fn()} onSuccess={vi.fn()} />)
-    const uppy = latestUppy()
-    uppy.files = [makeUppyFile('f1', 'a.png'), makeUppyFile('f2', 'b.png')]
-    act(() => uppy.emit('upload'))
-    expect(await screen.findByText('上传表情包 - 批量编辑')).toBeInTheDocument()
-    expect(screen.getByText('点击左侧卡片编辑')).toBeInTheDocument()
+    choose(image('one.png'), image('two.png'))
+    fireEvent.change(screen.getByLabelText(label), { target: { value: '原有' } })
+    fireEvent.click(screen.getByRole('button', { name: `追加${label}` }))
+    const input = screen.getByLabelText(`追加的${label}`)
+    fireEvent.change(input, { target: { value: '一、二、三、四、五' } })
+    expect(screen.getByRole('button', { name: '追加到全部' })).toBeEnabled()
+    fireEvent.change(input, { target: { value: '原有、共同、共同' } })
+    fireEvent.click(screen.getByRole('button', { name: '追加到全部' }))
+    await waitFor(() => expect(screen.getByLabelText(label)).toHaveValue('原有、共同'))
+    fireEvent.click(screen.getByRole('button', { name: /编辑第 2 张/ }))
+    expect(screen.getByLabelText(label)).toHaveValue('原有、共同')
+    expect(screen.getByLabelText(label === '内容标签' ? '情绪标签' : '内容标签')).toHaveValue('')
+  })
 
-    const cardA = screen.getByRole('button', { name: /a\.png/ })
-    const cardB = screen.getByRole('button', { name: /b\.png/ })
+  it('可给已有五个标签的表情继续追加长标签', async () => {
+    render(<EmojiUploadDialog open onOpenChange={vi.fn()} onSuccess={vi.fn()} />)
+    choose(image('one.png'), image('two.png'))
+    const original = '一、二、三、四、五'
+    fireEvent.change(screen.getByLabelText('内容标签'), { target: { value: original } })
+    const longTag = '长'.repeat(21)
+    fireEvent.click(screen.getByRole('button', { name: '追加内容标签' }))
+    fireEvent.change(screen.getByLabelText('追加的内容标签'), { target: { value: longTag } })
+    fireEvent.click(screen.getByRole('button', { name: '追加到全部' }))
+    fireEvent.click(screen.getByRole('button', { name: /编辑第 1 张/ }))
+    expect(screen.getByLabelText('内容标签')).toHaveValue(original + '、' + longTag)
+    expect(submit()).toBeEnabled()
+  })
 
-    fireEvent.keyDown(cardB, { key: 'Tab' })
-    expect(screen.getByText('点击左侧卡片编辑')).toBeInTheDocument()
+  it('只锁定正在识别的图片，排队时手改的字段优先于模型结果', async () => {
+    let finish!: () => void
+    hoisted.recognize.mockImplementation(() => new Promise((resolve) => {
+      finish = () => resolve({ emotion_tags: ['开心'], content_tags: ['猫'] })
+    }))
+    render(<EmojiUploadDialog open onOpenChange={vi.fn()} onSuccess={vi.fn()} />)
+    choose(image('one.png'), image('two.png'))
+    fireEvent.click(screen.getByRole('button', { name: '识别全部' }))
+    await screen.findByRole('radio', { name: '视觉 A' })
+    fireEvent.click(screen.getByRole('button', { name: '开始识别' }))
+    expect(screen.getByLabelText('内容标签')).toBeDisabled()
+    fireEvent.click(screen.getByRole('button', { name: /编辑第 2 张/ }))
+    expect(screen.getByLabelText('内容标签')).toBeEnabled()
+    fireEvent.change(screen.getByLabelText('内容标签'), { target: { value: '橙猫' } })
+    finish()
+    await waitFor(() => expect(screen.getByLabelText('内容标签')).toBeDisabled())
+    fireEvent.click(screen.getByRole('button', { name: /编辑第 1 张/ }))
+    expect(screen.getByLabelText('内容标签')).toBeEnabled()
+    finish()
+    await waitFor(() => expect(screen.getByRole('button', { name: '识别全部' })).toBeEnabled())
+    fireEvent.click(screen.getByRole('button', { name: /编辑第 2 张/ }))
+    expect(screen.getByLabelText('内容标签')).toHaveValue('橙猫')
+    expect(screen.getByLabelText('情绪标签')).toHaveValue('开心')
+  })
 
-    fireEvent.keyDown(cardA, { key: 'Enter' })
-    expect(screen.getByPlaceholderText('输入一个标签')).toBeInTheDocument()
+  it('单张可记住指定模型，后续整批识别复用该选择', async () => {
+    hoisted.recognize.mockResolvedValue({ emotion_tags: ['开心'], content_tags: ['猫'] })
+    render(<EmojiUploadDialog open onOpenChange={vi.fn()} onSuccess={vi.fn()} />)
+    choose(image('one.png'), image('two.png'))
+    fireEvent.click(screen.getByRole('button', { name: '自动识别' }))
+    fireEvent.click(await screen.findByRole('radio', { name: '视觉 B' }))
+    fireEvent.click(screen.getByRole('checkbox', { name: '本批后续识别均用此模型' }))
+    fireEvent.click(screen.getByRole('button', { name: '开始识别' }))
+    await screen.findByDisplayValue('猫')
+    fireEvent.click(screen.getByRole('button', { name: '识别全部' }))
+    await waitFor(() => expect(hoisted.recognize).toHaveBeenCalledTimes(3))
+    expect(hoisted.recognize.mock.calls.map(([, , model]) => model)).toEqual(['视觉 B', '视觉 B', '视觉 B'])
+  })
 
-    fireEvent.keyDown(cardB, { key: ' ' })
-    expect(screen.getAllByText('b.png').length).toBeGreaterThanOrEqual(2)
+  it('索引请求完成后推进进度，整批结束刷新表情列表', async () => {
+    let finish!: () => void
+    hoisted.postMock.mockImplementation(() => new Promise<void>((resolve) => { finish = resolve }))
+    const refresh = vi.fn()
+    render(<EmojiUploadDialog open onOpenChange={vi.fn()} onSuccess={refresh} />)
+    choose(image('one.png'), image('two.png'))
+    fireEvent.click(screen.getByRole('button', { name: '追加内容标签' }))
+    fireEvent.change(screen.getByLabelText('追加的内容标签'), { target: { value: '麦麦' } })
+    fireEvent.click(screen.getByRole('button', { name: '追加到全部' }))
+    fireEvent.click(submit())
+    expect(screen.getByRole('progressbar')).toHaveAttribute('aria-valuenow', '0')
+    finish()
+    await waitFor(() => expect(screen.getByRole('progressbar')).toHaveAttribute('aria-valuenow', '1'))
+    expect(refresh).not.toHaveBeenCalled()
+    finish()
+    await waitFor(() => expect(refresh).toHaveBeenCalledOnce())
+    hoisted.postMock.mockResolvedValue({})
+  })
 
-    await user.click(screen.getByRole('button', { name: '添加标签' }))
-    expect(screen.getAllByPlaceholderText('输入一个标签')).toHaveLength(2)
+  it('同批文件独立编辑，重试只提交失败文件', async () => {
+    hoisted.postMock.mockResolvedValueOnce({}).mockRejectedValueOnce(new Error('上传失败')).mockResolvedValueOnce({})
+    render(<EmojiUploadDialog open onOpenChange={vi.fn()} onSuccess={vi.fn()} />)
+    choose(image('one.png'), image('two.png'))
+    fireEvent.change(screen.getByLabelText('情绪标签'), { target: { value: '开心' } })
+    fireEvent.click(screen.getByRole('button', { name: '编辑第 2 张：two.png' }))
+    fireEvent.change(screen.getByLabelText('内容标签'), { target: { value: '猫' } })
+    fireEvent.click(submit())
+    await screen.findByText('已上传 1 张，还有 1 张需要重试')
+    expect(screen.getByLabelText('内容标签')).toHaveValue('猫')
+    fireEvent.click(submit())
+    await waitFor(() => expect(hoisted.postMock).toHaveBeenCalledTimes(3))
+    expect((hoisted.postMock.mock.calls[2][1].body.get('file') as File).name).toBe('two.png')
+  })
 
-    const removeButtons = screen.getAllByTitle('移除标签')
-    await user.click(removeButtons[1])
-    expect(screen.getAllByPlaceholderText('输入一个标签')).toHaveLength(1)
-
-    const lastInput = screen.getByPlaceholderText('输入一个标签')
-    await user.type(lastInput, 'hello')
-    const lastRemove = screen.getByTitle('移除标签')
-    expect(lastRemove).toBeDisabled()
-    invokeReactClick(lastRemove)
-    expect(screen.getByPlaceholderText('输入一个标签')).toHaveValue('')
-
-    fireEvent.click(screen.getByRole('button', { name: '返回' }))
-    expect(await screen.findByText('上传表情包 - 选择文件')).toBeInTheDocument()
+  it('拒绝超量文件，识别出错保留已填写内容', async () => {
+    render(<EmojiUploadDialog open onOpenChange={vi.fn()} onSuccess={vi.fn()} />)
+    choose(...Array.from({ length: 21 }, (_, i) => image(i + '.png')))
+    expect(screen.getByRole('alert')).toHaveTextContent('最多选择 20 张')
+    choose(image('one.png'))
+    fireEvent.change(screen.getByLabelText('情绪标签'), { target: { value: '惊讶' } })
+    hoisted.recognize.mockRejectedValue(new Error('视觉模型不可用'))
+    fireEvent.click(screen.getByRole('button', { name: '自动识别' }))
+    await screen.findByRole('radio', { name: '视觉 A' })
+    fireEvent.click(screen.getByRole('button', { name: '开始识别' }))
+    await screen.findByText('视觉模型不可用')
+    expect(screen.getByLabelText('情绪标签')).toHaveValue('惊讶')
   })
 })
-

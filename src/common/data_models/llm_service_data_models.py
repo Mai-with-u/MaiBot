@@ -266,6 +266,7 @@ class LLMImageOptions(BaseDataModel):
     temperature: float | None = None
     max_tokens: int | None = None
     interrupt_flag: asyncio.Event | None = None
+    model_name: str | None = None
 
 
 @dataclass(slots=True)
