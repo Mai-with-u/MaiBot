@@ -12,6 +12,8 @@ from typing import Literal
 
 from src.config.config_base import ConfigBase, Field
 
+from .chat_hotkey import parse_chat_hotkey
+
 
 def _switch(label: str, **extra: object) -> dict[str, object]:
     return {"x-widget": "switch", "x-layout": "inline-right", "label": {"zh_CN": label}, **extra}
@@ -39,6 +41,13 @@ def _replace_removed_sound(value: object) -> object:
     return "wood" if value == "soft" else value
 
 
+def _validate_chat_hotkey(value: str) -> str:
+    value = value.strip()
+    if value:
+        parse_chat_hotkey(value)
+    return value
+
+
 class DesktopPetConfig(ConfigBase):
     __ui_label__ = "桌宠"
     __ui_order__ = 45
@@ -64,6 +73,11 @@ class DesktopPetConfig(ConfigBase):
 
     show_current_task: bool = Field(default=False, json_schema_extra=_switch("显示桌宠手中事", **_CORE_ROW))
     """在桌宠底部显示当前动作的像素字幕；需单独配置 fast_model，未配置时不可启用。"""
+
+    chat_hotkey: str = Field(default="Ctrl+Alt+M", json_schema_extra={"label": {"zh_CN": "本机聊天快捷键"}})
+    """Windows 本机模式下全局打开聊天并聚焦输入框。支持 Ctrl、Alt、Shift、Win 搭配字母、数字、F1–F24 或 Space，留空关闭。"""
+
+    _normalize_chat_hotkey = field_validator("chat_hotkey")(_validate_chat_hotkey)
 
     skin_id: str = Field(default="builtin", json_schema_extra={"label": {"zh_CN": "当前皮肤"}, **_SKIN_COLUMN})
     """选择已安装的皮肤 ID；支持热切换，builtin 为内置麦麦。"""

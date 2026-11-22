@@ -243,9 +243,9 @@ export function DesktopPetCardBody({
             </Popover>
           </form>
         )}
-        {actionError && (
+        {(actionError || (composerEnabled && status.error)) && (
           <p role="alert" className="text-destructive text-xs break-words">
-            {actionError}
+            {actionError || status.error}
           </p>
         )}
       </div>

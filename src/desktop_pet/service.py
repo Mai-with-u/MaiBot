@@ -122,6 +122,8 @@ class DesktopPetService:
                     await self._stop_screen_reader()
                 await self._publish_screen_state()
                 await self._publish_exploration_state()
+                if self._ready and mode == "local":
+                    await self._configure_chat_hotkey()
                 return
             await self._stop()
             self._error = ""
@@ -336,9 +338,12 @@ class DesktopPetService:
             self._buttons_changed()
             if self._remote is None and not already_ready:
                 self._observe(self._run_todos())
+                self._observe(self._configure_chat_hotkey())
             self._restart_proactive_wake()
             self._observe(self._publish_screen_state())
             self._observe(self._publish_exploration_state())
+        elif kind == "chat_hotkey_pressed" and self._remote is None:
+            self._observe(self._command({"type": "show", "open_chat": True}))
         elif kind == "buttons_refresh":
             self._buttons_changed()
         elif kind == "button_click":
@@ -790,7 +795,7 @@ class DesktopPetService:
                 if current.get(plugin_id) != contribution:
                     continue  # 请求期间已卸载或重载的贡献不能重新出现在窗口里。
                 if isinstance(result, BaseException):
-                    logger.warning("插件 {} 桌宠按钮状态读取失败: {}", plugin_id, result)
+                    logger.warning("插件 %s 桌宠按钮状态读取失败: %s", plugin_id, result)
                     states = {button["id"]: {"visible": True, "disabled": True, "text": str(result)[:200]}
                               for button in contribution["buttons"]}
                 else:
@@ -876,6 +881,9 @@ class DesktopPetService:
             self._pending.pop(command_id, None)
             if not future.done():
                 future.cancel()
+
+    async def _configure_chat_hotkey(self) -> None:
+        await self._command({"type": "chat_hotkey", "value": global_config.desktop_pet.chat_hotkey})
 
     async def apply_skin(self, skin_id: str) -> None:
         from .skins import find_skin

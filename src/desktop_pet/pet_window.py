@@ -23,6 +23,7 @@ import time
 from src.common.atomic_file import quarantine_file
 from src.common.json_storage import read_json, write_json
 
+from .chat_hotkey import ChatHotkey
 from .sounds import MESSAGE_SOUNDS, SOUND_DIRECTORY
 
 if TYPE_CHECKING:
@@ -217,6 +218,7 @@ class PetApi:
 
     def __init__(self, outbox: Outbox, todos: "TodoProxy", state_path: Path, request_dir: Path) -> None:
         self._outbox = outbox
+        self._chat_hotkey = ChatHotkey(lambda: outbox.emit({"type": "chat_hotkey_pressed"}))
         self._todos = todos
         self._state_path = state_path
         self._request_dir = request_dir
@@ -304,6 +306,7 @@ class PetApi:
 
     def _shutdown(self) -> None:
         self._closing = True
+        self._chat_hotkey.configure("")
         if self._exploration_window is not None:
             self._exploration_window.destroy()
         self._window.destroy()
@@ -542,6 +545,10 @@ def execute_command(api: PetApi, window: "webview.Window", command: Dict[str, An
         if command["type"] == "show":
             window.show()
             window.evaluate_js("window.petSkin.visibility(true)")
+            if command.get("open_chat"):
+                window.evaluate_js("window.pet.openChat()")
+        elif command["type"] == "chat_hotkey":
+            api._chat_hotkey.configure(command["value"])
         elif command["type"] == "hide":
             api.drag_end()
             window.hide()

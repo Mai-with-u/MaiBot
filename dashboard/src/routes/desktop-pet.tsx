@@ -26,8 +26,7 @@ export function DesktopPetPage() {
       viewportClassName="max-lg:h-auto max-lg:!overflow-visible max-lg:overscroll-auto"
       scrollbars="vertical"
     >
-      <div className="mx-auto w-full max-w-6xl space-y-4 p-4 sm:p-6">
-        <h1 className="text-2xl font-semibold">{t('observation.pet.statusTitle')}</h1>
+      <div className="mx-auto w-full max-w-6xl p-4 sm:p-6">
         <Board>
           <BoardModule
             code="PET"

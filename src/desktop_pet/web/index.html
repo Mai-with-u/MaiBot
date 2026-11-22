@@ -760,8 +760,8 @@
     }
     modeRegionFrame = requestAnimationFrame(frame);
   }
-  function setMode(mode) {
-    if (locked && mode !== "idle") return;
+  function setMode(mode, fromChatHotkey = false) {
+    if (locked && mode !== "idle" && !fromChatHotkey) return;
     if (stage.dataset.mode === mode) return;
     const fromBubble = mode === "chat" && say.classList.contains("show") ? say.getBoundingClientRect() : null;
     modeAnimation?.cancel();
@@ -1737,6 +1737,10 @@
 
   let todoRefresh = 0;
   window.pet = {
+    openChat() {
+      if (stage.dataset.mode === "chat") chatInput.focus({preventScroll: true});
+      else setMode("chat", true);
+    },
     todoError(text) {
       todoError.textContent = text;
       updateRegion();

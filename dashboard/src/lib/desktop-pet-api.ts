@@ -76,7 +76,7 @@ export function getDesktopPetSkin(skinId: string, signal?: AbortSignal) {
 export type DesktopPetCardState = 'idle' | 'thinking' | 'hidden' | 'starting' | 'waiting' | 'error'
 
 export function desktopPetCardState(status: DesktopPetStatus): DesktopPetCardState {
-  if (status.error || !status.supported) return 'error'
+  if (!status.supported || (status.error && !(status.running && status.ready))) return 'error'
   if (status.mode === 'remote' && !status.running) return 'waiting'
   if (!status.ready) return 'starting'
   if (status.thinking) return 'thinking'
