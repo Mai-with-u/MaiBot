@@ -5,7 +5,7 @@ from src.files.capability import file_capability
 from src.plugin_runtime.host.capability_service import CapabilityImpl
 from src.plugin_runtime.upload_store import claim_upload
 
-from . import desktop_pet, internal_chat, market, personality, web
+from . import desktop_pet, internal_chat, market, media, personality, web
 
 if TYPE_CHECKING:
     from src.plugin_runtime.host.supervisor import PluginSupervisor
@@ -86,6 +86,10 @@ def register_capability_impls(manager: "PluginRuntimeManager", supervisor: "Plug
     _register("person.get_value", manager._cap_person_get_value)
     _register("person.get_id_by_name", manager._cap_person_get_id_by_name)
 
+    for namespace in ("emoji", "image"):
+        _register(f"{namespace}.list", media.list_media)
+        for operation in ("get_by_hash", "get_by_path", "get_relative_path"):
+            _register(f"{namespace}.{operation}", media.get_media)
     _register("emoji.get_by_description", manager._cap_emoji_get_by_description)
     _register("emoji.get_random", manager._cap_emoji_get_random)
     _register("emoji.get_count", manager._cap_emoji_get_count)
