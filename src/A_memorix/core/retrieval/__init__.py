@@ -33,6 +33,13 @@ from .graph_relation_recall import (
     GraphRelationRecallConfig,
     GraphRelationRecallService,
 )
+from .topic_graph_retriever import (
+    TopicClusterSummary,
+    TopicGraphConfig,
+    TopicGraphRetriever,
+    TopicImportanceIndex,
+    TopicImportanceSolver,
+)
 
 __all__ = [
     # 双路检索器（DualPathRetriever）
@@ -63,4 +70,10 @@ __all__ = [
     # 图关系召回（Graph relation recall）
     "GraphRelationRecallConfig",
     "GraphRelationRecallService",
+    # 话题图重要性与零LLM近期对话检索原型（Topic graph retriever）
+    "TopicClusterSummary",
+    "TopicGraphConfig",
+    "TopicGraphRetriever",
+    "TopicImportanceIndex",
+    "TopicImportanceSolver",
 ]

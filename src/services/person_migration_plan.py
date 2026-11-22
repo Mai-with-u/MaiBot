@@ -130,7 +130,7 @@ class DatabasePlan:
         for _, after in moves:
             if after is None:
                 continue
-            for fields, lookup in zip(unique_fields, lookups):
+            for fields, lookup in zip(unique_fields, lookups, strict=True):
                 match = lookup.get(tuple(after[field] for field in fields))
                 if match is not None:
                     for field in keys:
@@ -140,11 +140,11 @@ class DatabasePlan:
                 previous = current[key]
                 label = f"{table}:{dumps(key)}"
                 after = merge(after, previous, label) if merge else self.combine(table, after, previous, label)
-                for fields, lookup in zip(unique_fields, lookups):
+                for fields, lookup in zip(unique_fields, lookups, strict=True):
                     lookup.pop(tuple(previous[field] for field in fields), None)
             current[key] = after
             changed_keys.add(key)
-            for fields, lookup in zip(unique_fields, lookups):
+            for fields, lookup in zip(unique_fields, lookups, strict=True):
                 if all(after[field] is not None for field in fields):
                     lookup[tuple(after[field] for field in fields)] = key
         before_by_key = {tuple(row[key] for key in keys): row for row in original}

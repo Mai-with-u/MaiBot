@@ -1376,7 +1376,7 @@ class AMemorixIntegrationConfig(ConfigBase):
     """每轮自动注入的人物画像数量上限"""
 
     heuristic_memory_recall_enabled: bool = Field(
-        default=False,
+        default=True,
         json_schema_extra={
             "label": {
                 "zh_CN": "启发式拉起记忆",
@@ -1833,7 +1833,7 @@ class AMemorixPluginConfig(ConfigBase):
     """记忆系统  A-Memorix"""
 
     enabled: bool = Field(
-        default=False,
+        default=True,
         json_schema_extra={
             "label": {
                 "zh_CN": "启用记忆",
