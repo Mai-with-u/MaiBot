@@ -83,6 +83,9 @@ MaiSaka 不仅仅是一个机器人，不仅仅是一个可以帮你完成任务
 - **[部署教程](https://docs.maibot.chat/manual/)**  
 <sub><sup>Deployment Guide</sup></sub>
 
+- 在 WebUI 的模型配置中，OpenAI 官方预设默认使用 Responses。已有配置若使用 GPT-6.1 Terra 调用工具，请把提供商的客户端类型设为 `openai_responses`。
+  <sub><sup>The OpenAI preset uses Responses. For tool calling with GPT-6.1 Terra, select <code>openai_responses</code> in existing provider configurations.</sup></sub>
+
 - **方便使用的麦麦启动器下载 (Windows/MAC)**：[Maibot-OK](https://github.com/Mai-with-u/MaiBotOneKey/releases/)  
   <sub><sup><strong>Launcher</strong>: <a href="https://github.com/Mai-with-u/MaiBotOneKey/releases/">Maibot OneKey</a></sup></sub>
 

@@ -1409,6 +1409,36 @@ class OpenaiClient(AdapterClient[AsyncStream[ChatCompletionChunk], ChatCompletio
             request_headers.setdefault(_AUTHORIZATION_HEADER, omit)
         return request_headers or None
 
+    def _omit_unsupported_sampling_params(
+        self, model_identifier: str, body: Dict[str, Any], *, responses: bool
+    ) -> bool:
+        """移除官方模型在当前推理档位不接受的采样参数，并指示调用方省略任务温度。"""
+        if self.client.base_url.host != "api.openai.com":
+            return False
+        model = re.sub(r"-\d{4}-\d{2}-\d{2}$", "", model_identifier)
+        reasoning = body.get("reasoning")
+        effort = reasoning.get("effort") if responses and isinstance(reasoning, dict) else body.get("reasoning_effort")
+        if responses and model == "gpt-5.6-luna" and effort != "none":
+            # #2024 的 Responses 请求在推理时拒绝 temperature。
+            body.pop("temperature", None)
+            return True
+        if model in {"gpt-5.1", "gpt-5.2", "gpt-5.4"}:
+            # 这三个基础模型默认不推理。
+            omit_sampling = effort not in (None, "none")
+        elif model in {"gpt-6.1-terra", "gpt-6-sol", "gpt-6-luna"}:
+            omit_sampling = effort != "none"
+        else:
+            omit_sampling = model in {
+                "gpt-5", "gpt-5-mini", "gpt-5-nano", "gpt-6-astra", "gpt-6.1-sol", "gpt-6.2-astra", "gpt-6.2-sol",
+            }
+        if omit_sampling:
+            for key in ("temperature", "top_p", "top_logprobs", "logprobs"):
+                body.pop(key, None)
+            include = body.get("include")
+            if responses and isinstance(include, list) and "message.output_text.logprobs" in include:
+                body["include"] = [field for field in include if field != "message.output_text.logprobs"]
+        return omit_sampling
+
     def _build_reasoning_scope(self, request: ResponseRequest) -> ProviderScope | None:
         """只在 DeepSeek 官方端点启用 Chat Completions 原生推理回放。"""
 
@@ -1536,9 +1566,21 @@ class OpenaiClient(AdapterClient[AsyncStream[ChatCompletionChunk], ChatCompletio
                     request_overrides.extra_body.pop("tools", None)
                     tools_payload = [*(tools_payload or []), *configured_tools]
 
+            if self.client.base_url.host == "api.openai.com":
+                # 从 Responses 切回 Chat 时，保留已保存的力度和输出预算。
+                body = request_overrides.extra_body
+                reasoning = body.pop("reasoning", None)
+                if isinstance(reasoning, dict) and "effort" in reasoning:
+                    body.setdefault("reasoning_effort", reasoning["effort"])
+                if "max_output_tokens" in body:
+                    body.setdefault("max_completion_tokens", body.pop("max_output_tokens"))
+                if not model_info.force_stream_mode:
+                    body.pop("stream_options", None)
             temperature_argument = (
                 omit if "temperature" in request_overrides.extra_body else _coerce_openai_argument(request.temperature)
             )
+            if self._omit_unsupported_sampling_params(model_info.model_identifier, request_overrides.extra_body, responses=False):
+                temperature_argument = omit
 
             async def _dispatch(use_max_completion_tokens: bool) -> Tuple[APIResponse, UsageTuple | None]:
                 """构造并发起一次 chat.completions 请求。

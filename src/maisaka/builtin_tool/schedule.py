@@ -56,7 +56,7 @@ def get_tool_spec(context: Optional[ToolAvailabilityContext] = None) -> ToolSpec
         description=description,
         parameters_schema={
             "type": "object", "additionalProperties": False, "required": ["action"],
-            "properties": properties, "not": {"required": ["delay_seconds", "due_at"]},
+            "properties": properties,
         },
     )
 
@@ -72,6 +72,8 @@ async def handle_tool(
     args = invocation.arguments
     try:
         action = args["action"]
+        if "delay_seconds" in args and "due_at" in args:
+            raise ValueError("delay_seconds 与 due_at 只能指定一个")
         actions = {"add", "list", "update", "cancel", "complete"}
         if owner:
             actions.update({"delete", "trigger"})

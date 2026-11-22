@@ -450,7 +450,7 @@ function ModelConfigPageContent() {
   // DeepSeek 有专用段（含 Responses 客户端的 reasoning.effort 与联网搜索），不走通用开关
   const thinkingFormatActive: ThinkingFormatConfig | null =
     editingModelType === 'llm' && selectedThinkingTemplate?.id !== 'deepseek'
-      ? resolveThinkingFormatForModel(selectedThinkingTemplate, editingModel?.model_identifier ?? '')
+      ? resolveThinkingFormatForModel(selectedThinkingTemplate, editingModel?.model_identifier ?? '', selectedClientType)
       : null
   const thinkingEnabled = thinkingFormatActive
     ? isThinkingEnabled(modelExtraParams, thinkingFormatActive)
@@ -466,7 +466,8 @@ function ModelConfigPageContent() {
   const thinkingCanDisable =
     thinkingFormatActive?.kind === 'enable_thinking' ||
     (thinkingFormatActive?.kind === 'thinking_type' && thinkingFormatActive.canDisable === true)
-  const thinkingSwitchInteractive = thinkingFormatActive !== null && (thinkingCanDisable || !thinkingEnabled)
+  const thinkingSwitchInteractive = thinkingFormatActive !== null && thinkingFormatActive.kind !== 'reasoning_effort'
+    && (thinkingCanDisable || !thinkingEnabled)
   const thinkingBudget = thinkingFormatActive ? getThinkingBudget(modelExtraParams, thinkingFormatActive) : null
   const thinkingExtraParamsError = thinkingFormatActive
     ? validateThinkingParams(modelExtraParams, thinkingFormatActive)
@@ -1561,7 +1562,7 @@ function ModelConfigPageContent() {
                     {thinkingEffortOptions.length > 0 ? (
                       <Select
                         value={thinkingEffort}
-                        disabled={!thinkingEnabled}
+                        disabled={!thinkingEnabled && thinkingFormatActive.kind !== 'reasoning_effort'}
                         onValueChange={(value) => updateModelExtraParams((params) =>
                           setThinkingEffort(params, thinkingFormatActive, value)
                         )}
@@ -1591,7 +1592,7 @@ function ModelConfigPageContent() {
                   </div>
                   <p className="text-xs text-muted-foreground">
                     {thinkingFormatActive.kind === 'reasoning_effort'
-                      ? '推理模型思考常开，仅支持调整力度档位'
+                      ? `通过 ${thinkingFormatActive.effortParam ?? 'reasoning_effort'} 设置推理力度`
                       : thinkingFormatActive.kind === 'enable_thinking'
                         ? '写入 enable_thinking'
                         : `写入 thinking.type（${thinkingFormatActive.onValue ?? 'enabled'}）`}
@@ -1637,7 +1638,7 @@ function ModelConfigPageContent() {
               </>
             )}
 
-            {editDialogOpen && editingModel && !deepSeekClientType && !thinkingFormatActive &&
+            {editDialogOpen && editingModel && !deepSeekClientType && !selectedThinkingTemplate?.thinking &&
               (selectedClientType === 'openai' || selectedClientType === 'openai_responses') && (
               <ThinkingProbeControls
                 key={JSON.stringify([editingModel.api_provider, editingModel.model_identifier, selectedClientType, selectedProviderConfig?.base_url, editingModel.force_stream_mode])}

@@ -1,9 +1,31 @@
 import { describe, expect, it } from 'vitest'
 
-import { validateThinkingParams } from '../model/thinkingFormats'
+import { getThinkingEffort, isThinkingEnabled, setThinkingEffort, validateThinkingParams } from '../model/thinkingFormats'
 import { findTemplateByBaseUrl, resolveModelFetcherTemplate, resolveThinkingFormatForModel } from '../providerTemplates'
 
 describe('providerTemplates', () => {
+  it('OpenAI 推理档位随模型与协议变化，可读写旧配置并保留其他推理参数', () => {
+    const template = findTemplateByBaseUrl('https://api.openai.com/v1')
+    const terra = resolveThinkingFormatForModel(template, 'gpt-6.1-terra-2026-10-01')!
+    const chat = resolveThinkingFormatForModel(template, 'gpt-6.1-terra', 'openai')!
+    const legacy = { body: { reasoning: { summary: 'auto' }, reasoning_effort: 'high', top_p: 0.9 } }
+    expect(getThinkingEffort(legacy, terra)).toBe('high')
+    const edited = setThinkingEffort(legacy, terra, 'none')
+    expect(edited).toEqual({ body: { top_p: 0.9 }, reasoning: { effort: 'none', summary: 'auto' } })
+    expect(isThinkingEnabled(edited, terra)).toBe(false)
+    expect(getThinkingEffort(edited, chat)).toBe('none')
+    const switched = setThinkingEffort(edited, chat, 'high')
+    expect(switched).toEqual({ body: { top_p: 0.9 }, reasoning: { summary: 'auto' }, reasoning_effort: 'high' })
+    expect(getThinkingEffort(switched, terra)).toBe('high')
+    expect(legacy.body.reasoning_effort).toBe('high')
+    const astra = resolveThinkingFormatForModel(template, 'gpt-6.2-astra')!
+    expect(validateThinkingParams(edited, astra)).toContain('reasoning.effort')
+    expect(validateThinkingParams(edited, terra)).toBeNull()
+    expect(getThinkingEffort({}, resolveThinkingFormatForModel(template, 'gpt-5.4')!)).toBe('none')
+    expect(getThinkingEffort({}, resolveThinkingFormatForModel(template, 'gpt-5.5')!)).toBe('medium')
+    expect(resolveThinkingFormatForModel(template, 'gpt-4.1-mini')).toBeNull()
+  })
+
   it('为未知自定义 OpenAI 兼容端点启用模型列表获取', () => {
     const template = resolveModelFetcherTemplate('https://example.com/v1', 'openai')
 

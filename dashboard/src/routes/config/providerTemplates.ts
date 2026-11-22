@@ -243,7 +243,8 @@ export const PROVIDER_TEMPLATES: ProviderTemplate[] = [
     id: 'openai',
     name: 'OpenAI',
     base_url: 'https://api.openai.com/v1',
-    client_type: 'openai',
+    client_type: 'openai_responses',
+    allowed_client_types: ['openai_responses', 'openai'],
     display_name: 'OpenAI',
     modelFetcher: { endpoint: '/models', parser: 'openai' },
     thinking: {
@@ -356,10 +357,27 @@ export function findTemplateByBaseUrl(baseUrl: string): ProviderTemplate | null 
 
 export function resolveThinkingFormatForModel(
   template: ProviderTemplate | null,
-  modelIdentifier: string
+  modelIdentifier: string,
+  clientType: string | undefined = template?.client_type
 ): ThinkingFormatConfig | null {
   const thinking = template?.thinking
   if (!thinking) return null
+
+  if (template?.id === 'openai') {
+    const model = modelIdentifier.trim().replace(/-\d{4}-\d{2}-\d{2}$/, '')
+    if (['gpt-4.1', 'gpt-4.1-mini', 'gpt-4.1-nano'].includes(model)) return null
+    let efforts = thinking.efforts
+    let defaultEffort = thinking.defaultEffort
+    if (['gpt-5.1', 'gpt-5.2', 'gpt-5.4', 'gpt-5.4-mini', 'gpt-5.4-nano', 'gpt-5.5'].includes(model)) {
+      efforts = model === 'gpt-5.1' ? ['none', 'low', 'medium', 'high'] : ['none', 'low', 'medium', 'high', 'xhigh']
+      defaultEffort = model === 'gpt-5.5' ? 'medium' : 'none'
+    } else if (['gpt-6.1-terra', 'gpt-6-sol', 'gpt-6-luna', 'gpt-5.6', 'gpt-5.6-sol', 'gpt-5.6-terra', 'gpt-5.6-luna'].includes(model)) {
+      efforts = ['none', 'low', 'medium', 'high', 'xhigh', 'max']
+    } else if (['gpt-6.1-sol', 'gpt-6-astra', 'gpt-6.2-sol', 'gpt-6.2-astra'].includes(model)) {
+      efforts = ['low', 'medium', 'high', 'xhigh', 'max']
+    }
+    return { ...thinking, efforts, defaultEffort, effortParam: clientType === 'openai_responses' ? 'reasoning.effort' : 'reasoning_effort' }
+  }
 
   // 普通智谱 API 的 GLM-5.3 系列拒绝关闭思考；Coding 套餐使用独立模板，不受此限制。
   if (template?.id === 'zhipu' && /^glm-5\.3(?:$|-)/i.test(modelIdentifier.trim())) {

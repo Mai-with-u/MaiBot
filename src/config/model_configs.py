@@ -68,7 +68,7 @@ class APIProvider(ConfigBase):
             "x-widget": "select",
         },
     )
-    """客户端类型。内置支持 openai、openai_responses 和 gemini，也可由插件扩展。"""
+    """客户端类型。OpenAI 官方 v1 端点默认 openai_responses，其他端点默认 openai。也支持 gemini 和插件客户端。"""
 
     auth_type: str = Field(
         default=OpenAICompatibleAuthType.BEARER.value,
@@ -186,6 +186,14 @@ class APIProvider(ConfigBase):
         },
     )
     """重试间隔 (如果API调用失败, 重试的间隔时间, 单位: 秒)"""
+
+    def model_post_init(self, context: Any = None) -> None:
+        super().model_post_init(context)
+        if (
+            "client_type" not in self.model_fields_set
+            and self.base_url.rstrip("/").lower() == "https://api.openai.com/v1"
+        ):
+            self.client_type = "openai_responses"
 
 
 def provider_configuration_errors(provider: APIProvider) -> List[str]:

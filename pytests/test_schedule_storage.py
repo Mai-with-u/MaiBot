@@ -159,6 +159,20 @@ def test_snapshot_and_webui_read_new_files_without_loading_old_storage(tmp_path:
 
 
 @pytest.mark.asyncio
+@pytest.mark.parametrize("action", ["add", "update", "list"])
+async def test_schedule_rejects_both_time_fields_before_execution(monkeypatch, sessions, action) -> None:
+    command = AsyncMock()
+    monkeypatch.setattr(schedule, "is_owner_chat", lambda _: False)
+    monkeypatch.setattr(schedule.schedule_service, "command", command)
+    ctx = BuiltinToolRuntimeContext(Mock(), Mock(session_id="group-a"))
+    result = await schedule.handle_tool(ctx, ToolInvocation("schedule", {
+        "action": action, "delay_seconds": 60, "due_at": "2030-01-01T00:00:00Z",
+    }))
+    assert not result.success and "只能指定一个" in result.error_message
+    command.assert_not_called()
+
+
+@pytest.mark.asyncio
 async def test_schedule_records_senders_and_wakes_with_their_ids(tmp_path: Path, monkeypatch, sessions) -> None:
     service = ScheduleService(tmp_path)
     service._store = ScheduleRepository(tmp_path)

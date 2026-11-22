@@ -483,11 +483,11 @@ export function ProviderForm({
                     >
                       <Select
                         value={localProvider?.client_type || 'openai'}
-                        onValueChange={(value) =>
-                          setLocalProvider((prev) =>
-                            prev ? { ...prev, client_type: value } : null
-                          )
-                        }
+                        onValueChange={(value) => {
+                          if (value && !isClientTypeLocked) {
+                            setLocalProvider((prev) => prev ? { ...prev, client_type: value } : null)
+                          }
+                        }}
                         disabled={isClientTypeLocked}
                       >
                         <SelectTrigger id="client_type" data-provider-locked={isClientTypeLocked ? 'true' : undefined}>

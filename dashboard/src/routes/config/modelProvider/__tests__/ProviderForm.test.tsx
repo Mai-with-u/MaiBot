@@ -462,7 +462,7 @@ describe('ProviderForm 弹窗开关与模板选择', () => {
     rejectFetch?.(new Error('late'))
   })
 
-  it('从模板列表选择 OpenAI / Gemini 会填充字段，无 allowed_client_types 时锁定客户端类型', async () => {
+  it('OpenAI 模板默认 Responses 并允许切换，Gemini 模板锁定客户端类型', async () => {
     const user = userEvent.setup()
     renderForm()
 
@@ -470,7 +470,11 @@ describe('ProviderForm 弹窗开关与模板选择', () => {
     await user.click(await screen.findByRole('option', { name: 'OpenAI' }))
     expect(screen.getByLabelText('名称 *')).toHaveValue('OpenAI')
     expect(screen.getByLabelText('基础 URL *')).toHaveValue('https://api.openai.com/v1')
-    expect(screen.getByRole('combobox', { name: '客户端类型' })).toBeDisabled()
+    const clientType = screen.getByRole('combobox', { name: '客户端类型' })
+    expect(clientType).toHaveTextContent('openai_responses')
+    await user.click(clientType)
+    await user.click(screen.getByRole('option', { name: /^openai$/ }))
+    expect(clientType).toHaveTextContent(/^openai$/)
 
     await user.click(getTemplateTrigger())
     await user.click(await screen.findByRole('option', { name: 'Google Gemini' }))
@@ -482,7 +486,7 @@ describe('ProviderForm 弹窗开关与模板选择', () => {
     expect(screen.getByRole('combobox', { name: '客户端类型' })).toHaveTextContent('gemini')
   })
 
-  it('编辑无 allowed_client_types 的 OpenAI 提供商时仍按 URL 匹配模板', async () => {
+  it('编辑已有 OpenAI 提供商时保留原先的 Chat Completions 选择', async () => {
     renderForm({
       editingProvider: makeProvider({
         name: 'OpenAI',
@@ -492,7 +496,7 @@ describe('ProviderForm 弹窗开关与模板选择', () => {
       editingIndex: 0,
     })
     await waitFor(() => expect(getTemplateTrigger()).toHaveTextContent('OpenAI'))
-    expect(screen.getByRole('combobox', { name: '客户端类型' })).toBeDisabled()
+    expect(screen.getByRole('combobox', { name: '客户端类型' })).toHaveTextContent(/^openai$/)
   })
 })
 

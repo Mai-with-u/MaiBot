@@ -252,6 +252,8 @@ def _convert_tool_options(tool_options: Sequence[ToolOption] | None) -> List[Dic
                 "type": "function",
                 "name": tool_option.name,
                 "description": tool_option.description,
+                # MaiBot 工具包含按动作选填的参数，不能让 Responses 自动将其全部设为必填。
+                "strict": False,
                 "parameters": tool_option.parameters_schema or {"type": "object", "properties": {}, "required": []},
             }
         )
@@ -289,6 +291,31 @@ def _merge_native_tools(extra_body: Dict[str, Any], function_tools: List[Dict[st
     if duplicate_names:
         raise ValueError(f"Responses 原生 function tools 与 MaiBot 工具重名: {', '.join(sorted(duplicate_names))}")
     return [*function_tools, *deepcopy(raw_native_tools)]
+
+
+def _normalize_official_responses_options(body: Dict[str, Any], *, stream: bool) -> None:
+    """将旧 OpenAI 预设保存的 Chat 字段投影到 Responses，优先采用原生设置。"""
+    if "reasoning_effort" in body:
+        legacy_effort = body.pop("reasoning_effort")
+        reasoning = body.get("reasoning", {})
+        if isinstance(reasoning, dict):
+            body["reasoning"] = {"effort": legacy_effort, **reasoning}
+    if "max_completion_tokens" in body:
+        body.setdefault("max_output_tokens", body.pop("max_completion_tokens"))
+    if body.pop("logprobs", None) is True:
+        include = body.get("include", [])
+        if isinstance(include, list) and "message.output_text.logprobs" not in include:
+            body["include"] = [*include, "message.output_text.logprobs"]
+    options = body.get("stream_options")
+    if not stream:
+        body.pop("stream_options", None)
+    elif isinstance(options, dict) and "include_usage" in options:
+        # Responses 在结束事件中返回 usage，只转发 Responses 支持的其他流选项。
+        remaining = {key: value for key, value in options.items() if key != "include_usage"}
+        if remaining:
+            body["stream_options"] = remaining
+        else:
+            del body["stream_options"]
 
 
 def _merge_text_config(extra_body: Dict[str, Any], response_format: RespFormat | None) -> Dict[str, Any] | None:
@@ -696,6 +723,8 @@ class OpenAIResponsesClient(OpenaiClient):
             )
             request_overrides = split_openai_request_overrides(request.extra_params)
             extra_body = dict(request_overrides.extra_body)
+            if self.client.base_url.host == "api.openai.com":
+                _normalize_official_responses_options(extra_body, stream=model_info.force_stream_mode)
             if request.tool_choice is not None:
                 extra_body["tool_choice"] = request.tool_choice
 
@@ -710,7 +739,10 @@ class OpenAIResponsesClient(OpenaiClient):
                 "max_output_tokens",
                 request.max_tokens if request.max_tokens is not None else legacy_max_tokens,
             )
-            temperature = extra_body.pop("temperature", request.temperature)
+            if self._omit_unsupported_sampling_params(model_info.model_identifier, extra_body, responses=True):
+                temperature = None
+            else:
+                temperature = extra_body.pop("temperature", request.temperature)
             store = extra_body.pop("store", False)
             if store is not False:
                 raise ValueError("openai_responses 当前固定使用 store=false")

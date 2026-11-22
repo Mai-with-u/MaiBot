@@ -36,10 +36,17 @@ function isRecord(value: unknown): value is Record<string, unknown> {
   return typeof value === 'object' && value !== null && !Array.isArray(value)
 }
 
-// 思考力度参数名：reasoning_effort 格式固定写入 reasoning_effort，其余按模板配置
+// Responses 使用嵌套的 reasoning.effort，Chat Completions 使用 reasoning_effort。
 function getEffortParam(config: ThinkingFormatConfig): string | null {
-  if (config.kind === 'reasoning_effort') return 'reasoning_effort'
+  if (config.kind === 'reasoning_effort') return config.effortParam ?? 'reasoning_effort'
   return config.effortParam ?? null
+}
+
+function readEffortParam(params: Record<string, unknown>, config: ThinkingFormatConfig, key: string): unknown {
+  if (config.kind !== 'reasoning_effort' || !config.effortParam) return params[key]
+  const effective = { ...(isRecord(params.body) ? params.body : {}), ...params }
+  const nested = isRecord(effective.reasoning) ? effective.reasoning.effort : undefined
+  return key === 'reasoning.effort' ? nested ?? effective.reasoning_effort : effective.reasoning_effort ?? nested
 }
 
 // 解析力度档位：已有值在值域内则原样返回，否则回退到默认档位
@@ -56,8 +63,7 @@ export function isThinkingEnabled(
   config: ThinkingFormatConfig
 ): boolean {
   if (config.kind === 'reasoning_effort') {
-    // 推理模型思考常开，仅支持调整力度档位
-    return true
+    return getThinkingEffort(params, config) !== 'none'
   }
   if (config.kind === 'enable_thinking') {
     return params.enable_thinking === true
@@ -72,7 +78,7 @@ export function getThinkingEffort(
 ): string {
   const effortParam = getEffortParam(config)
   if (!effortParam) return ''
-  return resolveEffort(params[effortParam], config)
+  return resolveEffort(readEffortParam(params, config, effortParam), config)
 }
 
 export function setThinkingEffort(
@@ -82,6 +88,25 @@ export function setThinkingEffort(
 ): Record<string, unknown> {
   const effortParam = getEffortParam(config)
   if (!effortParam) return params
+
+  if (config.kind === 'reasoning_effort' && config.effortParam) {
+    const next = { ...params }
+    const body = isRecord(params.body) ? { ...params.body } : undefined
+    const previous = params.reasoning ?? body?.reasoning
+    const reasoning = isRecord(previous) ? { ...previous } : {}
+    delete reasoning.effort
+    delete next.reasoning
+    delete next.reasoning_effort
+    if (body) {
+      delete body.reasoning
+      delete body.reasoning_effort
+      next.body = body
+    }
+    if (effortParam === 'reasoning.effort') reasoning.effort = effort
+    else next.reasoning_effort = effort
+    if (Object.keys(reasoning).length) next.reasoning = reasoning
+    return next
+  }
 
   const nextParams = { ...params, [effortParam]: effort }
   if (config.kind === 'thinking_type') {
@@ -124,7 +149,7 @@ export function setThinkingEnabled(
   enabled: boolean
 ): Record<string, unknown> {
   if (config.kind === 'reasoning_effort') {
-    // 推理模型思考常开，不支持关闭
+    // 此格式从力度下拉框控制，支持的模型可选择 none。
     return params
   }
 
@@ -183,9 +208,9 @@ export function validateThinkingParams(
   }
 
   const effortParam = getEffortParam(config)
-  if (effortParam && params[effortParam] !== undefined) {
+  const value = effortParam ? readEffortParam(params, config, effortParam) : undefined
+  if (effortParam && value !== undefined) {
     const efforts = config.efforts ?? []
-    const value = params[effortParam]
     if (typeof value !== 'string' || (efforts.length > 0 && !efforts.includes(value))) {
       const allowed = efforts.length > 0 ? efforts.join('、') : '字符串'
       return `${effortParam} 只能是 ${allowed}`
