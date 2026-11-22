@@ -1375,3 +1375,33 @@ def test_clear_accepts_committed_pair_from_previous_dimension(tmp_path: Path) ->
     reloaded = VectorStore(dimension=4, data_dir=data_dir, buffer_size=1)
     reloaded.load()
     assert reloaded.num_vectors == 0
+
+@pytest.mark.parametrize("legacy", [False, True])
+def test_unverified_index_is_rebuilt_before_native_load(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch, legacy: bool
+) -> None:
+    store = VectorStore(dimension=2, data_dir=tmp_path, buffer_size=1)
+    store.add(_vector(), ["one"])
+    store._force_train_small_data()
+    store.save()
+
+    meta_path = tmp_path / "vectors_metadata.json"
+    meta = json.loads(meta_path.read_text(encoding="utf-8"))
+    if legacy:
+        del meta["index_sha256"]
+    else:
+        meta["index_sha256"] = "0" * 64
+    meta_path.write_text(json.dumps(meta), encoding="utf-8")
+
+    def reject_unverified_read(path: str) -> None:
+        pytest.fail(f"Attempted native load of unverified index: {path}")
+
+    with monkeypatch.context() as patch:
+        patch.setattr(vector_store_module.faiss, "read_index", reject_unverified_read)
+        VectorStore(dimension=2, data_dir=tmp_path).load()
+
+    repaired_meta = json.loads(meta_path.read_text(encoding="utf-8"))
+    assert repaired_meta["index_sha256"] == store._file_sha256(tmp_path / "vectors.index")
+    reopened = VectorStore(dimension=2, data_dir=tmp_path)
+    reopened.load()
+    assert reopened.search(_vector(), k=1)[0] == ["one"]

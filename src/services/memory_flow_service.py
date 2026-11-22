@@ -26,6 +26,7 @@ from src.services import memory_service as memory_service_module
 from src.services.memory_service import memory_service
 from src.A_memorix.core.image.component_paths import build_chat_external_ref, iter_message_image_components
 from src.A_memorix.host_service import a_memorix_host_service
+from src.A_memorix.runtime_registry import get_runtime_kernel
 
 from .image_writeback_journal import ImageWritebackJournal
 from .person_fact_reverification import reclassify_historical_person_facts
@@ -88,10 +89,7 @@ class PersonFactWritebackService:
         await asyncio.sleep(5)
         while not self._stopping:
             try:
-                if not global_config.a_memorix.integration.person_fact_writeback_enabled:
-                    await asyncio.sleep(30)
-                    continue
-                if not (a_memorix_host_service.get_runtime_data_dir() / "metadata" / "metadata.db").exists():
+                if not global_config.a_memorix.integration.person_fact_writeback_enabled or get_runtime_kernel() is None:
                     await asyncio.sleep(30)
                     continue
                 state = json.loads(state_path.read_text(encoding="utf-8")) if state_path.exists() else {}

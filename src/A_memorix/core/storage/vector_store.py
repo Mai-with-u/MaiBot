@@ -1381,19 +1381,6 @@ class VectorStore:
         self._invalidate_id_map()
         self._is_trained = bool(meta.get("is_trained", False))
         self._vector_norm = "l2"
-        if self._is_trained:
-            index_path = self.data_dir / "vectors.index"
-            index_is_valid = False
-            if index_path.exists() and meta.get("vector_norm") == "l2":
-                try:
-                    self._index = faiss.read_index(str(index_path))
-                    index_is_valid = self._loaded_index_matches_metadata_unlocked()
-                except Exception:
-                    index_is_valid = False
-            if not index_is_valid:
-                self._rebuild_loaded_index_unlocked()
-                with atomic_save_path(index_path) as tmp:
-                    faiss.write_index(self._index, tmp)
 
         migrated_meta = dict(meta)
         migrated_meta["known_hashes"] = list(raw_known_hashes)
@@ -2534,11 +2521,6 @@ class VectorStore:
                         if isinstance(previous_raw, dict) and previous_raw:
                             previous_embedding_fingerprint = dict(previous_raw)
 
-            if self._is_trained:
-                index_path = data_dir / "vectors.index"
-                with atomic_save_path(index_path) as tmp:
-                    faiss.write_index(self._index, tmp)
-
             meta = {
                 "dimension": self.dimension,
                 "quantization_type": self.quantization_type.value,
@@ -2553,6 +2535,8 @@ class VectorStore:
                     "id_bytes": id_bytes,
                 },
             }
+            if self._is_trained:
+                meta["index_sha256"] = self._write_index_with_digest(data_dir / "vectors.index")
             if isinstance(embedding_fingerprint, dict) and embedding_fingerprint:
                 meta["embedding_fingerprint"] = dict(embedding_fingerprint)
             elif previous_embedding_fingerprint is not None:
@@ -2676,37 +2660,48 @@ class VectorStore:
                 v1_evidence_root=v1_evidence_root,
             )
 
-            if meta.get("vector_norm") != "l2":
-                logger.warning("Index IDMap2 version mismatch (L2 Norm), forcing rebuild...")
-                self._known_hashes = set(meta.get("ids", [])) | set(meta.get("known_hashes", []))
-                self._deleted_ids = set(meta.get("deleted_ids", []))
-                self._invalidate_id_map()
-                self._rebuild_loaded_index_unlocked()
-                return
-
             self._is_trained = meta.get("is_trained", False)
-            self._vector_norm = meta.get("vector_norm", "l2")
+            self._vector_norm = "l2"
             self._deleted_ids = set(meta.get("deleted_ids", []))
             self._known_hashes = set(meta.get("known_hashes", []))
             self._invalidate_id_map()
             self._invalidate_id_offsets()
 
-            if self._is_trained:
-                if idx_path.exists():
-                    try:
-                        self._index = faiss.read_index(str(idx_path))
-                    except Exception as e:
-                        logger.error(f"Failed to load index: {e}. Rebuilding...")
-                        self._rebuild_loaded_index_unlocked()
-                    else:
-                        if not self._loaded_index_matches_metadata_unlocked():
-                            logger.warning(
-                                "Loaded index ID multiset does not match active metadata. Rebuilding from pair..."
-                            )
-                            self._rebuild_loaded_index_unlocked()
+            if meta.get("vector_norm") != "l2":
+                self._known_hashes.update(meta.get("ids", []))
+                reason = "向量归一化格式变更"
+            elif not self._is_trained:
+                return
+            elif not idx_path.exists():
+                reason = "缺少索引文件"
+            elif not meta.get("index_sha256"):
+                reason = "历史索引缺少校验值"
+            elif self._file_sha256(idx_path) != meta["index_sha256"]:
+                reason = "索引 SHA-256 校验失败"
+            else:
+                try:
+                    self._index = faiss.read_index(str(idx_path))
+                except RuntimeError as exc:
+                    reason = f"FAISS 加载失败: {exc}"
                 else:
-                    logger.warning("Index file missing despite metadata indicating trained. Rebuilding from bin...")
-                    self._rebuild_loaded_index_unlocked()
+                    if self._loaded_index_matches_metadata_unlocked():
+                        return
+                    reason = "索引 ID 与元数据不一致"
+
+            logger.warning(f"{idx_path}: {reason}，从原始向量重建索引")
+            self._rebuild_loaded_index_unlocked()
+            meta.update(vector_norm="l2", is_trained=self._is_trained, known_hashes=sorted(self._known_hashes))
+            if self._is_trained:
+                meta["index_sha256"] = self._write_index_with_digest(idx_path)
+            else:
+                meta.pop("index_sha256", None)
+            _write_json_object(meta_path, meta)
+
+    def _write_index_with_digest(self, path: Path) -> str:
+        with atomic_save_path(path) as tmp:
+            faiss.write_index(self._index, tmp)
+            digest = self._file_sha256(Path(tmp))
+        return digest
 
     def _migrate_from_npy(self, npy_path, idx_path, data_dir):
         with self._lock:
