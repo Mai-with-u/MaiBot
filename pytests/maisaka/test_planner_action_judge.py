@@ -16,9 +16,9 @@ from src.maisaka import planner_action_judge as module
 
 @pytest.mark.parametrize("arguments,valid", [
     ({"chat_anlyze": "facts", "reply_style": "长回复", "plugin_options": {"enabled": True}}, True),
-    ({"reply_style": "长回复"}, False),
+    ({"reply_style": "长回复", "text": "正文"}, False),
     ({"chat_anlyze": "facts", "reply_style": "invalid"}, False),
-    ({"chat_anlyze": "facts", "unknown": True}, False),
+    ({"chat_anlyze": "facts", "text": "正文"}, True),
 ])
 def test_judge_uses_live_schema_and_preserves_arguments(monkeypatch, arguments, valid):
     schema = {
@@ -45,7 +45,8 @@ def test_judge_uses_live_schema_and_preserves_arguments(monkeypatch, arguments, 
         call = module.complete_missing_planner_action(items, tools, session_id="session", logical_turn_id="turn")
         if valid:
             judgment = await call
-            assert judgment.tool_call.tool_call.materialize_args() == arguments
+            expected = {key: value for key, value in arguments.items() if key in schema["properties"]}
+            assert judgment.tool_call.tool_call.materialize_args() == expected
             assert judgment.tool_call.meta.logical_turn_id == "turn"
             assert judgment.metadata["action"] == "reply"
         else:

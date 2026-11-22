@@ -108,12 +108,10 @@ async def complete_missing_planner_action(
     if len(calls) != 1:
         raise RespParseException(message="Planner 动作判断器必须返回且仅返回一个 reply 或 wait 工具调用")
     action = calls[0].func_name
-    arguments = calls[0].materialize_args()
     if action not in {"reply", "wait"}:
         raise RespParseException(message=f"Planner 动作判断器返回了无效工具：{action!r}")
     schema = tools[action].parameters_schema
-    if filter_tool_arguments(arguments, schema) != arguments:
-        raise RespParseException(message=f"Planner 动作判断器返回了未声明的工具参数：{arguments!r}")
+    arguments = filter_tool_arguments(calls[0].materialize_args(), schema)
     try:
         await asyncio.to_thread(validate, arguments, schema)
     except ValidationError as exc:
