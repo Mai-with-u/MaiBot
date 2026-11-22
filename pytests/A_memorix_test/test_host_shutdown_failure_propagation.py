@@ -63,10 +63,8 @@ async def check_host_shutdown(tmp_path, monkeypatch, failure):
     kernel.metadata_store = Metadata()
     monkeypatch.setattr(kernel, "_stop_background_tasks", stop_background)
     monkeypatch.setattr(kernel, "_persist", persist)
-    # 不读取实际 config 或启动 Host；仅构造 stop() 所需的状态。
-    host = object.__new__(AMemorixHostService)
-    host._lock = asyncio.Lock()
-    host._startup_task = None
+    # 使用宿主正常的生命周期状态，在不启动服务的情况下注入测试内核。
+    host = AMemorixHostService()
     host._kernel = kernel
     host._runtime_state = "running"
     try:
