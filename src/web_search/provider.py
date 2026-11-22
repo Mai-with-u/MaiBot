@@ -16,6 +16,7 @@ from src.core.tooling import (
 from src.maisaka.tool_result_store import ToolResultStore, tool_result_store
 
 from .adapters.plugin import find_web_plugin
+from .adapters.tavily import FETCH_DEPENDENCIES, FETCH_OPTIONS, SEARCH_OPTIONS
 from .config import WebRuntimeConfig, WebSearchConfigError
 from .models import PageResult, WebSearchError
 from .service import WebSearchService
@@ -72,6 +73,7 @@ class WebSearchToolProvider:
                         "properties": {
                             "query": {"type": "string", "minLength": 1, "maxLength": limit},
                             "max_results": {"type": "integer", "minimum": 1, "maximum": max_results, "default": 5},
+                            **(SEARCH_OPTIONS if adapter == "tavily" else {}),
                         },
                         "required": ["query"],
                         "additionalProperties": False,
@@ -79,6 +81,8 @@ class WebSearchToolProvider:
                 )
             )
         if available(config.fetch, "web_fetch"):
+            service = config.services.get(config.fetch)
+            tavily_fetch = service is not None and service.adapter == "tavily"
             specs.append(
                 ToolSpec(
                     name="web_fetch",
@@ -91,7 +95,11 @@ class WebSearchToolProvider:
                     annotation=annotation,
                     parameters_schema={
                         "type": "object",
-                        "properties": {"url": {"type": "string", "maxLength": 8192}},
+                        "properties": {
+                            "url": {"type": "string", "maxLength": 8192},
+                            **(FETCH_OPTIONS if tavily_fetch else {}),
+                        },
+                        **({"dependentRequired": FETCH_DEPENDENCIES} if tavily_fetch else {}),
                         "required": ["url"],
                         "additionalProperties": False,
                     },
@@ -120,6 +128,8 @@ class WebSearchToolProvider:
                 result.content if isinstance(result, PageResult) else json.dumps(payload, ensure_ascii=False, indent=2)
             )
             if len(raw) > MAX_STORED_CHARS:
+                if isinstance(result, PageResult) and config.services[source].adapter == "tavily":
+                    raise WebSearchError("网页正文超过 500000 字符，请在 web_fetch 中使用 query 提取相关段落")
                 raise WebSearchError("联网结果超过 500000 字符的存储限制，请缩小查询范围")
             result_id = self.store.save(session_id, invocation.tool_name, raw)
             preview = raw[: config.preview_chars]

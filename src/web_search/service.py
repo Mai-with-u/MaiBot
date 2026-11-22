@@ -68,7 +68,8 @@ class WebSearchService:
         try:
             async with asyncio.timeout(settings.timeout):
                 if search:
-                    if set(arguments) - {"query", "max_results"}:
+                    options = {key: value for key, value in arguments.items() if key not in {"query", "max_results"}}
+                    if options and not isinstance(adapter, TavilyAdapter):
                         raise WebSearchError("web_search 仅支持 query 和 max_results")
                     query = arguments.get("query")
                     count = arguments.get("max_results", 5)
@@ -76,7 +77,7 @@ class WebSearchService:
                         raise WebSearchError("query 必须是非空字符串且不超过 1000 个字符")
                     if type(count) is not int or not 1 <= count <= 20:
                         raise WebSearchError("max_results 必须是 1 到 20 的整数")
-                    result = await adapter.search(query.strip(), count)
+                    result = await adapter.search(query.strip(), count, **options)
                     for item in result.results:
                         validate_url(item.url)
                         if not all(isinstance(value, str) for value in (item.title, item.snippet, item.summary)):
@@ -84,9 +85,12 @@ class WebSearchService:
                         if item.published_at is not None and not isinstance(item.published_at, str):
                             raise WebSearchError("搜索服务返回了无效日期字段")
                     return result
-                if set(arguments) != {"url"}:
+                options = {key: value for key, value in arguments.items() if key != "url"}
+                if "url" not in arguments and isinstance(adapter, TavilyAdapter):
+                    raise WebSearchError("web_fetch 缺少必填参数 url")
+                if "url" not in arguments or (options and not isinstance(adapter, TavilyAdapter)):
                     raise WebSearchError("web_fetch 仅支持必填参数 url")
-                page = await adapter.fetch(validate_url(arguments["url"]))
+                page = await adapter.fetch(validate_url(arguments["url"]), **options)
                 validate_url(page.url)
                 if not isinstance(page.title, str) or not isinstance(page.content, str) or not page.content.strip():
                     raise WebSearchError("网页读取服务没有返回有效正文")
