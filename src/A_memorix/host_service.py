@@ -2,7 +2,7 @@ from __future__ import annotations
 
 from datetime import datetime
 from pathlib import Path
-from typing import TYPE_CHECKING, Any, Dict, Optional, Sequence, Tuple
+from typing import TYPE_CHECKING, Any, Dict, Optional, Sequence, Set, Tuple
 
 import asyncio
 import base64
@@ -31,6 +31,7 @@ from .paths import default_data_dir, repo_root, resolve_repo_path, schema_path
 from .runtime_registry import set_runtime_kernel
 
 if TYPE_CHECKING:
+    from src.services.recent_chat_memory import RecentChatMemorySearch
     from .core.runtime.sdk_memory_kernel import SDKMemoryKernel
 
 logger = get_logger("a_memorix.host_service")
@@ -100,6 +101,8 @@ class AMemorixHostService:
         self._config_update_lock = asyncio.Lock()
         self._queue_lock = asyncio.Lock()
         self._kernel: Optional[SDKMemoryKernel] = None
+        self._recent_chat_search: Optional[RecentChatMemorySearch] = None
+        self._recent_chat_tasks: Set[asyncio.Task] = set()
         self._startup_task: Optional[asyncio.Task] = None
         self._runtime_state = "stopped"
         self._startup_error = ""
@@ -281,6 +284,23 @@ class AMemorixHostService:
             if action == "restore":
                 return await settled_thread(service.restore, **arguments)
             raise ValueError("未知记忆迁移动作")
+
+        if component_name == "retrieve_recent_chat_context":
+            from src.services.recent_chat_memory import RecentChatMemorySearch
+
+            chat_id = payload["chat_id"]
+            shared_ids = tuple(resolve_scope(chat_id, "memory")[0]) if payload["cross_chat"] else ()
+            if self._recent_chat_search is None:
+                self._recent_chat_search = RecentChatMemorySearch()
+            task = asyncio.create_task(self._recent_chat_search.search(
+                kernel, messages=payload["messages"], chat_id=chat_id, group_id=payload["group_id"],
+                shared_chat_ids=shared_ids, window_size=payload["window_size"], limit=payload["limit"],
+            ))
+            self._recent_chat_tasks.add(task)
+            try:
+                return await task
+            finally:
+                self._recent_chat_tasks.discard(task)
 
         if component_name == "search_memory":
             from .core.runtime.sdk_memory_kernel import KernelSearchRequest
@@ -631,13 +651,15 @@ class AMemorixHostService:
         message = "A_Memorix 正在初始化" if initializing else f"A_Memorix 初始化失败: {self._startup_error}"
         base = {
             "success": component_name == "memory_runtime_admin"
-            or (not failed and component_name in {"search_memory", "get_person_profile", "memory_stats"}),
+            or (not failed and component_name in {
+                "search_memory", "retrieve_recent_chat_context", "get_person_profile", "memory_stats",
+            }),
             "reason": reason,
             "message": message,
             **status,
         }
-        if component_name == "search_memory":
-            return {**base, "summary": "", "hits": [], "filtered": False}
+        if component_name in {"search_memory", "retrieve_recent_chat_context"}:
+            return {**base, "summary": "", "hits": [], "filtered": False, "retrieval_status": "unavailable"}
         if component_name == "get_person_profile":
             return {**base, "summary": "", "traits": [], "evidence": []}
         if component_name == "memory_stats":
@@ -968,11 +990,12 @@ class AMemorixHostService:
         reason = "a_memorix_disabled"
         message = "A_Memorix 未启用，请在长期记忆配置中开启后再使用。"
 
-        if component_name == "search_memory":
+        if component_name in {"search_memory", "retrieve_recent_chat_context"}:
             return {
                 "success": True,
                 "disabled": True,
                 "reason": reason,
+                "retrieval_status": "unavailable",
                 "summary": "",
                 "hits": [],
                 "filtered": False,
@@ -1057,6 +1080,12 @@ class AMemorixHostService:
             except asyncio.CancelledError:
                 pass
         self._startup_task = None
+
+        if self._kernel is not None:
+            self._runtime_state = "stopping"
+        if self._recent_chat_tasks:
+            await asyncio.gather(*self._recent_chat_tasks, return_exceptions=True)
+        self._recent_chat_search = None
 
         if self._kernel is None:
             self._runtime_state = "stopped"

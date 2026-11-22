@@ -4,7 +4,8 @@ from __future__ import annotations
 
 from dataclasses import dataclass, field
 from time import time
-from typing import Sequence
+from typing import Dict, List, Sequence
+import asyncio
 
 from src.chat.message_receive.chat_manager import BotChatSession, chat_manager
 from src.chat.message_receive.message import SessionMessage
@@ -33,6 +34,7 @@ class HeuristicMemoryRecallState:
     last_message_count: int = 0
     cached_reference: str = ""
     cache_expires_at: float = 0.0
+    refresh_lock: asyncio.Lock = field(default_factory=asyncio.Lock)
 
 
 @dataclass(frozen=True)
@@ -67,18 +69,25 @@ class HeuristicMemoryInjector:
             self.clear_session_reference(session_id)
             return ""
 
-        session = chat_manager.get_existing_session_by_session_id(session_id)
+        session = chat_manager.get_session_by_session_id(session_id)
+        if session is None:
+            session = await asyncio.to_thread(chat_manager.get_existing_session_by_session_id, session_id)
         if session is None:
             logger.debug(f"启发式记忆跳过：无法解析真实聊天流 session_id={session_id!r}")
             return ""
 
+        state = self._states.setdefault(session.session_id, HeuristicMemoryRecallState())
+        async with state.refresh_lock:
+            return await self._refresh_session_reference(session, state)
+
+    async def _refresh_session_reference(self, session: BotChatSession, state: HeuristicMemoryRecallState) -> str:
+        config = global_config.a_memorix.integration
         window_size = config.heuristic_memory_recall_window_size
-        total_message_count = count_messages(session_id=session.session_id)
+        total_message_count = await asyncio.to_thread(count_messages, session_id=session.session_id)
         if total_message_count < window_size:
             self.clear_session_reference(session.session_id)
             return ""
 
-        state = self._states.setdefault(session.session_id, HeuristicMemoryRecallState())
         now = time()
         cache_ttl = config.heuristic_memory_recall_cache_ttl_seconds
         if state.cached_reference and cache_ttl > 0 and now < state.cache_expires_at:
@@ -94,7 +103,8 @@ class HeuristicMemoryInjector:
             self.clear_session_reference(session.session_id)
             return ""
 
-        recent_messages = find_messages(
+        recent_messages = await asyncio.to_thread(
+            find_messages,
             session_id=session.session_id,
             limit=window_size,
             limit_mode="latest",
@@ -111,18 +121,33 @@ class HeuristicMemoryInjector:
             total_message_count=total_message_count,
         )
         try:
-            impression = await self._build_chat_impression(context)
-            if not impression:
-                self.clear_session_reference(session.session_id)
-                return ""
-            hits = await self._search_related_memory(impression, context)
+            if session.is_group_session:
+                result = await memory_service.retrieve_recent_chat_context(
+                    messages=[message.processed_plain_text for message in recent_messages if message.processed_plain_text],
+                    chat_id=session.session_id,
+                    group_id=str(session.group_id),
+                    limit=min(20, config.heuristic_memory_recall_limit * 4),
+                    window_size=window_size,
+                    cross_chat=config.heuristic_memory_cross_chat_enabled,
+                )
+                if result.retrieval_status == "unavailable" and result.success:
+                    return ""
+                if not result.success:
+                    raise RuntimeError(result.error or result.retrieval_status)
+                hits = await self._filter_related_hits(result.hits, context, config.heuristic_memory_recall_limit)
+            else:
+                impression = await self._build_chat_impression(context)
+                if not impression:
+                    self.clear_session_reference(session.session_id)
+                    return ""
+                hits = await self._search_related_memory(impression, context)
             reference = self._format_reference(
                 hits,
                 max_chars=config.heuristic_memory_recall_max_chars,
             )
         except Exception as exc:
             self.clear_session_reference(session.session_id)
-            logger.debug(f"启发式记忆自然拉起失败，已跳过: {exc}", exc_info=True)
+            logger.warning(f"启发式记忆自然拉起失败: {exc}", exc_info=True)
             return ""
 
         state.last_recall_at = now
@@ -191,10 +216,20 @@ class HeuristicMemoryInjector:
         if not result.success or result.filtered:
             return []
 
-        resolved_sources = await self._resolve_hit_sources_by_hash(result.hits)
+        return await self._filter_related_hits(result.hits, context, limit)
+
+    async def _filter_related_hits(
+        self, hits: Sequence[MemoryHit], context: HeuristicMemoryContext, limit: int
+    ) -> List[MemoryHit]:
+        resolved_sources = await self._resolve_hit_sources_by_hash(hits)
+        return await asyncio.to_thread(self._select_hits, hits, context, limit, resolved_sources)
+
+    def _select_hits(
+        self, hits: Sequence[MemoryHit], context: HeuristicMemoryContext, limit: int, resolved_sources: Dict[str, str]
+    ) -> List[MemoryHit]:
         filtered: list[MemoryHit] = []
         seen_hashes: set[str] = set()
-        for hit in result.hits:
+        for hit in hits:
             resolved_source = resolved_sources.get(hit.hash_value, "")
             if not self._is_hit_allowed(hit, context, resolved_source=resolved_source):
                 continue
