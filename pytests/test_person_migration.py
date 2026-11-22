@@ -17,7 +17,7 @@ from src.common.database.database_model import ChatSession, Messages, PersonInfo
 from src.common.process_lease import ProcessLease, instance_lock_path
 from src.common.utils.utils_session import SessionUtils
 from src.person_info.identity import (
-    load_aliases, normalize_message_identity, person_id_for, resolve_person_id,
+    normalize_message_identity, person_id_for, resolve_person_id,
     resolve_private_transport_user, resolve_user_id,
 )
 from src.services import person_migration_service as service

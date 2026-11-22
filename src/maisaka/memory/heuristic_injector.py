@@ -123,7 +123,9 @@ class HeuristicMemoryInjector:
         try:
             if session.is_group_session:
                 result = await memory_service.retrieve_recent_chat_context(
-                    messages=[message.processed_plain_text for message in recent_messages if message.processed_plain_text],
+                    messages=[
+                        message.processed_plain_text for message in recent_messages if message.processed_plain_text
+                    ],
                     chat_id=session.session_id,
                     group_id=str(session.group_id),
                     limit=min(20, config.heuristic_memory_recall_limit * 4),

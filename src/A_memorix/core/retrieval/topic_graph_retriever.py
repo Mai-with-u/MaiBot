@@ -687,7 +687,9 @@ class TopicImportanceSolver:
         )
 
         if pe_weights:
-            weighted_vals = np.asarray(pe_weights, dtype=np.float32) * node_idf[np.asarray(pe_u_indices, dtype=np.int32)]
+            weighted_vals = (
+                np.asarray(pe_weights, dtype=np.float32) * node_idf[np.asarray(pe_u_indices, dtype=np.int32)]
+            )
             raw_pn = coo_matrix(
                 (weighted_vals, (pe_p_indices, pe_u_indices)),
                 shape=(num_paragraphs, num_nodes),
@@ -743,7 +745,9 @@ class TopicImportanceSolver:
             else np.zeros((0, 2), dtype=np.int32)
         )
         relation_weights = (
-            np.asarray(relation_weight_list, dtype=np.float32) if num_relations > 0 else np.zeros((0,), dtype=np.float32)
+            np.asarray(relation_weight_list, dtype=np.float32)
+            if num_relations > 0
+            else np.zeros((0,), dtype=np.float32)
         )
 
         relation_vectors, relation_has_vector = self._fetch_vectors_matrix(
@@ -839,9 +843,7 @@ class TopicImportanceSolver:
         para_probe_csls_bias = (
             paragraph_csls_bias[p_sample_idx].copy() if p_sample_idx.size > 0 else np.zeros((0,), dtype=np.float32)
         )
-        entity_probe_csls_bias = (
-            node_csls_bias[e_take].copy() if e_take.size > 0 else np.zeros((0,), dtype=np.float32)
-        )
+        entity_probe_csls_bias = node_csls_bias[e_take].copy() if e_take.size > 0 else np.zeros((0,), dtype=np.float32)
         relation_probe_csls_bias = (
             relation_csls_bias[r_take].copy() if r_take.size > 0 else np.zeros((0,), dtype=np.float32)
         )
@@ -881,12 +883,18 @@ class TopicImportanceSolver:
             else np.zeros((int(r_take.size), int(e_take.size)), dtype=bool)
         )
         ee_cooccur = (
-            (np.eye(int(e_take.size), dtype=bool) | ((e_probe_inc.astype(np.int16) @ e_probe_inc.astype(np.int16).T) > 0))
+            (
+                np.eye(int(e_take.size), dtype=bool)
+                | ((e_probe_inc.astype(np.int16) @ e_probe_inc.astype(np.int16).T) > 0)
+            )
             if e_take.size > 0
             else np.zeros((0, 0), dtype=bool)
         )
         rr_cooccur = (
-            (np.eye(int(r_take.size), dtype=bool) | ((r_probe_inc.astype(np.int16) @ r_probe_inc.astype(np.int16).T) > 0))
+            (
+                np.eye(int(r_take.size), dtype=bool)
+                | ((r_probe_inc.astype(np.int16) @ r_probe_inc.astype(np.int16).T) > 0)
+            )
             if r_take.size > 0
             else np.zeros((0, 0), dtype=bool)
         )
@@ -1068,7 +1076,9 @@ class TopicImportanceSolver:
 
         added_hashes = [h for h in current_hashes if h not in existing.paragraph_hash_to_idx]
         total_drift = len(current_hashes) - existing.base_paragraph_count
-        max_allowed_drift = max(6, int(round(float(existing.base_paragraph_count) * float(self.config.incremental_drift_ratio))))
+        max_allowed_drift = max(
+            6, int(round(float(existing.base_paragraph_count) * float(self.config.incremental_drift_ratio)))
+        )
         if total_drift > max_allowed_drift:
             return None
 
@@ -1141,7 +1151,9 @@ class TopicImportanceSolver:
         )
 
         if pe_weights:
-            weighted_vals = np.asarray(pe_weights, dtype=np.float32) * node_idf[np.asarray(pe_u_indices, dtype=np.int32)]
+            weighted_vals = (
+                np.asarray(pe_weights, dtype=np.float32) * node_idf[np.asarray(pe_u_indices, dtype=np.int32)]
+            )
             raw_pn = coo_matrix(
                 (weighted_vals, (pe_p_indices, pe_u_indices)),
                 shape=(num_paragraphs, num_nodes),
@@ -1248,7 +1260,9 @@ class TopicImportanceSolver:
             else np.zeros((0, 2), dtype=np.int32)
         )
         relation_weights = (
-            np.asarray(relation_weight_list, dtype=np.float32) if num_relations > 0 else np.zeros((0,), dtype=np.float32)
+            np.asarray(relation_weight_list, dtype=np.float32)
+            if num_relations > 0
+            else np.zeros((0,), dtype=np.float32)
         )
 
         pr_rows = (
@@ -1277,7 +1291,9 @@ class TopicImportanceSolver:
             t_low = content_low_by_hash.get(p_hash, "")
             s_in = bool(subj and subj in t_low)
             o_in = bool(obj and obj in t_low)
-            grounding = 1.0 if (s_in and o_in) else ((0.62 if (pred and pred in t_low) else 0.50) if (s_in or o_in) else 0.25)
+            grounding = (
+                1.0 if (s_in and o_in) else ((0.62 if (pred and pred in t_low) else 0.50) if (s_in or o_in) else 0.25)
+            )
             w_val = grounding * float(relation_weights[r_idx])
             pr_p.append(p_idx)
             pr_r.append(r_idx)
@@ -1285,7 +1301,11 @@ class TopicImportanceSolver:
             paragraph_relation_lists[p_idx].append((r_idx, w_val))
 
         paragraph_relation_matrix = (
-            coo_matrix((np.asarray(pr_w, dtype=np.float32), (pr_p, pr_r)), shape=(num_paragraphs, num_relations), dtype=np.float32).tocsr()
+            coo_matrix(
+                (np.asarray(pr_w, dtype=np.float32), (pr_p, pr_r)),
+                shape=(num_paragraphs, num_relations),
+                dtype=np.float32,
+            ).tocsr()
             if pr_w
             else csr_matrix((num_paragraphs, num_relations), dtype=np.float32)
         )
@@ -1440,7 +1460,9 @@ class TopicImportanceSolver:
         if query_ref.shape[0] >= 4:
             mean_q = np.mean(query_ref, axis=0)
             q_cone_sq = float(np.dot(mean_q, mean_q))
-            query_cone_shift = (0.88 * mean_q).astype(np.float32) if q_cone_sq > 0.14 else np.zeros((dimension,), dtype=np.float32)
+            query_cone_shift = (
+                (0.88 * mean_q).astype(np.float32) if q_cone_sq > 0.14 else np.zeros((dimension,), dtype=np.float32)
+            )
         else:
             query_cone_shift = np.zeros((dimension,), dtype=np.float32)
 
@@ -1473,7 +1495,9 @@ class TopicImportanceSolver:
             ee = entity_probe_vectors @ entity_probe_vectors.T
             if entity_probe_csls_bias.shape[0] == entity_probe_vectors.shape[0] and cw > 0.0:
                 ee = ee - cw * entity_probe_csls_bias[None, :]
-            unrel_ee = ee[~ee_cooccur_mask] if ee_cooccur_mask.shape == ee.shape else ee[~np.eye(ee.shape[0], dtype=bool)]
+            unrel_ee = (
+                ee[~ee_cooccur_mask] if ee_cooccur_mask.shape == ee.shape else ee[~np.eye(ee.shape[0], dtype=bool)]
+            )
             fb_ee = ee[~np.eye(ee.shape[0], dtype=bool)]
             e_mu, e_std, e_tail = _estimate_tail_skewness_factor(unrel_ee if unrel_ee.size >= 8 else fb_ee)
         else:
@@ -1484,7 +1508,9 @@ class TopicImportanceSolver:
             rr = relation_probe_vectors @ relation_probe_vectors.T
             if relation_probe_csls_bias.shape[0] == relation_probe_vectors.shape[0] and cw > 0.0:
                 rr = rr - cw * relation_probe_csls_bias[None, :]
-            unrel_rr = rr[~rr_cooccur_mask] if rr_cooccur_mask.shape == rr.shape else rr[~np.eye(rr.shape[0], dtype=bool)]
+            unrel_rr = (
+                rr[~rr_cooccur_mask] if rr_cooccur_mask.shape == rr.shape else rr[~np.eye(rr.shape[0], dtype=bool)]
+            )
             fb_rr = rr[~np.eye(rr.shape[0], dtype=bool)]
             r_mu, r_std, r_tail = _estimate_tail_skewness_factor(unrel_rr if unrel_rr.size >= 8 else fb_rr)
         else:
@@ -1585,8 +1611,7 @@ class TopicImportanceSolver:
                 sims, nbrs = flat_index.search(valid_vecs, top_k)
 
                 nbr_sets: List[Set[int]] = [
-                    {int(nj) for nj in nbrs[li] if nj >= 0 and int(nj) != li}
-                    for li in range(valid_indices.size)
+                    {int(nj) for nj in nbrs[li] if nj >= 0 and int(nj) != li} for li in range(valid_indices.size)
                 ]
 
                 for local_i in range(valid_indices.size):
@@ -1660,9 +1685,19 @@ class TopicImportanceSolver:
         # 若嵌入模型在长段落与短实体之间存在显著子流形中心偏移（非对称模型），先消除偏移差再双向平滑
         has_p_cone = int(np.sum(paragraph_has_vector)) >= 4
         has_n_cone = int(np.sum(node_has_vector)) >= 4
-        mean_p = np.mean(paragraph_vectors[paragraph_has_vector], axis=0) if has_p_cone else np.zeros((dimension,), dtype=np.float32)
-        mean_n = np.mean(node_vectors[node_has_vector], axis=0) if has_n_cone else np.zeros((dimension,), dtype=np.float32)
-        p_to_n_shift = (0.85 * (mean_p - mean_n)).astype(np.float32) if (has_p_cone and has_n_cone and float(np.linalg.norm(mean_p - mean_n)) > 0.16) else None
+        mean_p = (
+            np.mean(paragraph_vectors[paragraph_has_vector], axis=0)
+            if has_p_cone
+            else np.zeros((dimension,), dtype=np.float32)
+        )
+        mean_n = (
+            np.mean(node_vectors[node_has_vector], axis=0) if has_n_cone else np.zeros((dimension,), dtype=np.float32)
+        )
+        p_to_n_shift = (
+            (0.85 * (mean_p - mean_n)).astype(np.float32)
+            if (has_p_cone and has_n_cone and float(np.linalg.norm(mean_p - mean_n)) > 0.16)
+            else None
+        )
 
         if num_paragraphs > 0 and raw_pn.nnz > 0:
             col_sums = np.asarray(raw_pn.sum(axis=0)).ravel().astype(np.float32)
@@ -1904,9 +1939,9 @@ class TopicImportanceSolver:
             node_topic_importance = (topic_ppr / denom) * node_idf[:, None]
             col_max = np.max(node_topic_importance, axis=0, keepdims=True)
             valid_cols = col_max > 1e-10
-            node_topic_importance = np.where(valid_cols, node_topic_importance / np.maximum(col_max, 1e-10), 0.0).astype(
-                np.float32
-            )
+            node_topic_importance = np.where(
+                valid_cols, node_topic_importance / np.maximum(col_max, 1e-10), 0.0
+            ).astype(np.float32)
         else:
             global_pr = np.zeros((0,), dtype=np.float32)
             node_topic_importance = np.zeros((0, topic_count), dtype=np.float32)
@@ -1916,12 +1951,18 @@ class TopicImportanceSolver:
         valid_p_float = paragraph_has_vector.astype(np.float32)
         if int(np.sum(paragraph_has_vector)) >= 4:
             p_mean = np.mean(paragraph_vectors[paragraph_has_vector], axis=0)
-            p_cone_shift = (0.88 * p_mean) if float(np.dot(p_mean, p_mean)) > 0.14 else np.zeros((dimension,), dtype=np.float32)
+            p_cone_shift = (
+                (0.88 * p_mean) if float(np.dot(p_mean, p_mean)) > 0.14 else np.zeros((dimension,), dtype=np.float32)
+            )
         else:
             p_cone_shift = np.zeros((dimension,), dtype=np.float32)
 
         res_p_vecs, _ = _l2_normalize_rows(paragraph_vectors - p_cone_shift[None, :])
-        res_n_vecs, _ = _l2_normalize_rows(node_vectors - query_cone_shift[None, :]) if num_nodes > 0 else (node_vectors, node_has_vector)
+        res_n_vecs, _ = (
+            _l2_normalize_rows(node_vectors - query_cone_shift[None, :])
+            if num_nodes > 0
+            else (node_vectors, node_has_vector)
+        )
 
         for t_idx in range(topic_count):
             resp_w = soft_para_responsibilities[:, t_idx] * valid_p_float

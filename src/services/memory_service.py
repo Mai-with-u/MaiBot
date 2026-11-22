@@ -244,12 +244,26 @@ class MemoryService:
             return MemorySearchResult(success=False, error=str(exc))
 
     async def retrieve_recent_chat_context(
-        self, *, messages: Sequence[str], chat_id: str, group_id: str, limit: int, window_size: int, cross_chat: bool,
+        self,
+        *,
+        messages: Sequence[str],
+        chat_id: str,
+        group_id: str,
+        limit: int,
+        window_size: int,
+        cross_chat: bool,
     ) -> MemorySearchResult:
-        payload = await self._invoke("retrieve_recent_chat_context", {
-            "messages": list(messages), "chat_id": chat_id, "group_id": group_id,
-            "limit": limit, "window_size": window_size, "cross_chat": cross_chat,
-        })
+        payload = await self._invoke(
+            "retrieve_recent_chat_context",
+            {
+                "messages": list(messages),
+                "chat_id": chat_id,
+                "group_id": group_id,
+                "limit": limit,
+                "window_size": window_size,
+                "cross_chat": cross_chat,
+            },
+        )
         return self._coerce_search_result(payload)
 
     async def enqueue_feedback_task(

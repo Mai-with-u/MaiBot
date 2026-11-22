@@ -16,8 +16,15 @@ class RecentChatMemorySearch:
         self.retriever: Optional[TopicGraphRetriever] = None
 
     async def search(
-        self, kernel: SDKMemoryKernel, *, messages: Sequence[str], chat_id: str, group_id: str,
-        shared_chat_ids: Sequence[str], window_size: int, limit: int,
+        self,
+        kernel: SDKMemoryKernel,
+        *,
+        messages: Sequence[str],
+        chat_id: str,
+        group_id: str,
+        shared_chat_ids: Sequence[str],
+        window_size: int,
+        limit: int,
     ) -> Dict[str, Any]:
         if not chat_id or not group_id:
             raise ValueError("群聊召回需要真实会话 ID 和群 ID")
@@ -40,15 +47,22 @@ class RecentChatMemorySearch:
         graph_vectors = kernel.graph_vector_store if dual else kernel.vector_store
         retriever = self.retriever
         if (
-            retriever is None or retriever.config.max_recent_messages != window_size
-            or retriever.paragraph_vector_store is not paragraphs or retriever.graph_vector_store is not graph_vectors
-            or retriever.graph_store is not kernel.graph_store or retriever.metadata_store is not kernel.metadata_store
-            or retriever.embedding_manager is not kernel.embedding_manager or retriever.sparse_index is not kernel.sparse_index
+            retriever is None
+            or retriever.config.max_recent_messages != window_size
+            or retriever.paragraph_vector_store is not paragraphs
+            or retriever.graph_vector_store is not graph_vectors
+            or retriever.graph_store is not kernel.graph_store
+            or retriever.metadata_store is not kernel.metadata_store
+            or retriever.embedding_manager is not kernel.embedding_manager
+            or retriever.sparse_index is not kernel.sparse_index
         ):
             retriever = self.retriever = TopicGraphRetriever(
-                paragraph_vector_store=paragraphs, graph_vector_store=graph_vectors,
-                graph_store=kernel.graph_store, metadata_store=kernel.metadata_store,
-                embedding_manager=kernel.embedding_manager, sparse_index=kernel.sparse_index,
+                paragraph_vector_store=paragraphs,
+                graph_vector_store=graph_vectors,
+                graph_store=kernel.graph_store,
+                metadata_store=kernel.metadata_store,
+                embedding_manager=kernel.embedding_manager,
+                sparse_index=kernel.sparse_index,
                 config=TopicGraphConfig(max_recent_messages=window_size),
                 graph_projection_lock=kernel._relation_graph_projection_lock,
             )
@@ -58,7 +72,11 @@ class RecentChatMemorySearch:
 
     @staticmethod
     def _visible_hits(
-        kernel: SDKMemoryKernel, results: Sequence[RetrievalResult], scope: RetrievalScope, chat_id: str, group_id: str,
+        kernel: SDKMemoryKernel,
+        results: Sequence[RetrievalResult],
+        scope: RetrievalScope,
+        chat_id: str,
+        group_id: str,
     ) -> List[Dict[str, Any]]:
         # 按当前有效段落回表，避免注入已撤销内容或全图库的话题摘要。
         candidates = [item for item in results if item.hash_value in scope.paragraph_ids]
@@ -67,9 +85,15 @@ class RecentChatMemorySearch:
         for item in candidates:
             row = rows.get(item.hash_value)
             if row is not None:
-                hits.append({
-                    "hash": item.hash_value, "type": "paragraph", "score": item.score,
-                    "content": row["content"], "source": row["source"], "metadata": row["metadata"],
-                })
+                hits.append(
+                    {
+                        "hash": item.hash_value,
+                        "type": "paragraph",
+                        "score": item.score,
+                        "content": row["content"],
+                        "source": row["source"],
+                        "metadata": row["metadata"],
+                    }
+                )
         hits = kernel._filter_user_visible_hits(hits)
         return kernel._filter_hits_by_retrieval_type_scope(hits, current_stream_id=chat_id, current_group_id=group_id)
