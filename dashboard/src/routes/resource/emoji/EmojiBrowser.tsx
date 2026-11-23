@@ -13,7 +13,6 @@ import {
 } from '@/components/ui/data-browser'
 import { DataPagination } from '@/components/ui/data-pagination'
 import { DataPanel, PageFrame } from '@/components/ui/surface'
-import { SectionPanel } from '@/components/ui/management'
 import { SelectionListItem } from '@/components/ui/selection-list-item'
 import {
   Select,
@@ -158,12 +157,7 @@ export function EmojiBrowser({
       <DataBrowserLayout
         tabs={browserTabs?.(summary)}
         sidebar={
-          <SectionPanel
-            title="筛选"
-            className="min-h-0 overflow-y-auto"
-            bodyClassName="space-y-5 p-3"
-            headerClassName="p-3"
-          >
+          <PageFrame role="region" aria-label="表情包筛选" className="min-h-0 space-y-5 overflow-y-auto p-3">
             <section className="space-y-2" aria-label="表情包状态">
               <h3 className="text-muted-foreground text-xs">状态</h3>
               <DataPanel padding="list">
@@ -187,12 +181,13 @@ export function EmojiBrowser({
             </section>
             <section className="space-y-2" aria-label="格式">
               <h3 className="text-muted-foreground text-xs">格式</h3>
-              <div className="flex flex-wrap gap-1.5">
+              <div className="flex flex-wrap gap-1">
                 {['all', ...Object.keys(stats?.formats ?? {})].map((format) => (
                   <Button
                     key={format}
                     variant="outline"
                     size="xs"
+                    className="px-0.5"
                     aria-pressed={filters.format === format}
                     onClick={() => onFilterChange('format', format)}
                   >
@@ -231,7 +226,7 @@ export function EmojiBrowser({
               </div>
             </section>
             {quickSettings}
-          </SectionPanel>
+          </PageFrame>
         }
       >
         <PageFrame className="flex min-h-0 flex-col overflow-hidden">
