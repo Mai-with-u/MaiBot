@@ -213,7 +213,10 @@ export function ObservationLayout({ children }: { children: ReactNode }) {
               {/* 设置页自带滚动区域，桌面保持定高；窄屏的页头与页面上下排列。 */}
               <div
                 data-dashboard-workspace-content="true"
-                className={cn('relative z-10 h-full min-h-full min-w-0 max-lg:flex max-lg:flex-col', isScrollablePage && 'max-lg:h-auto')}
+                className={cn(
+                  'relative z-10 h-full min-h-full min-w-0 max-lg:flex max-lg:flex-col',
+                  isScrollablePage && 'max-lg:not-has-[[data-plugin-viewport]]:h-auto'
+                )}
               >
                 {!isDesktop && pathname === '/' && <MobilePageHeader
                   title={t('home.mobile.title')}
@@ -228,7 +231,14 @@ export function ObservationLayout({ children }: { children: ReactNode }) {
                   actionsRef={setMobileHeaderActionsElement}
                   titleOverride={mobileTitleOverride}
                 />}
-                <div className={cn('lg:contents', isScrollablePage ? 'flex-[1_0_auto]' : 'min-h-0 flex-1')}>
+                <div
+                  className={cn(
+                    'lg:contents',
+                    isScrollablePage
+                      ? 'not-has-[[data-plugin-viewport]]:flex-[1_0_auto] has-[[data-plugin-viewport]]:min-h-0 has-[[data-plugin-viewport]]:flex-1'
+                      : 'min-h-0 flex-1'
+                  )}
+                >
                   {children}
                 </div>
               </div>

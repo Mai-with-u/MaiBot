@@ -88,34 +88,44 @@ function CustomPageSession({
   const [reloading, setReloading] = useState(false)
   const [confirmation, setConfirmation] = useState<string | null>(null)
   const confirm = useRef<((accepted: boolean) => void) | null>(null)
+  const fillsViewport = page.layout === 'viewport'
+
+  const updateViewport = useCallback(() => {
+    if (!frame.current || !port.current) return
+    const bounds = frame.current.getBoundingClientRect()
+    port.current.postMessage({
+      type: 'viewport',
+      top: Math.max(0, -bounds.top),
+      height: Math.max(
+        1,
+        Math.min(bounds.bottom, window.innerHeight) - Math.max(0, bounds.top)
+      ),
+    })
+  }, [])
 
   useEffect(() => {
+    const iframe = frame.current
+    if (!iframe) return
     let scheduled = 0
-    const update = () => {
-      scheduled = 0
-      const bounds = frame.current?.getBoundingClientRect()
-      if (bounds)
-        port.current?.postMessage({
-          type: 'viewport',
-          top: Math.max(0, -bounds.top),
-          height: Math.max(
-            1,
-            Math.min(bounds.bottom, window.innerHeight) - Math.max(0, bounds.top)
-          ),
-        })
-    }
     const schedule = () => {
-      if (!scheduled) scheduled = requestAnimationFrame(update)
+      if (!scheduled) {
+        scheduled = requestAnimationFrame(() => {
+          scheduled = 0
+          updateViewport()
+        })
+      }
     }
-    schedule()
+    const observer = new ResizeObserver(schedule)
+    observer.observe(iframe)
     window.addEventListener('scroll', schedule, true)
     window.addEventListener('resize', schedule)
     return () => {
+      observer.disconnect()
       cancelAnimationFrame(scheduled)
       window.removeEventListener('scroll', schedule, true)
       window.removeEventListener('resize', schedule)
     }
-  }, [source, height])
+  }, [source, stopped, updateViewport])
 
   useEffect(() => {
     let scheduled = 0
@@ -378,7 +388,8 @@ function CustomPageSession({
       '*',
       [channel.port2]
     )
-  }, [page, pages, pageState, pluginId, stop, t])
+    updateViewport()
+  }, [page, pages, pageState, pluginId, stop, t, updateViewport])
 
   useEffect(() => {
     if (!source) return
@@ -411,7 +422,10 @@ function CustomPageSession({
   }
 
   return (
-    <div className="space-y-3 p-4">
+    <div
+      data-plugin-viewport={fillsViewport || undefined}
+      className={fillsViewport ? 'flex h-full min-h-0 flex-col gap-3 p-4' : 'space-y-3 p-4'}
+    >
       <div
         ref={probes}
         aria-hidden="true"
@@ -482,11 +496,8 @@ function CustomPageSession({
               if (loaded.current) stop(t('pluginWebUI.customStopNavigation'))
               loaded.current = true
             }}
-            style={{
-              height: page.layout === 'viewport' ? 'calc(100dvh - 12rem)' : height,
-              minHeight: 384,
-            }}
-            className="block w-full border-0"
+            style={fillsViewport ? undefined : { height, minHeight: 384 }}
+            className={fillsViewport ? 'block min-h-0 w-full flex-1 border-0' : 'block w-full border-0'}
           />
         )
       )}
