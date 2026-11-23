@@ -16,7 +16,7 @@ from src.core.tooling import (
 from src.maisaka.tool_result_store import ToolResultStore, tool_result_store
 
 from .adapters.plugin import find_web_plugin
-from .adapters.tavily import FETCH_DEPENDENCIES, FETCH_OPTIONS, SEARCH_OPTIONS
+from .adapters.tavily import FETCH_OPTIONS, SEARCH_OPTIONS
 from .config import WebRuntimeConfig, WebSearchConfigError
 from .models import PageResult, WebSearchError
 from .service import WebSearchService
@@ -99,7 +99,6 @@ class WebSearchToolProvider:
                             "url": {"type": "string", "maxLength": 8192},
                             **(FETCH_OPTIONS if tavily_fetch else {}),
                         },
-                        **({"dependentRequired": FETCH_DEPENDENCIES} if tavily_fetch else {}),
                         "required": ["url"],
                         "additionalProperties": False,
                     },

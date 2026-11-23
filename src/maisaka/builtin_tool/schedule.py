@@ -56,7 +56,7 @@ def get_tool_spec(context: Optional[ToolAvailabilityContext] = None) -> ToolSpec
         description=description,
         parameters_schema={
             "type": "object", "additionalProperties": False, "required": ["action"],
-            "properties": properties, "not": {"required": ["delay_seconds", "due_at"]},
+            "properties": properties,
         },
     )
 
