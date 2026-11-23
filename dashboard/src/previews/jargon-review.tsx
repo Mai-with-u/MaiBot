@@ -52,6 +52,7 @@ const sampleJargons: Jargon[] = Array.from({ length: 73 }, (_, index) => {
     is_jargon: index % 7 === 0 ? null : index % 5 !== 0,
     is_legacy_empty_meaning: false,
     is_complete: index % 7 !== 0,
+    allow_update: index % 4 !== 0,
     created_by: index % 4 === 0 ? 'MANUAL' : 'AI',
     created_timestamp: '2026-10-17T10:00:00',
     updated_timestamp: '2026-10-17T10:00:00',
@@ -67,8 +68,8 @@ type Summary =
 const categories: { value: Summary; label: string; matches: (item: Jargon) => boolean }[] = [
   { value: 'confirmed_jargon', label: '黑话', matches: (item) => item.is_jargon === true },
   { value: 'confirmed_not_jargon', label: '不是黑话', matches: (item) => item.is_jargon === false },
-  { value: 'manual_jargon', label: '已锁定', matches: (item) => item.created_by === 'MANUAL' },
-  { value: 'global_count', label: '全局黑话', matches: (item) => item.is_global },
+  { value: 'manual_jargon', label: '已暂停更新', matches: (item) => !item.allow_update },
+  { value: 'global_count', label: '通用词条', matches: (item) => item.is_global },
   { value: 'pending', label: '积累中', matches: (item) => item.is_jargon === null },
   { value: 'complete_count', label: '推断完成', matches: (item) => item.is_complete },
 ]

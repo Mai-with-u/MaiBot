@@ -261,6 +261,7 @@ class MainSystem:
                 should_schedule_image_path_maintenance_background,
             )
             from src.files.service import periodic_file_cleanup
+            from src.learners.jargon_miner import periodically_replay_deferred_learning
 
             # 在独立线程中巡检推理图片，空闲时也能清理旧版本遗留的孤立缓存。
             PromptPreviewLogger.start()
@@ -270,6 +271,7 @@ class MainSystem:
                 periodic_emoji_cache_cleanup(),
                 periodic_image_cache_cleanup(),
                 periodic_file_cleanup(),
+                periodically_replay_deferred_learning(),
             ]
             if global_config.debug.enable_console_input:
                 # Worker 不读取 stdin，宿主通过专用 IPC 接口投递本地操作员消息。

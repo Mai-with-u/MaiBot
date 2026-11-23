@@ -608,7 +608,7 @@ class FocusGroupRuntime:
                 profile_message=messages[-1],
                 source_messages=messages,
             )
-            jargon = member._reasoning_engine._refresh_jargon_reference_message()
+            jargon = await member._reasoning_engine._refresh_jargon_reference_message()
             if jargon is not None:
                 injected.append(jargon.processed_plain_text)
             if injected:

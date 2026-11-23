@@ -374,7 +374,7 @@ class MaisakaReasoningEngine:
             injected_messages.append(image_memory_message)
         return injected_messages
 
-    def _refresh_jargon_reference_message(self) -> Optional[ReferenceMessage]:
+    async def _refresh_jargon_reference_message(self) -> Optional[ReferenceMessage]:
         """基于当前 planner 上下文刷新黑话参考消息。"""
 
         existing_jargon_contents = extract_jargon_reference_contents(self._runtime._chat_history)
@@ -384,7 +384,8 @@ class MaisakaReasoningEngine:
             max_context_size=self._runtime._max_context_size,
             is_group_chat=self._runtime.chat_stream.is_group_session,
         )
-        reference_message = build_jargon_reference_message(
+        reference_message = await asyncio.to_thread(
+            build_jargon_reference_message,
             session_id=str(self._runtime.session_id or ""),
             context_messages=selected_history,
             excluded_contents=existing_jargon_contents,
@@ -654,7 +655,7 @@ class MaisakaReasoningEngine:
         self._runtime._update_stage_status("组织上下文", "正在准备：黑话参考", round_text=round_text)
         jargon_started = time.perf_counter()
         try:
-            jargon_reference_message = self._refresh_jargon_reference_message()
+            jargon_reference_message = await self._refresh_jargon_reference_message()
             if jargon_reference_message is not None:
                 logger.debug(f"{self._runtime.log_prefix} 已刷新黑话参考消息")
         except Exception as exc:

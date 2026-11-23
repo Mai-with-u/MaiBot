@@ -386,13 +386,16 @@ export function LearningImportDialog({
                   >
                     <div className="flex items-center gap-2">
                       <RadioGroupItem value="global" id="learning-import-global" />
-                      <Label htmlFor="learning-import-global">全局（所有聊天）</Label>
+                      <Label htmlFor="learning-import-global">{chosen.includes('jargon') && !chosen.includes('expression') ? '通用词库' : '全局（所有聊天）'}</Label>
                     </div>
                     <div className="flex items-center gap-2">
                       <RadioGroupItem value="chat" id="learning-import-chat" />
                       <Label htmlFor="learning-import-chat">指定聊天</Label>
                     </div>
                   </RadioGroup>
+                  {scope === 'global' && chosen.includes('jargon') && (
+                    <p className="text-muted-foreground text-xs">黑话将加入通用词库，所有启用黑话的聊天都可使用。</p>
+                  )}
                   {scope === 'chat' && (
                     <MultiSelect
                       options={(chatTargets.data ?? []).map((chat) => ({

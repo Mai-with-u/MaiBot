@@ -3,7 +3,7 @@ from enum import Enum
 from typing import Optional
 from uuid import uuid4
 
-from sqlalchemy import Boolean, Column, DateTime, Enum as SQLEnum, Float, Index, Integer, String, Text, UniqueConstraint, event
+from sqlalchemy import Boolean, Column, DateTime, Enum as SQLEnum, Float, Index, Integer, String, Text, UniqueConstraint, event, text
 from sqlalchemy.engine import Connection
 from sqlalchemy.orm import Mapper
 from sqlmodel import Field, LargeBinary, Relationship, SQLModel
@@ -417,6 +417,20 @@ class Jargon(SQLModel, table=True):
 
     id: Optional[int] = Field(default=None, primary_key=True)  # 自增主键
 
+    scope_kind: str = Field(default="chat")
+    scope_id: str = Field(default="")
+    baseline_id: Optional[int] = None
+    contributing_chats: Optional[str] = None  # 组词条的贡献聊天和合入前持有该词的聊天，JSON 数组
+    archived: bool = Field(default=False)
+    revision: int = Field(default=0)
+    __table_args__ = (
+        Index("ix_jargon_snapshot_term", "scope_id", text("lower(trim(content))"),
+              sqlite_where=text("scope_kind = 'snapshot'")),
+        Index("ix_jargon_term", text("lower(trim(content))")),
+        Index("ux_jargon_active_scope", "scope_kind", "scope_id", text("lower(trim(content))"),
+              unique=True, sqlite_where=text("archived = 0")),
+    )
+
     content: str = Field(index=True, max_length=255)  # 黑话内容
     evidence_messages: Optional[str] = Field(
         default=None, sa_column=Column(Text, nullable=True)
@@ -430,6 +444,7 @@ class Jargon(SQLModel, table=True):
     count: int = Field(default=0)  # 使用次数
     is_jargon: Optional[bool] = Field(default=None)  # None 待推断，True 是黑话，False 已判定为非黑话
     is_complete: bool = Field(default=False)  # 是否为已经完成全部推断（count > 100后不再推断）
+    allow_update: bool = Field(default=True, sa_column_kwargs={"server_default": "1"})
     is_global: bool = Field(default=False)  # 是否为全局黑话（独立于session_id_dict）
     last_inference_count: int = Field(default=0)  # 上一次进行推断时的count值，用于判断是否需要重新推断
     created_by: JargonCreatedBy = Field(
@@ -438,6 +453,54 @@ class Jargon(SQLModel, table=True):
     )  # 创建来源，AI 表示自动学习，MANUAL 表示手动创建
     created_timestamp: datetime = Field(default_factory=datetime.now, sa_column=Column(DateTime, index=True))
     updated_timestamp: datetime = Field(default_factory=datetime.now, sa_column=Column(DateTime, index=True))
+
+
+@event.listens_for(Jargon, "before_insert")
+def assign_jargon_scope(mapper: Mapper, connection: Connection, row: Jargon) -> None:
+    if row.is_global:
+        row.scope_kind, row.scope_id = "global", ""
+    elif row.scope_kind == "chat" and not row.scope_id:
+        sessions = json.loads(row.session_id_dict)
+        if len(sessions) != 1:
+            raise ValueError("聊天释义必须属于一个聊天")
+        row.scope_id = next(iter(sessions))
+
+
+class JargonSnapshotMember(SQLModel, table=True):
+    """退组时为一个聊天预留的逻辑词条 ID 区间；退出引用后仍保留区间以免复用。"""
+
+    __tablename__ = "jargon_snapshot_members"
+    end_id: int = Field(primary_key=True, sa_column_kwargs={"autoincrement": False})
+    shift: int
+    snapshot: str = Field(index=True)
+    chat: Optional[str] = Field(default=None, unique=True)
+
+
+class JargonLearningRecord(SQLModel, table=True):
+    __tablename__ = "jargon_learning_records"
+    id: Optional[int] = Field(default=None, primary_key=True)
+    content: str
+    session_id: Optional[str] = None
+    scope_kind: str
+    scope_id: str
+    evidence: Optional[str] = None
+    excerpt: str = ""
+    recorded_at: Optional[datetime] = None
+
+
+class JargonDeferredLearning(SQLModel, table=True):
+    """冲突期间的学习记录，完成归属和推断检查后移出队列。"""
+
+    __tablename__ = "jargon_deferred_learning"
+    record_id: int = Field(primary_key=True, foreign_key="jargon_learning_records.id", ondelete="CASCADE")
+    source_session_id: str = Field(index=True)
+    needs_dispatch: bool = True
+
+
+class JargonEvidenceLink(SQLModel, table=True):
+    __tablename__ = "jargon_evidence_links"
+    jargon_id: int = Field(primary_key=True, foreign_key="jargons.id")
+    record_id: int = Field(primary_key=True, foreign_key="jargon_learning_records.id", index=True)
 
 
 class BinaryData(SQLModel, table=True):

@@ -1,5 +1,6 @@
-import { Check, Edit, Globe, HelpCircle, Lock, Trash2, X } from 'lucide-react'
-import type { ReactNode } from 'react'
+import { Check, ChevronRight, Edit, Globe, HelpCircle, Lock, Trash2, X } from 'lucide-react'
+import { useQueries } from '@tanstack/react-query'
+import { useState, type ReactNode } from 'react'
 
 import { Badge } from '@/components/ui/badge'
 import { Button } from '@/components/ui/button'
@@ -16,6 +17,7 @@ import {
   TableRow,
 } from '@/components/ui/table'
 import { cn } from '@/lib/utils'
+import { getJargonVersions } from '@/lib/jargon-api'
 
 import type { Jargon } from '@/types/jargon'
 
@@ -26,9 +28,11 @@ interface JargonListProps {
   page: number
   pageSize: number
   selectedIds: Set<number>
+  emptyAction?: ReactNode
   hideChatColumn?: boolean
   className?: string
   toolbar?: ReactNode
+  onOpenTerm?: (jargon: Jargon) => void
   onEdit: (jargon: Jargon) => void
   onDelete: (jargon: Jargon) => void
   onToggleSelect: (id: number) => void
@@ -66,27 +70,35 @@ function renderJargonStatus(jargon: Jargon) {
   )
 }
 
-function renderManualMarker(createdBy: Jargon['created_by'], showLabel = false) {
-  if (createdBy !== 'MANUAL') {
+function renderUpdateMarker(allowUpdate: boolean, showLabel = false) {
+  if (allowUpdate) {
     return null
   }
 
   return showLabel ? (
     <Badge variant="outline">
       <Check className="mr-1 h-3 w-3" />
-      已锁定
+      已暂停更新
     </Badge>
   ) : (
-    <span title="已锁定"><Lock className="h-4 w-4" aria-label="已锁定" /></span>
+    <span title="已暂停更新">
+      <Lock className="h-4 w-4" aria-label="已暂停更新" />
+    </span>
   )
 }
 
 function formatJargonChatDisplay(jargon: Jargon) {
+  if (jargon.scope_name) return jargon.scope_name
+  if (jargon.scope_names?.length) return jargon.scope_names.join('、')
   const chatNames = jargon.chat_names?.length ? jargon.chat_names : []
   if (chatNames.length > 0) {
     return chatNames.join('、')
   }
   return jargon.chat_name || jargon.session_id
+}
+
+function scopeVersions(jargon: Jargon): Jargon[] {
+  return jargon.scope_versions?.length ? jargon.scope_versions : [jargon]
 }
 
 /**
@@ -99,10 +111,12 @@ export function JargonList({
   page,
   pageSize,
   selectedIds,
+  emptyAction,
   hideChatColumn = false,
   className,
   toolbar,
   onEdit,
+  onOpenTerm = onEdit,
   onDelete,
   onToggleSelect,
   onToggleSelectAll,
@@ -111,6 +125,52 @@ export function JargonList({
 }: JargonListProps) {
   const tableColSpan = hideChatColumn ? 6 : 7
   const selectedCount = jargons.filter((jargon) => selectedIds.has(jargon.id)).length
+
+  const [expandedTerms, setExpandedTerms] = useState(() => new Set<string>())
+  const expanding = jargons.filter(row => expandedTerms.has(row.content) && !row.scope_versions?.length && (row.scope_ids?.length ?? 0) > 1)
+  const queries = useQueries({ queries: expanding.map(row => ({
+    queryKey: ['jargon', 'versions', row.content, false],
+    queryFn: () => getJargonVersions(row.content, false),
+  })) })
+  const expandedQueries = new Map(expanding.map((row, i) => [row.content, queries[i]]))
+  const entries = jargons.map((jargon) => {
+    const term = jargon.content
+    const query = expandedQueries.get(term)
+    const available = new Map(query?.data?.map(row => [row.id, row]))
+    const loaded = jargon.scope_ids?.flatMap(id => available.get(id) ?? [])
+    const versions = loaded?.length ? loaded : scopeVersions(jargon)
+    const versionCount = jargon.scope_ids?.length || versions.length
+    const expanded = expandedTerms.has(term)
+    const label = `${expanded ? '收起' : '展开'}「${jargon.content}」的 ${versionCount} 个作用域`
+    const toggleExpanded = () => setExpandedTerms((previous) => {
+      const next = new Set(previous)
+      if (next.has(term)) next.delete(term)
+      else next.add(term)
+      return next
+    })
+    const toggle = versionCount > 1 && (
+      <Button
+        type="button"
+        variant="ghost"
+        size="xs"
+        className="shrink-0 gap-0.5 px-1 tabular-nums md:hover:bg-transparent"
+        aria-label={label}
+        title={label}
+        aria-expanded={expanded}
+        onClick={toggleExpanded}
+      >
+        <ChevronRight className={cn('size-3', expanded && 'rotate-90')} aria-hidden="true" />
+        {query?.isPending ? '加载中…' : query?.isError ? '加载失败' : versionCount}
+      </Button>
+    )
+    return {
+      jargon,
+      visibleVersions: expanded ? versions : versions.slice(0, 1),
+      versionCount,
+      toggle,
+      toggleExpanded,
+    }
+  })
 
   return (
     <PageFrame
@@ -155,7 +215,7 @@ export function JargonList({
               </TableHead>
               <TableHead>内容</TableHead>
               <TableHead>含义</TableHead>
-              {!hideChatColumn && <TableHead>聊天</TableHead>}
+              {!hideChatColumn && <TableHead>作用域</TableHead>}
               <TableHead className="text-center">状态</TableHead>
               <TableHead className="text-center">遇见次数</TableHead>
               <TableHead>
@@ -179,89 +239,117 @@ export function JargonList({
                   colSpan={tableColSpan}
                   className="text-muted-foreground py-8 text-center"
                 >
-                  暂无数据
+                  暂无数据 {emptyAction}
                 </TableCell>
               </TableRow>
             ) : (
-              jargons.map((jargon) => (
-                <TableRow
-                  key={jargon.id}
-                  className="cursor-pointer hover:bg-muted/50"
-                  onClick={(event) => {
-                    if (event.target instanceof Element && event.target.closest('button, input, [role="checkbox"]')) return
-                    onEdit(jargon)
-                  }}
-                >
-                  <TableCell>
-                    <Checkbox
-                      size="sm"
-                      aria-label={`选择黑话：${jargon.content}`}
-                      checked={selectedIds.has(jargon.id)}
-                      onCheckedChange={() => onToggleSelect(jargon.id)}
-                    />
-                  </TableCell>
-                  <TableCell>
-                    <div className="flex items-center gap-1.5">
-                      {renderManualMarker(jargon.created_by)}
-                      {jargon.is_global && (
-                        <span title="全局黑话">
-                          <Globe className="h-4 w-4 flex-shrink-0 text-blue-500" />
-                        </span>
-                      )}
-                      <span className="truncate" title={jargon.content}>
-                        {jargon.content}
-                      </span>
-                    </div>
-                  </TableCell>
-                  <TableCell title={jargon.meaning || ''}>
-                    {jargon.meaning ? (
-                      <span className="bg-muted/30 inline-block max-w-full truncate border-l-2 border-orange-500/80 px-2 py-0.5 align-middle">
-                        {jargon.meaning}
-                      </span>
-                    ) : (
-                      <span className="text-muted-foreground">-</span>
-                    )}
-                  </TableCell>
-                  {!hideChatColumn && (
-                    <TableCell
-                      className="text-muted-foreground truncate"
-                      title={formatJargonChatDisplay(jargon)}
+              entries.map(({ jargon, visibleVersions, versionCount, toggle, toggleExpanded }) =>
+                visibleVersions.map((version, index) => {
+                  const first = index === 0
+                  return (
+                    <TableRow
+                      key={version.id}
+                      data-jargon-row
+                      className="cursor-pointer hover:bg-transparent"
+                      onClick={(event) => {
+                        const target = event.target
+                        if (!(target instanceof Element) || target.closest('button, input, [role="checkbox"]')) return
+                        if (target.closest('[data-term-cell]')) {
+                          toggleExpanded()
+                          return
+                        }
+                        if (expandedTerms.has(jargon.content)) onEdit(version)
+                        else onOpenTerm(jargon)
+                      }}
                     >
-                      <span className="block truncate">{formatJargonChatDisplay(jargon)}</span>
-                    </TableCell>
-                  )}
-                  <TableCell className="text-center">
-                    <div className="flex flex-wrap items-center justify-center gap-1">
-                      {renderJargonStatus(jargon)}
-                    </div>
-                  </TableCell>
-                  <TableCell className="text-center">{jargon.count}</TableCell>
-                  <TableCell className="text-right">
-                    <div className="flex justify-end gap-1">
-                      <Button
-                        variant="ghost"
-                        size="icon-xs"
-                        className="text-muted-foreground/50 hover:text-foreground focus-visible:text-foreground"
-                        onClick={() => onEdit(jargon)}
-                        title="查看/编辑"
-                        aria-label="查看或编辑黑话"
-                      >
-                        <Edit className="h-4 w-4" />
-                      </Button>
-                      <Button
-                        variant="ghost"
-                        size="icon-xs"
-                        className="text-muted-foreground/50 hover:text-destructive focus-visible:text-destructive"
-                        onClick={() => onDelete(jargon)}
-                        title="删除"
-                        aria-label="删除黑话"
-                      >
-                        <Trash2 className="h-4 w-4" />
-                      </Button>
-                    </div>
-                  </TableCell>
-                </TableRow>
-              ))
+                      {first && (
+                        <TableCell data-term-cell={versionCount > 1 || undefined} rowSpan={visibleVersions.length} className={visibleVersions.length > 1 ? 'align-top' : undefined}>
+                          <Checkbox
+                            size="sm"
+                            aria-label={`选择黑话：${jargon.content}`}
+                            checked={selectedIds.has(jargon.id)}
+                            onCheckedChange={() => onToggleSelect(jargon.id)}
+                          />
+                        </TableCell>
+                      )}
+                      {first && (
+                        <TableCell data-term-cell={versionCount > 1 || undefined} rowSpan={visibleVersions.length} className={visibleVersions.length > 1 ? 'align-top' : undefined}>
+                          <div className="flex items-center gap-1.5">
+                            {versionCount === 1 && renderUpdateMarker(jargon.allow_update)}
+                            {versionCount === 1 && jargon.is_global && (
+                              <span title="通用词条">
+                                <Globe className="h-4 w-4 flex-shrink-0 text-blue-500" />
+                              </span>
+                            )}
+                            <span className="truncate" title={jargon.content}>
+                              {jargon.content}
+                            </span>
+                            {toggle}
+                          </div>
+                        </TableCell>
+                      )}
+                      <TableCell title={version.meaning || undefined}>
+                        {version.meaning ? (
+                          <span className="line-clamp-2 border-l-2 border-orange-500/80 px-2 break-words whitespace-normal">
+                            {version.meaning}
+                          </span>
+                        ) : (
+                          <span className="text-muted-foreground">暂无释义</span>
+                        )}
+                      </TableCell>
+                      {!hideChatColumn && (
+                        <TableCell
+                          className="text-muted-foreground truncate"
+                          title={formatJargonChatDisplay(version)}
+                        >
+                          <button
+                            type="button"
+                            className="block max-w-full truncate text-left hover:underline"
+                            onClick={() => onEdit(version)}
+                            aria-label={`查看${formatJargonChatDisplay(version)}释义`}
+                          >
+                            {formatJargonChatDisplay(version)}
+                          </button>
+                        </TableCell>
+                      )}
+                      <TableCell className="text-center">
+                        <div className="flex flex-wrap items-center justify-center gap-1">
+                          {renderJargonStatus(version)}
+                          {versionCount > 1 && renderUpdateMarker(version.allow_update)}
+                        </div>
+                      </TableCell>
+                      <TableCell className="text-center">{version.count}</TableCell>
+                      {first && (
+                        <TableCell data-shared-actions={visibleVersions.length > 1 || undefined} rowSpan={visibleVersions.length} className={cn('text-right', visibleVersions.length > 1 && 'align-top')}>
+                          <div className="flex justify-end gap-1">
+                            <Button
+                              variant="ghost"
+                              size="icon-xs"
+                              className="text-muted-foreground/50 hover:text-foreground focus-visible:text-foreground"
+                              onClick={() => onOpenTerm(jargon)}
+                              title="查看/编辑"
+                              aria-label="查看或编辑黑话"
+                            >
+                              <Edit className="h-4 w-4" />
+                            </Button>
+                            <Button
+                              variant="ghost"
+                              size="icon-xs"
+                              className="text-muted-foreground/50 hover:text-destructive focus-visible:text-destructive"
+                              onClick={() => onDelete(jargon)}
+                              data-jargon-delete
+                              title="删除"
+                              aria-label="删除黑话"
+                            >
+                              <Trash2 className="h-4 w-4" />
+                            </Button>
+                          </div>
+                        </TableCell>
+                      )}
+                    </TableRow>
+                  )
+                })
+              )
             )}
           </TableBody>
         </Table>
@@ -274,9 +362,9 @@ export function JargonList({
             <ThinkingIllustration size="sm" className="mx-auto" />
           </div>
         ) : jargons.length === 0 ? (
-          <div className="text-muted-foreground py-8 text-center">暂无数据</div>
+          <div className="text-muted-foreground py-8 text-center">暂无数据 {emptyAction}</div>
         ) : (
-          jargons.map((jargon) => (
+          entries.map(({ jargon, visibleVersions, toggle }) => (
             <div
               key={jargon.id}
               className="min-w-0 space-y-2 overflow-hidden rounded-lg border bg-transparent p-3"
@@ -291,31 +379,43 @@ export function JargonList({
                 />
                 <div className="min-w-0 flex-1 space-y-1.5">
                   <div className="flex items-center gap-2">
-                    {jargon.is_global && <Globe className="h-4 w-4 flex-shrink-0 text-blue-500" />}
+                    {!jargon.scope_versions?.length && jargon.is_global && (
+                      <Globe className="h-4 w-4 flex-shrink-0 text-blue-500" />
+                    )}
                     <h3 className="text-sm font-semibold break-all">{jargon.content}</h3>
+                    {toggle}
                   </div>
-                  {jargon.meaning && (
-                    <p className="text-muted-foreground line-clamp-3 text-xs break-all">
-                      {jargon.meaning}
-                    </p>
-                  )}
-                  <div className="flex flex-wrap items-center gap-2 text-xs">
-                    {renderJargonStatus(jargon)}
-                    {renderManualMarker(jargon.created_by, true)}
-                    <span className="text-muted-foreground">次数: {jargon.count}</span>
-                  </div>
-                  {!hideChatColumn && (
-                    <div className="text-muted-foreground truncate text-xs">
-                      聊天: {formatJargonChatDisplay(jargon)}
+                  {visibleVersions.map((version) => (
+                    <div
+                      key={version.id}
+                      className="space-y-1 border-l-2 border-orange-500/80 pl-2"
+                    >
+                      <p className="line-clamp-3 text-sm break-words">
+                        {version.meaning || '暂无释义'}
+                      </p>
+                      <div className="flex flex-wrap items-center gap-1.5 text-xs">
+                        {!hideChatColumn && (
+                          <button
+                            type="button"
+                            onClick={() => onEdit(version)}
+                            className="text-left break-all underline"
+                          >
+                            {formatJargonChatDisplay(version)}
+                          </button>
+                        )}
+                        {renderJargonStatus(version)}
+                        {renderUpdateMarker(version.allow_update, true)}
+                        <span className="text-muted-foreground">遇见 {version.count} 次</span>
+                      </div>
                     </div>
-                  )}
+                  ))}
                 </div>
               </div>
               <div className="flex flex-wrap gap-1 border-t pt-2">
                 <Button
                   variant="outline"
                   size="sm"
-                  onClick={() => onEdit(jargon)}
+                  onClick={() => onOpenTerm(jargon)}
                   className="h-auto px-2 py-1 text-xs"
                 >
                   <Edit className="mr-1 h-3 w-3" />

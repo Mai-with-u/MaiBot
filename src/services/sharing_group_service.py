@@ -1,17 +1,21 @@
 """相通组唯一数据来源。运行时读取快照，只展开当前会话直接所属的组。"""
 
+from contextlib import contextmanager
 from threading import RLock
 from time import time
-from typing import Any, Dict, List, Literal, Optional, Set, Tuple
+from typing import Any, Dict, Iterator, List, Literal, Optional, Set, Tuple
 from uuid import uuid4
 
 from pydantic import BaseModel, Field, model_validator
 from sqlalchemy import delete, update
-from sqlmodel import select
+from sqlmodel import Session, col, select
 
 import json
 
 from src.common.database.database import get_db_session
+from src.common.database.database_model import Jargon
+from src.common.database.jargon_snapshots import inherit_contributed_words
+from src.common.database.jargon_scope_transfers import inherit_configured_groups, inherit_scope_members, stored_jargon_members
 from src.common.database.sharing_models import (
     SharingGroup,
     SharingGroupCapability,
@@ -68,23 +72,27 @@ def _rule_ids(rule: Dict[str, str]) -> Set[str]:
 def _load_snapshot() -> None:
     global _snapshot
     with get_db_session(auto_commit=False) as session:
-        groups = session.exec(select(SharingGroup).order_by(SharingGroup.created_at, SharingGroup.id)).all()
-        members = session.exec(select(SharingGroupMember)).all()
-        rules = session.exec(select(SharingGroupRule)).all()
-        capabilities = session.exec(select(SharingGroupCapability)).all()
-        result = []
-        for group in groups:
-            data = group.model_dump()
-            data["member_ids"] = [member.session_id for member in members if member.group_id == group.id]
-            data["rules"] = [
-                {"platform": rule.platform, "item_id": rule.item_id, "rule_type": rule.rule_type}
-                for rule in rules
-                if rule.group_id == group.id
-            ]
-            data["capabilities"] = {item.capability: item.enabled for item in capabilities if item.group_id == group.id}
-            data["resolved_ids"] = sorted(set(data["member_ids"]).union(*(_rule_ids(rule) for rule in data["rules"])))
-            result.append(data)
-    _snapshot = result
+        _snapshot = _read_groups(session)
+
+
+def _read_groups(session: Session) -> List[Dict[str, Any]]:
+    groups = session.exec(select(SharingGroup).order_by(SharingGroup.created_at, SharingGroup.id)).all()
+    members = session.exec(select(SharingGroupMember)).all()
+    rules = session.exec(select(SharingGroupRule)).all()
+    capabilities = session.exec(select(SharingGroupCapability)).all()
+    result = []
+    for group in groups:
+        data = group.model_dump()
+        data["member_ids"] = [member.session_id for member in members if member.group_id == group.id]
+        data["rules"] = [
+            {"platform": rule.platform, "item_id": rule.item_id, "rule_type": rule.rule_type}
+            for rule in rules
+            if rule.group_id == group.id
+        ]
+        data["capabilities"] = {item.capability: item.enabled for item in capabilities if item.group_id == group.id}
+        data["resolved_ids"] = sorted(set(data["member_ids"]).union(*(_rule_ids(rule) for rule in data["rules"])))
+        result.append(data)
+    return result
 
 
 def refresh() -> None:
@@ -177,6 +185,9 @@ def initialize() -> None:
                             source="memory:global", group_id=group_id, payload="true", migrated_at=now
                         )
                     )
+                if sources["jargon"]:
+                    session.flush()
+                    inherit_configured_groups(session.connection())
                 session.add(SharingGroupMigration(source="config-v1-complete", payload="{}", migrated_at=time()))
         _load_snapshot()
 
@@ -222,20 +233,104 @@ def resolve_scope(session_id: Optional[str], capability: str) -> Tuple[Set[str],
     return result, global_scope
 
 
+@contextmanager
+def stable_jargon_membership() -> Iterator[None]:
+    """让新线索在线程池等候正在提交的组变更，然后按已提交的成员关系归属。"""
+    with _lock:
+        yield
+
+
+def jargon_group_ids(session_id: str) -> List[str]:
+    """保留旧重叠组的读取能力；写入方仅接受唯一归属。"""
+    with get_db_session(auto_commit=False) as session:
+        return [group for group, _ in stored_jargon_members(session.connection(), session_id)]
+
+
+def jargon_group_overlap(left: Dict[str, Any], right: Dict[str, Any]) -> Optional[str]:
+    all_chats = {"platform": "*", "item_id": "*", "rule_type": "all"}
+    if all_chats in left["rules"] or all_chats in right["rules"]:
+        return "覆盖所有聊天"
+    for a in left["rules"]:
+        for b in right["rules"]:
+            if all(a[key] == b[key] or wildcard in (a[key], b[key])
+                   for key, wildcard in (("platform", "*"), ("item_id", "*"), ("rule_type", "all"))):
+                return f"{a['platform']}/{a['item_id']}/{a['rule_type']} ↔ {b['platform']}/{b['item_id']}/{b['rule_type']}"
+    common = resolved_members(left) & resolved_members(right)
+    return min(common) if common else None
+
+
+def _transfer_changed_members(session: Session, group_id: str, joined: Set[str], left: Set[str], *, was_global: bool) -> None:
+    from .jargon_scope_service import assign_deferred_learning
+
+    db = session.connection()
+    destinations = {}
+    independent = []
+    for chat in sorted(left):
+        remaining = stored_jargon_members(db, chat)
+        if not remaining:
+            independent.append(chat)
+        elif len(remaining) == 1:
+            destinations.setdefault(remaining[0][0], []).append(chat)
+    if joined:
+        destinations[group_id] = sorted(joined)
+    if was_global:
+        inherit_contributed_words(db, group_id, independent)
+    else:
+        inherit_scope_members(db, group_id, independent, joining=False)
+    for target, chats in destinations.items():
+        inherit_scope_members(db, target, chats, joining=True)
+    assign_deferred_learning(session, joined | left)
+
+
+def _global_jargon(group: Dict[str, Any]) -> bool:
+    return bool(group["enabled"] and group["capabilities"].get("jargon") and
+                {"platform": "*", "item_id": "*", "rule_type": "all"} in group["rules"])
+
+
+def _departing_scope_members(session: Session, group: Dict[str, Any], keeps_global: bool = False) -> Set[str]:
+    if not group["enabled"] or not group["capabilities"].get("jargon"):
+        return set()
+    chats = resolved_members(group)
+    if not keeps_global and _global_jargon(group):
+        # 历史来源可能已无聊天元数据，冲突期的线索也需要重新分配。
+        chats.update(session.connection().exec_driver_sql("""
+            SELECT DISTINCT o.value FROM jargons g JOIN json_each(g.contributing_chats) o
+            WHERE g.archived=0 AND g.scope_kind='group' AND g.scope_id=?
+            UNION SELECT source_session_id FROM jargon_deferred_learning
+        """, (group["id"],)).scalars())
+    return chats
+
+
 def save_group(data: GroupInput, group_id: Optional[str] = None) -> Dict[str, Any]:
     from src.chat.message_receive.chat_manager import chat_manager
 
     initialize()
     with _lock:
-        current = next((group for group in _snapshot if group["id"] == group_id), None)
-        if group_id is not None and current is None:
-            raise KeyError(group_id)
-        existing_ids = set(current["member_ids"]) if current else set()
-        for session_id in set(data.member_ids) - existing_ids:
-            if chat_manager.get_existing_session_by_session_id(session_id) is None:
-                raise ValueError(f"聊天流不存在：{session_id}")
-        now = time()
         with get_db_session() as session:
+            session.connection().exec_driver_sql("BEGIN IMMEDIATE")
+            groups = _read_groups(session)
+            current = next((group for group in groups if group["id"] == group_id), None)
+            if group_id is not None and current is None:
+                raise KeyError(group_id)
+            existing_ids = set(current["member_ids"]) if current else set()
+            for session_id in set(data.member_ids) - existing_ids:
+                if chat_manager.get_existing_session_by_session_id(session_id) is None:
+                    raise ValueError(f"聊天流不存在：{session_id}")
+            global_jargon = data.enabled and data.capabilities.get("jargon", False) and any(
+                r.platform == "*" and r.item_id == "*" and r.rule_type == "all" for r in data.rules
+            )
+            before = _departing_scope_members(session, current, keeps_global=global_jargon) if current else set()
+            after = set()
+            if data.enabled and data.capabilities.get("jargon"):
+                candidate = data.model_dump()
+                candidate["resolved_ids"] = set(data.member_ids).union(*(_rule_ids(rule) for rule in candidate["rules"]))
+                after = resolved_members(candidate)
+                for other in groups:
+                    if other["id"] != group_id and other["enabled"] and other["capabilities"].get("jargon"):
+                        conflict = jargon_group_overlap(candidate, other)
+                        if conflict:
+                            raise ValueError(f"黑话共享范围与「{other['name']}」重叠：{conflict}")
+            now = time()
             if group_id is None:
                 group_id = str(uuid4())
                 session.add(
@@ -273,6 +368,14 @@ def save_group(data: GroupInput, group_id: Optional[str] = None) -> Dict[str, An
                 session.add(SharingGroupRule(id=str(uuid4()), group_id=group_id, **rule.model_dump()))
             for capability, enabled in data.capabilities.items():
                 session.add(SharingGroupCapability(group_id=group_id, capability=capability, enabled=enabled))
+            session.flush()
+            if global_jargon:
+                after.update(chat for owner, chat in stored_jargon_members(session.connection()) if owner == group_id)
+            _transfer_changed_members(session, group_id, after - before, before - after,
+                                      was_global=current is not None and _global_jargon(current))
+            if not (data.enabled and data.capabilities.get("jargon")):
+                session.exec(update(Jargon).where(Jargon.scope_kind == "group", Jargon.scope_id == group_id,
+                                                  col(Jargon.archived).is_(False)).values(archived=True, revision=Jargon.revision + 1))
         _load_snapshot()
         return next(group for group in list_groups() if group["id"] == group_id)
 
@@ -287,7 +390,12 @@ def delete_group(group_id: str, revision: int) -> None:
                 raise KeyError(group_id)
             if group.revision != revision:
                 raise ValueError("相通组已被修改，请刷新后重试")
+            current = next(item for item in _read_groups(session) if item["id"] == group_id)
+            members = _departing_scope_members(session, current)
             for model in (SharingGroupMember, SharingGroupRule, SharingGroupCapability):
                 session.execute(delete(model).where(model.group_id == group_id))
+            _transfer_changed_members(session, group_id, set(), members, was_global=_global_jargon(current))
+            session.exec(update(Jargon).where(Jargon.scope_kind == "group", Jargon.scope_id == group_id,
+                                              col(Jargon.archived).is_(False)).values(archived=True, revision=Jargon.revision + 1))
             session.delete(group)
         _load_snapshot()

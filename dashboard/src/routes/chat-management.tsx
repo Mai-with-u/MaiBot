@@ -31,6 +31,7 @@ import {
   type SharingCapability,
   type SharingGroup,
   type SharingGroupInput,
+  type SharingRule,
 } from '@/lib/sharing-groups-api'
 
 const labels: Record<SharingCapability, string> = {
@@ -39,6 +40,11 @@ const labels: Record<SharingCapability, string> = {
   memory: '记忆',
 }
 const palette = ['#39845A', '#397FAE', '#B97132', '#9863A5', '#B45C6E', '#438E91']
+
+const allChatsRule: SharingRule = { platform: '*', item_id: '*', rule_type: 'all' }
+function coversAllChats(rule: SharingRule) {
+  return rule.platform === '*' && rule.item_id === '*' && rule.rule_type === 'all'
+}
 
 function GroupEditor({
   group,
@@ -65,6 +71,7 @@ function GroupEditor({
         }
   )
   const [search, setSearch] = useState('')
+  const isGlobal = draft.rules.some(coversAllChats)
   const chats = useQuery({ queryKey: ['chat-streams'], queryFn: () => getChatStreams() })
   const { toast } = useToast()
   const mutation = useMutation({
@@ -155,61 +162,84 @@ function GroupEditor({
                   ))}
                 </div>
                 <div className="space-y-2">
-                  <Label>成员聊天</Label>
-                  <Input
-                    placeholder="搜索聊天名称"
-                    value={search}
-                    onChange={(event) => setSearch(event.target.value)}
-                  />
-                  {chats.isError ? (
-                    <p className="text-destructive">聊天列表加载失败</p>
+                  <div className="flex flex-wrap items-center justify-between gap-2">
+                    <span className="text-sm font-medium">成员聊天</span>
+                    <Label htmlFor="group-all-chats" className="flex items-center gap-2">
+                      <Switch
+                        id="group-all-chats"
+                        checked={isGlobal}
+                        onCheckedChange={(checked) =>
+                          setDraft((current) => ({
+                            ...current,
+                            rules: checked
+                              ? [...current.rules, allChatsRule]
+                              : current.rules.filter((rule) => !coversAllChats(rule)),
+                          }))
+                        }
+                      />
+                      覆盖所有聊天
+                    </Label>
+                  </div>
+                  {isGlobal ? (
+                    <p className="text-muted-foreground text-xs">包含所有平台现有和以后新增的群聊、私聊。{draft.capabilities.jargon && '启用黑话学习的聊天会在此组共同积累线索和推断释义。'}</p>
                   ) : (
-                    <div className="max-h-56 overflow-auto border-2 p-2">
-                      {chats.data
-                        ?.filter((chat) =>
-                          chat.display_name.toLowerCase().includes(search.toLowerCase())
-                        )
-                        .map((chat) => (
-                          <Label key={chat.session_id} className="flex items-center gap-2 p-2">
-                            <Checkbox
-                              aria-label={`选择 ${chat.display_name}`}
-                              checked={draft.member_ids.includes(chat.session_id)}
-                              onCheckedChange={(checked) =>
-                                setDraft({
-                                  ...draft,
-                                  member_ids: checked
-                                    ? [...draft.member_ids, chat.session_id]
-                                    : draft.member_ids.filter((id) => id !== chat.session_id),
-                                })
-                              }
-                            />
-                            {formatChatDisplayName(chat.display_name, chat.account_id)}
-                          </Label>
-                        ))}
-                    </div>
-                  )}
-                  {chats.isSuccess &&
-                    draft.member_ids
-                      .filter((id) => !chats.data.some((chat) => chat.session_id === id))
-                      .map((id) => (
-                        <div key={id} className="flex items-center gap-2 text-sm">
-                          未找到聊天流
-                          <Button
-                            size="xs"
-                            variant="outline"
-                            onClick={() =>
-                              setDraft({
-                                ...draft,
-                                member_ids: draft.member_ids.filter((member) => member !== id),
-                              })
-                            }
-                          >
-                            移除
-                          </Button>
+                    <>
+                      <Input
+                        placeholder="搜索聊天名称"
+                        value={search}
+                        onChange={(event) => setSearch(event.target.value)}
+                      />
+                      {chats.isError ? (
+                        <p className="text-destructive">聊天列表加载失败</p>
+                      ) : (
+                        <div className="max-h-56 overflow-auto border-2 p-2">
+                          {chats.data
+                            ?.filter((chat) =>
+                              chat.display_name.toLowerCase().includes(search.toLowerCase())
+                            )
+                            .map((chat) => (
+                              <Label key={chat.session_id} className="flex items-center gap-2 p-2">
+                                <Checkbox
+                                  aria-label={`选择 ${chat.display_name}`}
+                                  checked={draft.member_ids.includes(chat.session_id)}
+                                  onCheckedChange={(checked) =>
+                                    setDraft({
+                                      ...draft,
+                                      member_ids: checked
+                                        ? [...draft.member_ids, chat.session_id]
+                                        : draft.member_ids.filter((id) => id !== chat.session_id),
+                                    })
+                                  }
+                                />
+                                {formatChatDisplayName(chat.display_name, chat.account_id)}
+                              </Label>
+                            ))}
                         </div>
-                      ))}
+                      )}
+                      {chats.isSuccess &&
+                        draft.member_ids
+                          .filter((id) => !chats.data.some((chat) => chat.session_id === id))
+                          .map((id) => (
+                            <div key={id} className="flex items-center gap-2 text-sm">
+                              未找到聊天流
+                              <Button
+                                size="xs"
+                                variant="outline"
+                                onClick={() =>
+                                  setDraft({
+                                    ...draft,
+                                    member_ids: draft.member_ids.filter((member) => member !== id),
+                                  })
+                                }
+                              >
+                                移除
+                              </Button>
+                            </div>
+                          ))}
+                    </>
+                  )}
                 </div>
-                {draft.rules.length > 0 && (
+                {!isGlobal && draft.rules.length > 0 && (
                   <div className="space-y-2">
                     <Label>迁移保留的成员规则</Label>
                     <p className="text-muted-foreground text-xs">
@@ -247,7 +277,7 @@ function GroupEditor({
               {group && (
                 <Button variant="destructive" disabled={busy} onClick={() => remove.mutate()}>
                   <Trash2 className="h-4 w-4" />
-                  删除组
+                  {remove.isPending ? '正在删除…' : '删除组'}
                 </Button>
               )}
               <Button variant="outline" disabled={busy} onClick={onClose}>
@@ -285,6 +315,7 @@ function GroupEditor({
       const nodes: RelationshipNode[] = []
       const edges: RelationshipEdge[] = []
       const memberNodes = new Map<string, RelationshipNode>()
+      const memberGroupNames = new Map<string, string[]>()
       for (const group of groups) {
         const active =
           group.enabled &&
@@ -292,9 +323,11 @@ function GroupEditor({
             (key) => layers[key] && group.capabilities[key]
           )
         const opacity = active ? 1 : 0.2
+        const isGlobal = group.rules.some(coversAllChats)
         nodes.push({
           id: group.id,
           label: group.name,
+          isGlobal,
           description: group.enabled
             ? (Object.keys(labels) as SharingCapability[])
                 .filter((key) => group.capabilities[key])
@@ -305,13 +338,17 @@ function GroupEditor({
           column: 0,
           opacity,
         })
+        if (isGlobal) continue
         for (const id of group.resolved_ids) {
           const chat = chats.data?.find((item) => item.session_id === id)
           const nodeId = `member:${id}`
           const existing = memberNodes.get(nodeId)
+          const owners = [...(memberGroupNames.get(nodeId) ?? []), group.name]
+          memberGroupNames.set(nodeId, owners)
           memberNodes.set(nodeId, {
             id: nodeId,
             label: chat ? formatChatDisplayName(chat.display_name, chat.account_id) : '未找到聊天流',
+            description: owners.length > 1 ? `共同成员 · ${owners.join('、')}` : undefined,
             colors: [...new Set([...(existing?.colors ?? []), group.color])],
             column: 1,
             opacity: Math.max(existing?.opacity ?? 0, opacity),
@@ -339,13 +376,6 @@ function GroupEditor({
           edges.push({ from: group.id, to: id, color: group.color, opacity })
         })
       }
-      for (const node of memberNodes.values()) {
-        const related = groups.filter((group) =>
-          group.resolved_ids.includes(node.id.slice('member:'.length))
-        )
-        if (related.length > 1)
-          node.description = `共同成员 · ${related.map((group) => group.name).join('、')}`
-      }
       nodes.push(...memberNodes.values())
       const refresh = () => {
         for (const key of ['sharing-groups', 'expression', 'jargon', 'memory'])
@@ -356,6 +386,9 @@ function GroupEditor({
           className={fullHeight ? 'flex min-h-0 flex-1 flex-col' : 'flex h-[70vh] min-h-80 flex-col'}
         >
           <div className="flex min-h-0 flex-1 flex-col overflow-hidden">
+            {query.data?.jargon_conflicts?.map(({ left, right }, i) => (
+              <p key={i} role="alert" className="text-destructive">「{left}」与「{right}」的黑话范围重叠。线索会先记在来源聊天下。调整成员或规则后，系统会将线索用于后续推断。</p>
+            ))}
             {query.isPending ? (
               <p>正在加载相通组…</p>
             ) : query.isError ? (

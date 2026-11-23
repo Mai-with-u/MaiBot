@@ -13,6 +13,8 @@ from sqlalchemy.engine import Connection, Engine
 
 
 from src.common.database.chat_migration_models import copies, jobs, metadata
+from src.common.database.jargon_snapshots import materialize, read_jargons
+from src.common.database.jargon_scope_transfers import inherit_scope_members, stored_jargon_members, term_key
 
 
 # 表归属须显式声明，新增聊天流数据表时不得静默漏迁。
@@ -30,7 +32,7 @@ SCOPES = {
     "learned_commands": "session_id",
 }
 # 消息小时统计按真实收发对象聚合，是实例历史统计，不属于聊天流副本。
-EXCLUDED = {"chat_sessions", "webui_help_turns", "statistics_message_hourly"}
+EXCLUDED = {"jargon_learning_records", "chat_sessions", "webui_help_turns", "statistics_message_hourly"}
 LABELS = {
     "mai_messages": "聊天消息",
     "tool_records": "工具调用",
@@ -66,7 +68,9 @@ def digest(value: Any) -> str:
 
 def public_row(row: Dict[str, Any]) -> Dict[str, Any]:
     result = {key: value for key, value in row.items() if key not in {"raw_content", "id", "session_id"}}
-    if "session_id_dict" in row:
+    if "scope_kind" in row:
+        result["scope_label"] = "单个聊天流"
+    elif "session_id_dict" in row:
         count = len(json.loads(row["session_id_dict"]))
         result["scope_label"] = (
             "全局" if row["is_global"] else (f"共享于 {count} 个聊天流" if count > 1 else "单个聊天流")
@@ -185,11 +189,17 @@ class MigrationStore:
             rows.sort(key=dumps)
             data["tables"][name] = rows
         table = self._table(conn, "jargons")
-        data["tables"]["jargons"] = [
-            dict(row)
-            for row in conn.execute(select(table).order_by(table.c.id)).mappings()
-            if {source, target}.intersection(json.loads(row["session_id_dict"]))
-        ]
+        if "scope_kind" in table.c:
+            if "jargon_snapshot_members" in names:
+                table = inspect(read_jargons(chats=[source, target])).selectable
+            owned = select(table).where(table.c.scope_kind == "chat", table.c.scope_id.in_([source, target]),
+                                        table.c.archived.is_(False)).order_by(table.c.id)
+            data["tables"]["jargons"] = [dict(row) for row in conn.execute(owned).mappings()]
+        else:
+            data["tables"]["jargons"] = [
+                dict(row) for row in conn.execute(select(table).order_by(table.c.id)).mappings()
+                if {source, target}.intersection(json.loads(row["session_id_dict"]))
+            ]
         ledger = [dict(row) for row in conn.execute(select(copies)).mappings()]
         data["ledger"] = ledger
         for name in ("expressions", "jargons", "learned_commands"):
@@ -205,7 +215,7 @@ class MigrationStore:
                             "label": row.get("content") or row.get("command") or f"{row['situation']} / {row['style']}",
                             "source": public_row(row),
                             "target": [public_row(item) for item in matches],
-                            "choices": ["source", "target", "both"],
+                            "choices": ["source", "target"] if name == "jargons" and "scope_id" in row else ["source", "target", "both"],
                         }
                     )
         identity_fields = ("session_id", "platform", "user_id", "group_id", "account_id", "scope")
@@ -225,7 +235,7 @@ class MigrationStore:
             row
             for row in data["tables"].get(name, [])
             if (
-                source in json.loads(row["session_id_dict"]) and not row["is_global"]
+                (row["scope_id"] == source if "scope_id" in row else source in json.loads(row["session_id_dict"]) and not row["is_global"])
                 if name == "jargons"
                 else row[SCOPES[name]] == source
             )
@@ -259,7 +269,7 @@ class MigrationStore:
 
     def already_copied(self, data: Dict[str, Any], name: str, row: Dict[str, Any], source: str, target: str) -> bool:
         # 黑话可由多个聊天流直接共用；目标已在作用域内时，并不存在待迁入的副本。
-        if name == "jargons" and (row["is_global"] or target in json.loads(row["session_id_dict"])):
+        if name == "jargons" and "scope_id" not in row and (row["is_global"] or target in json.loads(row["session_id_dict"])):
             return True
         origin = self.origin(data, name, row, source)
         if origin.startswith(f"{target}:"):
@@ -295,6 +305,8 @@ class MigrationStore:
     @staticmethod
     def matches(data: Dict[str, Any], name: str, row: Dict[str, Any], target: str) -> List[Dict[str, Any]]:
         candidates = MigrationStore.source_rows(data, name, target)
+        if name == "jargons" and "scope_id" in row:
+            return [item for item in candidates if term_key(item["content"]) == term_key(row["content"])]
         keys = (
             ("situation", "style")
             if name == "expressions"
@@ -314,6 +326,12 @@ class MigrationStore:
             for conflict in data["conflicts"]:
                 if decisions.get(conflict["id"]) not in conflict["choices"]:
                     raise ValueError("存在未处理的冲突")
+            if "jargon_snapshot_members" in inspect(conn).get_table_names():
+                materialize(conn, [r["id"] for r in data["tables"]["jargons"]])
+            before_groups = set()
+            scoped_groups = "sharing_groups" in inspect(conn).get_table_names() and "scope_id" in self._table(conn, "jargons").c
+            if scoped_groups:
+                before_groups = {g for g, _ in stored_jargon_members(conn, target)}
             for name in data["tables"]:
                 table = self._table(conn, name)
                 counts[name] = 0
@@ -346,7 +364,10 @@ class MigrationStore:
                     target_key = ""
                     if choice == "source":
                         for match in matches:
-                            if name == "jargons":
+                            if name == "jargons" and "scope_id" in row:
+                                conn.execute(table.update().where(table.c.id == match["id"]).values(
+                                    archived=True, revision=match["revision"] + 1))
+                            elif name == "jargons":
                                 mapping = json.loads(match["session_id_dict"])
                                 mapping.pop(target, None)
                                 conn.execute(
@@ -362,7 +383,9 @@ class MigrationStore:
                             row.pop("event_id", None)
                         if name == "maisaka_reply_effects":
                             row["effect_id"] = uuid.uuid4().hex
-                        if name == "jargons":
+                        if name == "jargons" and "scope_id" in row:
+                            row.update(scope_id=target, baseline_id=row["baseline_id"] or original["id"], revision=0)
+                        elif name == "jargons":
                             mapping = json.loads(row["session_id_dict"])
                             row["session_id_dict"] = dumps({target: mapping[source]})
                             row["is_global"] = False
@@ -382,6 +405,10 @@ class MigrationStore:
                         else:
                             result = conn.execute(table.insert().values(**row))
                             target_key = str(result.inserted_primary_key[0])
+                            if name == "jargons" and "scope_id" in row:
+                                conn.exec_driver_sql("""INSERT INTO jargon_evidence_links
+                                    SELECT ?, record_id FROM jargon_evidence_links WHERE jargon_id=?""",
+                                    (result.inserted_primary_key[0], original["id"]))
                             counts[name] += 1
                     values = {
                         "table_name": name,
@@ -394,6 +421,15 @@ class MigrationStore:
                         conn.execute(copies.update().where(copies.c.id == previous["id"]).values(**values))
                     else:
                         conn.execute(copies.insert().values(**values))
+            if scoped_groups:
+                after_groups = {g for g, _ in stored_jargon_members(conn, target)}
+                if len(after_groups) > 1 and after_groups != before_groups:
+                    raise ValueError("迁移后的聊天会属于多个黑话共享组，请先调整相通组成员")
+                if not after_groups:
+                    for group in before_groups:
+                        inherit_scope_members(conn, group, [target], joining=False)
+                if len(after_groups) == 1:
+                    inherit_scope_members(conn, next(iter(after_groups)), [target], joining=True)
             payload = job["payload"]
             payload["result"] = counts
             payload["database_committed"] = True

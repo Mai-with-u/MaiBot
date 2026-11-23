@@ -1,5 +1,7 @@
-import { HelpCircle, Upload } from 'lucide-react'
-import { useEffect, useState } from 'react'
+import { ArrowLeft, ChevronLeft, ChevronRight, Upload } from 'lucide-react'
+import { JargonMeaningOverview } from './JargonMeaningOverview'
+import { JargonScopeEditor, type DetailTab } from './JargonScopeEditor'
+import { useEffect, useRef, useState } from 'react'
 
 import {
   AlertDialog,
@@ -22,10 +24,10 @@ import {
   DialogHeader,
   DialogTitle,
 } from '@/components/ui/dialog'
-import { Badge } from '@/components/ui/badge'
 import { Input } from '@/components/ui/input'
 import { Label } from '@/components/ui/label'
 import { MultiSelect } from '@/components/ui/multi-select'
+import { Separator } from '@/components/ui/separator'
 import {
   Select,
   SelectContent,
@@ -42,6 +44,7 @@ import { createJargon, updateJargon } from '@/lib/jargon-api'
 
 import type {
   Jargon,
+  JargonGroupInfo,
   JargonChatInfo,
   JargonCreateRequest,
   JargonUpdateRequest,
@@ -55,7 +58,23 @@ interface JargonDetailDialogProps {
   open: boolean
   onOpenChange: (open: boolean) => void
   chatList: JargonChatInfo[]
+  groups?: JargonGroupInfo[]
+  onScopeChange?: (jargon: Jargon | null) => void
+  pageNavigation?: { index: number; count: number; go: (offset: number) => void }
   onChanged: (jargon: Jargon) => void
+}
+
+function detailForm(jargon: Jargon): JargonUpdateRequest {
+  return {
+    meaning: jargon.meaning || '',
+    session_id: jargon.session_id,
+    session_ids: jargon.session_ids?.length
+      ? jargon.session_ids
+      : [jargon.session_id].filter(Boolean),
+    is_global: jargon.is_global,
+    is_jargon: jargon.is_jargon,
+    allow_update: jargon.allow_update,
+  }
 }
 
 export function JargonDetailDialog({
@@ -64,51 +83,36 @@ export function JargonDetailDialog({
   onOpenChange,
   chatList,
   onChanged,
+  groups = [],
+  onScopeChange,
+  pageNavigation,
 }: JargonDetailDialogProps) {
   const [formData, setFormData] = useState<JargonUpdateRequest>({})
   const [saving, setSaving] = useState(false)
-  const [locked, setLocked] = useState(false)
+  const [tab, setTab] = useState<DetailTab>('meaning')
+  const [pendingLeave, setPendingLeave] = useState<'overview' | 'close' | null>(null)
+  const [changingScope, setChangingScope] = useState(false)
+  const titleRef = useRef<HTMLHeadingElement>(null)
   const { toast } = useToast()
 
   useEffect(() => {
     if (jargon && open) {
-      setLocked(jargon.created_by === 'MANUAL')
-      setFormData({
-        content: jargon.content,
-        meaning: jargon.meaning || '',
-        session_id: jargon.session_id,
-        session_ids: jargon.session_ids?.length
-          ? jargon.session_ids
-          : [jargon.session_id].filter(Boolean),
-        is_global: jargon.is_global,
-        is_jargon: jargon.is_jargon,
-      })
+      setFormData(detailForm(jargon))
+      setPendingLeave(null)
+    } else {
+      setTab('meaning')
     }
   }, [jargon, open])
 
-  const editText = (field: 'content' | 'meaning', value: string) => {
-    const next = { ...formData, [field]: value }
-    setFormData(next)
-    if (next.meaning?.trim()) setLocked(true)
+  const editMeaning = (meaning: string) => {
+    setFormData({ ...formData, meaning, ...(meaning.trim() && { allow_update: false }) })
   }
 
-  const locking = locked && jargon?.created_by !== 'MANUAL'
-  const handleSave = async () => {
+  const handleSave = async (allScopeRevisions?: Record<number, number>) => {
     if (!jargon) return
-    if (formData.content !== undefined && !formData.content.trim()) {
-      toast({
-        title: '验证失败',
-        description: '黑话内容不能为空',
-        variant: 'destructive',
-      })
-      return
-    }
-    if (locking && !formData.meaning?.trim()) {
-      toast({ title: '验证失败', description: '请先填写要锁定的含义', variant: 'destructive' })
-      return
-    }
-    const globalWithoutSources = formData.is_global && !jargon.session_id && !jargon.session_ids?.length
-    if (!globalWithoutSources && formData.session_ids?.length === 0) {
+    const globalWithoutSources =
+      formData.is_global && !jargon.session_id && !jargon.session_ids?.length
+    if (!jargon.scope_kind && !globalWithoutSources && formData.session_ids?.length === 0) {
       toast({
         title: '验证失败',
         description: '请至少选择一个聊天',
@@ -119,18 +123,34 @@ export function JargonDetailDialog({
 
     try {
       setSaving(true)
-      const response = await updateJargon(jargon.id, {
+      const changes: JargonUpdateRequest = {
+        ...(formData.is_jargon !== false && formData.meaning !== (jargon.meaning ?? '') && { meaning: formData.meaning }),
+        ...(formData.is_jargon !== jargon.is_jargon && { is_jargon: formData.is_jargon }),
+        ...(formData.allow_update !== jargon.allow_update && { allow_update: formData.allow_update }),
+      }
+      const response = await updateJargon(jargon.id, allScopeRevisions ? {
+        ...changes, all_scope_revisions: allScopeRevisions, revision: jargon.revision,
+      } : {
         ...formData,
-        ...(globalWithoutSources && !formData.session_ids?.length && { session_ids: undefined, session_id: undefined }),
-        ...(locking && { created_by: 'MANUAL', is_jargon: true, meaning: formData.meaning?.trim() }),
-        ...(!locked && jargon.created_by === 'MANUAL' && { created_by: 'AI' }),
+        ...(formData.is_jargon === false && { meaning: undefined }),
+        ...(jargon.scope_kind && {
+          session_ids: undefined,
+          session_id: undefined,
+          is_global: undefined,
+          revision: jargon.revision,
+        }),
+        ...(globalWithoutSources &&
+          !formData.session_ids?.length && { session_ids: undefined, session_id: undefined }),
       })
       if (response.data) {
-        onChanged(response.data)
+        onChanged(
+          jargon.scope_name ? { ...response.data, scope_name: jargon.scope_name } : response.data
+        )
       }
+      if (response.data) setTab('meaning')
       toast({
         title: '保存成功',
-        description: '黑话已更新',
+        description: allScopeRevisions ? `已保存到 ${Object.keys(allScopeRevisions).length} 个作用域` : '黑话已更新',
       })
     } catch (error) {
       toast({
@@ -144,152 +164,242 @@ export function JargonDetailDialog({
   }
 
   if (!jargon) return null
-  const status = locking ? true : formData.is_jargon
+  const status = formData.is_jargon
 
-  return (
-    <Dialog open={open} onOpenChange={onOpenChange}>
-      <DialogContent
-        className="grid max-h-[calc(100dvh-2rem)] grid-rows-[auto_minmax(0,1fr)_auto] overflow-hidden [--dialog-width:68rem]"
-        aria-describedby={undefined}
-        confirmOnEnter
-      >
-        <DialogHeader>
-          <DialogTitle>黑话详情</DialogTitle>
-        </DialogHeader>
-
-        <DialogBody type="auto" className="min-w-0" viewportClassName="pr-5">
-          <div className="grid gap-5 pb-2 md:grid-cols-[minmax(0,2fr)_minmax(0,1fr)]">
-            <div className="min-w-0 space-y-4">
-              <p className="text-muted-foreground text-sm">使用次数 {jargon.count}</p>
-
-              <div className="space-y-1">
-                <Label htmlFor="detail_content">内容</Label>
-                <Input
-                  id="detail_content"
-                  value={formData.content || ''}
-                  onChange={(e) => editText('content', e.target.value)}
-                  placeholder="输入黑话内容"
-                />
-              </div>
-
-              <div className="space-y-1">
-                <div className="flex items-center gap-4">
-                  <Label htmlFor="detail_meaning">含义</Label>
-                  <Label htmlFor="detail_lock_meaning" className="flex items-center gap-1.5 text-xs">
-                    <Checkbox
-                      id="detail_lock_meaning"
-                      checked={locked}
-                      disabled={saving || (!locked && !formData.meaning?.trim())}
-                      onCheckedChange={(checked) => setLocked(checked === true)}
-                    />
-                    锁定含义
-                  </Label>
-                </div>
-                <Textarea
-                  id="detail_meaning"
-                  value={formData.meaning || ''}
-                  onChange={(e) => editText('meaning', e.target.value)}
-                  placeholder="输入黑话含义"
-                  rows={4}
-                />
-              </div>
-            </div>
-            <div className="min-w-0 space-y-4">
-              <div className="space-y-1">
-                <Label>聊天</Label>
-                <MultiSelect
-                  sortable={false}
-                  options={chatList.map((chat) => ({
-                    label: formatChatDisplayName(chat.chat_name, chat.account_id),
-                    value: chat.session_id,
-                  }))}
-                  selected={formData.session_ids || []}
-                  onChange={(values) =>
-                    setFormData({ ...formData, session_ids: values, session_id: values[0] })
-                  }
-                  placeholder="选择关联的聊天"
-                  emptyText="没有可选聊天"
-                />
-              </div>
-              <div className="space-y-1">
-                <Label className="text-muted-foreground text-xs">状态</Label>
-                <div className="flex flex-wrap items-center gap-2">
-                  {status === true && (
-                    <Badge variant="default" className="bg-green-600">
-                      黑话
-                    </Badge>
-                  )}
-                  {status === null && <Badge variant="outline">积累中</Badge>}
-                  {status === false && <Badge variant="secondary">不是黑话</Badge>}
-                  {jargon.is_legacy_empty_meaning && (
-                    <Badge variant="outline">
-                      <HelpCircle className="mr-1 h-3 w-3" />
-                      旧数据
-                    </Badge>
-                  )}
-                  {locked ? (
-                    <Badge variant="outline">已锁定</Badge>
-                  ) : (
-                    <Badge variant="secondary">AI</Badge>
-                  )}
-                  {jargon.is_global && (
-                    <Badge variant="outline" className="border-blue-500 text-blue-500">
-                      全局
-                    </Badge>
-                  )}
-                  {jargon.is_complete && (
-                    <Badge variant="outline" className="border-purple-500 text-purple-500">
-                      推断完成
-                    </Badge>
-                  )}
-                </div>
-              </div>
-
-              <div className="space-y-2">
-                <Label>黑话状态</Label>
-                <Select
-                  disabled={locking}
-                  value={String(status ?? 'pending')}
-                  onValueChange={(value) =>
-                    setFormData({
-                      ...formData,
-                      is_jargon: value === 'pending' ? null : value === 'true',
-                    })
-                  }
-                >
-                  <SelectTrigger>
-                    <SelectValue />
-                  </SelectTrigger>
-                  <SelectContent>
-                    <SelectItem value="true">黑话</SelectItem>
-                    {jargon.is_jargon === null && <SelectItem value="pending">积累中</SelectItem>}
-                    <SelectItem value="false">不是黑话</SelectItem>
-                  </SelectContent>
-                </Select>
-              </div>
-
-              <div className="flex items-center space-x-2">
-                <Switch
-                  id="detail_is_global"
-                  checked={formData.is_global}
-                  onCheckedChange={(checked) => setFormData({ ...formData, is_global: checked })}
-                />
-                <Label htmlFor="detail_is_global">全局黑话</Label>
-              </div>
+  const dirty =
+    formData.meaning !== undefined &&
+    (formData.meaning !== (jargon.meaning ?? '') ||
+      formData.allow_update !== jargon.allow_update ||
+      formData.is_jargon !== jargon.is_jargon ||
+      (!jargon.scope_kind &&
+        (formData.is_global !== jargon.is_global ||
+          JSON.stringify(formData.session_ids) !== JSON.stringify(detailForm(jargon).session_ids))))
+  const busy = saving || changingScope
+  const leave = (target: 'overview' | 'close') => {
+    if (target === 'close') onOpenChange(false)
+    else {
+      setFormData(detailForm(jargon))
+      setTab('meaning')
+    }
+  }
+  const openVersion = (row: Jargon, view: DetailTab) => {
+    if (row !== jargon) onScopeChange?.(row)
+    setTab(view)
+  }
+  const requestLeave = (target: 'overview' | 'close') => {
+    if (busy) return
+    if (dirty) setPendingLeave(target)
+    else leave(target)
+  }
+  const renderEditor = (editRevisions: Record<number, number>) => (
+    <>
+      <fieldset disabled={busy} className="custom-scrollbar flex min-h-0 min-w-0 flex-1 flex-col gap-3 overflow-y-auto">
+        <div className="flex shrink-0 flex-wrap items-center gap-x-4 gap-y-2">
+          <Select
+            value={String(status ?? 'pending')}
+            disabled={busy}
+            onValueChange={(value) => setFormData({ ...formData, is_jargon: value === 'pending' ? null : value === 'true' })}
+          >
+            <SelectTrigger aria-label="黑话状态" className="w-32"><SelectValue /></SelectTrigger>
+            <SelectContent side="bottom" align="start">
+              <SelectItem value="pending">积累中</SelectItem>
+              <SelectItem value="true">黑话</SelectItem>
+              <SelectItem value="false">不是黑话</SelectItem>
+            </SelectContent>
+          </Select>
+          <Label htmlFor="detail_allow_update" className="flex items-center gap-2">
+            <Checkbox id="detail_allow_update" checked={formData.allow_update}
+              onCheckedChange={(checked) => setFormData({ ...formData, allow_update: checked === true })} />
+            允许更新
+          </Label>
+        </div>
+        <Textarea
+          id="detail_meaning"
+          aria-label="含义"
+          disabled={status === false}
+          value={formData.meaning ?? ''}
+          readOnly={jargon.archived}
+          onChange={(e) => editMeaning(e.target.value)}
+          placeholder="输入黑话含义"
+          autoResize={false}
+          className="min-h-8 flex-1 resize-none overflow-y-auto leading-relaxed"
+        />
+        {!jargon.scope_kind && (
+          <div className="space-y-3">
+            <Label>聊天</Label>
+            <MultiSelect
+              sortable={false}
+              options={chatList.map((chat) => ({
+                label: formatChatDisplayName(chat.chat_name, chat.account_id),
+                value: chat.session_id,
+              }))}
+              selected={formData.session_ids || []}
+              onChange={(values) =>
+                setFormData({ ...formData, session_ids: values, session_id: values[0] })
+              }
+              placeholder="选择关联的聊天"
+              emptyText="没有可选聊天"
+            />
+            <div className="flex items-center gap-2">
+              <Switch
+                id="detail_is_global"
+                disabled={jargon.is_global}
+                checked={formData.is_global}
+                onCheckedChange={(checked) => setFormData({ ...formData, is_global: checked })}
+              />
+              <Label htmlFor="detail_is_global">通用词条</Label>
             </div>
           </div>
-        </DialogBody>
+        )}
+      </fieldset>
+      <div className="flex shrink-0 flex-wrap items-center justify-end gap-2">
+        {dirty && <span className="text-muted-foreground mr-auto text-xs">有未保存的修改</span>}
+        <Button variant="ghost" size="sm" disabled={!dirty || busy} onClick={() => requestLeave('overview')}>
+          取消
+        </Button>
+        {Object.keys(editRevisions).length > 1 && (
+          <Button variant="outline" size="sm" disabled={!dirty || busy}
+            title={`将本次修改保存到此词的全部 ${Object.keys(editRevisions).length} 个作用域`}
+            onClick={() => handleSave(editRevisions)}>保存到全部</Button>
+        )}
+        <Button size="sm" disabled={!dirty || busy} onClick={() => handleSave()}>
+          {saving ? '保存中…' : '保存'}
+        </Button>
+      </div>
+    </>
+  )
 
-        <DialogFooter className="flex-shrink-0">
-          <Button
-            data-dialog-action="confirm"
-            onClick={handleSave}
-            disabled={saving}
-          >
-            {saving ? '保存中...' : '保存'}
-          </Button>
-        </DialogFooter>
+  return (
+    <Dialog
+      open={open}
+      onOpenChange={(next) => {
+        if (!next) requestLeave('close')
+      }}
+    >
+      <DialogContent
+        data-jargon-detail="true"
+        className="flex h-[min(39rem,calc(100dvh-2rem))] flex-col gap-0 overflow-hidden p-0 [--dialog-width:68rem] max-sm:pt-4"
+        aria-describedby={undefined}
+        onOpenAutoFocus={(event) => {
+          event.preventDefault()
+          titleRef.current?.focus()
+        }}
+      >
+        <DialogHeader className="shrink-0 px-5 py-4 pr-12 text-left">
+          <div className="flex min-w-0 items-center justify-between gap-3">
+            <DialogTitle ref={titleRef} tabIndex={-1} className="min-w-0 break-words outline-none">
+              {jargon.content}
+            </DialogTitle>
+            {tab === 'meaning' && pageNavigation && pageNavigation.count > 1 && (
+              <nav aria-label="本页词条" className="flex shrink-0 items-center gap-1">
+                <Button
+                  variant="ghost"
+                  size="icon-xs"
+                  aria-label="上一个词条"
+                  title="上一个词条"
+                  disabled={busy || dirty || !pageNavigation.index}
+                  onClick={() => {
+                    setTab('meaning')
+                    pageNavigation.go(-1)
+                  }}
+                >
+                  <ChevronLeft />
+                </Button>
+                <span className="text-muted-foreground text-xs tabular-nums">
+                  {pageNavigation.index + 1} / {pageNavigation.count}
+                </span>
+                <Button
+                  variant="ghost"
+                  size="icon-xs"
+                  aria-label="下一个词条"
+                  title="下一个词条"
+                  disabled={busy || dirty || pageNavigation.index === pageNavigation.count - 1}
+                  onClick={() => {
+                    setTab('meaning')
+                    pageNavigation.go(1)
+                  }}
+                >
+                  <ChevronRight />
+                </Button>
+              </nav>
+            )}
+          </div>
+          {(tab === 'evidence' || tab === 'manage') && (
+            <div className="text-muted-foreground flex flex-wrap items-center gap-x-3 gap-y-1 text-sm">
+              <Button
+                size="xs"
+                variant="ghost"
+                onClick={() => requestLeave('overview')}
+                disabled={busy}
+              >
+                <ArrowLeft />
+                返回释义
+              </Button>
+            </div>
+          )}
+        </DialogHeader>
+        <div className="mx-3 shrink-0 sm:mx-5">
+          <Separator variant="groove" />
+        </div>
+        <div
+          key={jargon.content}
+          className="flex min-h-0 min-w-0 flex-1 flex-col overflow-hidden px-3 py-3 sm:px-5 sm:py-4"
+        >
+          {jargon.scope_kind && onScopeChange ? (
+            <JargonScopeEditor
+              key={jargon.id}
+              jargon={jargon}
+              groups={groups}
+              chats={chatList}
+              tab={tab}
+              onTabChange={setTab}
+              busy={busy}
+              dirty={dirty}
+              onChangingScope={setChangingScope}
+              onSelect={openVersion}
+              onChange={(row) => {
+                setTab('meaning')
+                onScopeChange(row)
+              }}
+            >
+              {renderEditor}
+            </JargonScopeEditor>
+          ) : (
+            <JargonMeaningOverview
+              current={jargon}
+              rows={[jargon]}
+              onOpen={openVersion}
+              scoped={false}
+              panel={jargon.archived ? undefined : renderEditor({})}
+            />
+          )}
+        </div>
       </DialogContent>
+      <AlertDialog
+        open={pendingLeave !== null}
+        onOpenChange={(next) => {
+          if (!next) setPendingLeave(null)
+        }}
+      >
+        <AlertDialogContent>
+          <AlertDialogHeader>
+            <AlertDialogTitle>放弃未保存的修改？</AlertDialogTitle>
+            <AlertDialogDescription>
+              {jargon.scope_name || jargon.content}的修改尚未保存。
+            </AlertDialogDescription>
+          </AlertDialogHeader>
+          <AlertDialogFooter>
+            <AlertDialogCancel>继续编辑</AlertDialogCancel>
+            <AlertDialogAction
+              onClick={() => {
+                if (pendingLeave) leave(pendingLeave)
+              }}
+            >
+              放弃修改
+            </AlertDialogAction>
+          </AlertDialogFooter>
+        </AlertDialogContent>
+      </AlertDialog>
     </Dialog>
   )
 }
@@ -298,6 +408,7 @@ export function JargonDetailDialog({
 // 黑话创建对话框
 // ====================
 interface JargonCreateDialogProps {
+  groups?: JargonGroupInfo[]
   open: boolean
   onOpenChange: (open: boolean) => void
   chatList: JargonChatInfo[]
@@ -305,6 +416,7 @@ interface JargonCreateDialogProps {
 }
 
 export function JargonCreateDialog({
+  groups = [],
   open,
   onOpenChange,
   chatList,
@@ -319,8 +431,13 @@ export function JargonCreateDialog({
   const [saving, setSaving] = useState(false)
   const { toast } = useToast()
 
+  const universalGroup = groups.find((group) => group.is_global)
+  const groupedChats = new Set(groups.flatMap((group) => group.session_ids))
+  const independentChats = universalGroup ? [] : chatList.filter((chat) => !groupedChats.has(chat.session_id))
+  const groupId = formData.group_id ?? (independentChats.length ? undefined : universalGroup?.id ?? groups[0]?.id)
+
   const handleCreate = async () => {
-    if (!formData.content.trim() || (!formData.is_global && !formData.session_ids?.length)) {
+    if (!formData.content.trim() || (!formData.is_global && !groupId && !formData.session_ids?.length)) {
       toast({
         title: '验证失败',
         description: formData.is_global ? '请填写必填字段：内容' : '请填写必填字段：内容和聊天',
@@ -339,7 +456,7 @@ export function JargonCreateDialog({
               is_global: true,
               session_ids: [],
             }
-          : formData
+          : groupId ? { ...formData, group_id: groupId, session_ids: [], session_id: undefined } : formData
       )
       toast({
         title: '创建成功',
@@ -398,16 +515,26 @@ export function JargonCreateDialog({
                 disabled={saving}
                 onCheckedChange={(checked) => setFormData({ ...formData, is_global: checked })}
               />
-              <Label htmlFor="jargon-create-global">全局（所有聊天）</Label>
+              <Label htmlFor="jargon-create-global">通用词条</Label>
             </div>
-            {!formData.is_global && (
+            {formData.is_global && <p className="text-muted-foreground text-xs">所有启用黑话的聊天都可使用。各聊天的新线索会共同用于更新通用释义。</p>}
+            {!formData.is_global && groups.length > 0 && (
+              <Select value={groupId ?? 'chat'} onValueChange={(value) =>
+                setFormData({ ...formData, group_id: value === 'chat' ? undefined : value, session_ids: [], session_id: undefined })}>
+                <SelectTrigger aria-label="释义归属"><SelectValue /></SelectTrigger>
+                <SelectContent>{independentChats.length > 0 && <SelectItem value="chat">指定聊天</SelectItem>}
+                  {groups.map(g => <SelectItem key={g.id} value={g.id}>共享组 · {g.name}{g.is_global && '（所有聊天）'}</SelectItem>)}
+                </SelectContent>
+              </Select>
+            )}
+            {!formData.is_global && !groupId && (
               <div className="space-y-2">
                 <Label>
                   聊天 <span className="text-destructive">*</span>
                 </Label>
                 <MultiSelect
                   sortable={false}
-                  options={chatList.map((chat) => ({
+                  options={independentChats.map((chat) => ({
                     label: formatChatDisplayName(chat.chat_name, chat.account_id),
                     value: chat.session_id,
                   }))}
@@ -550,7 +677,7 @@ export function DeleteConfirmDialog({
         <AlertDialogHeader>
           <AlertDialogTitle>确认删除</AlertDialogTitle>
           <AlertDialogDescription>
-            确定要删除黑话 "{jargon?.content}" 吗？此操作不可撤销。
+            删除「{jargon?.content}」在{jargon?.scope_names?.join("、") || jargon?.chat_name || "当前范围"}的释义？
           </AlertDialogDescription>
         </AlertDialogHeader>
         <AlertDialogFooter>
@@ -589,7 +716,7 @@ export function BatchDeleteConfirmDialog({
         <AlertDialogHeader>
           <AlertDialogTitle>确认批量删除</AlertDialogTitle>
           <AlertDialogDescription>
-            您即将删除 {count} 个黑话，此操作无法撤销。确定要继续吗？
+            将删除选中词条在所选范围内的 {count} 条释义。
           </AlertDialogDescription>
         </AlertDialogHeader>
         <AlertDialogFooter>

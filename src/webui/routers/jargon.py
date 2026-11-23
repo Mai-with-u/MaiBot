@@ -1,19 +1,27 @@
 """黑话（俚语）管理路由"""
 
 from datetime import datetime
-from typing import Annotated, Any, Dict, List, Literal, Mapping, Optional, Set
+from typing import Annotated, Any, Dict, List, Literal, Mapping, Optional, Set, Tuple, Type
 import json
 
 from fastapi import APIRouter, HTTPException, Query
 from pydantic import BaseModel, Field
-from sqlalchemy import and_, case, cast, func, not_, or_, String as SQLString
-from sqlmodel import Session, col, delete, select
+from sqlalchemy import String as SQLString, and_, case, cast, false, func, not_, or_, tuple_, update
+from sqlalchemy.orm import aliased, load_only, with_expression
+from sqlmodel import Session, col, select
 
 from src.chat.message_receive.chat_manager import chat_manager as _chat_manager
+from src.common.data_models.jargon_data_model import normalize_evidence_message_groups
 from src.common.database.database import get_db_session
-from src.common.database.database_model import ChatSession, Jargon, JargonCreatedBy, Messages
+from src.common.database.database_model import ChatSession, Jargon, JargonCreatedBy, JargonEvidenceLink, JargonLearningRecord, Messages
+from src.common.database.jargon_snapshots import inherited_source, materialize, read_jargons
+from src.common.database.jargon_scope_transfers import stored_jargon_members, term_key
+from src.common.database.sharing_models import SharingGroup, SharingGroupCapability
 from src.common.logger import get_logger
-from src.services.sharing_group_service import list_groups, resolved_members
+from src.common.utils.utils_message import MessageUtils
+from src.learners.learning_text import extract_learning_text
+from src.services.sharing_group_service import jargon_group_ids, list_groups, resolved_members
+from src.services.jargon_scope_service import attach_common_learning, copy_version, effective_scope_ids, inherit_evidence, scope_row
 
 logger = get_logger("webui.jargon")
 
@@ -157,6 +165,10 @@ class JargonResponse(BaseModel):
     """黑话信息响应"""
 
     id: int
+    scope_kind: str = "chat"
+    scope_id: str = ""
+    revision: int = 0
+    archived: bool = False
     content: str
     meaning: Optional[str] = None
     session_id: str
@@ -168,6 +180,7 @@ class JargonResponse(BaseModel):
     is_legacy_empty_meaning: bool = False
     is_complete: bool = False
     is_global: bool = False
+    allow_update: bool = True
     created_by: JargonCreatedBy = JargonCreatedBy.AI
     created_timestamp: Any
     updated_timestamp: Any
@@ -193,22 +206,28 @@ class JargonDetailResponse(BaseModel):
 class JargonCreateRequest(BaseModel):
     """黑话创建请求"""
 
+    group_id: Optional[str] = None
+
     content: str = Field(..., description="黑话内容")
     meaning: Optional[str] = Field(None, description="含义")
     session_id: Optional[str] = Field(None, description="聊天流ID")
     session_ids: Optional[List[str]] = Field(None, description="聊天流ID列表")
-    is_global: bool = Field(False, description="是否为全局黑话")
+    is_global: bool = Field(False, description="是否为通用词条")
 
 
 class JargonUpdateRequest(BaseModel):
     """黑话更新请求"""
 
+    all_scope_revisions: Optional[Dict[int, int]] = None
+
+    revision: Optional[int] = None
     content: Optional[str] = None
     meaning: Optional[str] = None
     session_id: Optional[str] = None
     session_ids: Optional[List[str]] = None
     is_global: Optional[bool] = None
     is_jargon: Optional[bool] = None
+    allow_update: Optional[bool] = None
     created_by: Optional[JargonCreatedBy] = None
 
 
@@ -300,18 +319,24 @@ class JargonTargetInfo(BaseModel):
 class JargonExportItem(BaseModel):
     """黑话导出条目，不包含本机数据库 ID 或 session_id。"""
 
+    scope_kind: Optional[str] = None
+    group_name: Optional[str] = None
+
     content: str
     meaning: str = ""
     count: int = 0
     is_jargon: Optional[bool] = None
     is_complete: bool = False
     is_global: bool = False
+    allow_update: Optional[bool] = None
     created_by: JargonCreatedBy = JargonCreatedBy.MANUAL
     targets: Optional[List[JargonTargetInfo]] = None
 
 
 class JargonExportRequest(BaseModel):
     """黑话导出请求。"""
+
+    group_id: Optional[str] = None
 
     ids: Optional[List[int]] = None
     session_ids: Optional[List[str]] = None
@@ -331,6 +356,7 @@ class JargonExportResponse(BaseModel):
 
 
 class JargonConflictRecord(BaseModel):
+    group_name: Optional[str] = None
     id: int
     meaning: str
     is_global: bool
@@ -342,15 +368,20 @@ class JargonImportConflict(BaseModel):
     records: List[JargonConflictRecord]
 
 
+class JargonImportItem(JargonExportItem):
+    excerpt: str = ""
+
+
 class JargonImportRequest(BaseModel):
     """黑话导入请求。"""
 
     target_session_ids: List[str] = Field(default_factory=list, description="导入目标聊天流 ID 列表")
     is_global: bool = False
-    jargons: List[JargonExportItem]
+    jargons: List[JargonImportItem]
     conflict_strategy: Literal["skip", "overwrite"] = "skip"
     # 自动学习导入时，核对用户确认替换的记录和原释义。
     replacements: Optional[Dict[str, List[JargonConflictRecord]]] = None
+    merges: Dict[str, List[JargonConflictRecord]] = Field(default_factory=dict)
     reviewed_skips: List[str] = Field(default_factory=list)
 
 
@@ -434,70 +465,29 @@ def get_session_ids(session_id_dict_str: Optional[str]) -> List[str]:
     return list(parse_session_id_dict(session_id_dict_str).keys())
 
 
-def has_session_id(session_id_dict_str: Optional[str], session_id: str) -> bool:
-    """判断记录是否包含指定聊天 ID。
-
-    Args:
-        session_id_dict_str: 数据库中保存的会话计数字典 JSON 字符串。
-        session_id: 需要检查的聊天流 ID。
-
-    Returns:
-        bool: 记录包含该聊天 ID 时返回 True。
-    """
-    return session_id in parse_session_id_dict(session_id_dict_str)
-
-
-def build_session_id_dict_search_tokens(session_id: str) -> Set[str]:
-    """构建 JSON key 的精确文本标记，用于 SQL 侧过滤 session_id_dict。"""
-
-    normalized_session_id = session_id.strip()
-    if not normalized_session_id:
-        return set()
-    return {
-        json.dumps(normalized_session_id),
-        json.dumps(normalized_session_id, ensure_ascii=False),
-    }
-
-
-def build_session_id_dict_filter(session_ids: List[str]) -> Optional[Any]:
-    """构建 session_id_dict 包含任一聊天流 ID 的数据库过滤条件。"""
-
-    conditions = []
-    seen_tokens: Set[str] = set()
-    for session_id in session_ids:
-        for token in build_session_id_dict_search_tokens(session_id):
-            if token in seen_tokens:
-                continue
-            seen_tokens.add(token)
-            conditions.append(func.instr(col(Jargon.session_id_dict), token) > 0)
-    if not conditions:
-        return None
-    return or_(*conditions)
-
-
-def jargon_has_meaning_condition() -> Any:
+def jargon_has_meaning_condition(model: Type[Jargon] = Jargon) -> Any:
     """有效黑话必须有非空含义。"""
 
-    return func.length(func.trim(col(Jargon.meaning))) > 0
+    return func.length(func.trim(col(model.meaning))) > 0
 
 
-def effective_jargon_condition() -> Any:
+def effective_jargon_condition(model: Type[Jargon] = Jargon) -> Any:
     """WebUI 侧确认黑话的统一判定条件。"""
 
-    return and_(col(Jargon.is_jargon).is_(True), jargon_has_meaning_condition())
+    return and_(col(model.is_jargon).is_(True), jargon_has_meaning_condition(model))
 
 
-def no_jargon_condition() -> Any:
+def no_jargon_condition(model: Type[Jargon] = Jargon) -> Any:
     """WebUI 侧无黑话的统一判定条件，包含历史空含义黑话记录。"""
 
-    return or_(col(Jargon.is_jargon).is_(False), col(Jargon.is_jargon).is_(None), not_(effective_jargon_condition()))
+    return or_(col(model.is_jargon).is_(False), col(model.is_jargon).is_(None), not_(effective_jargon_condition(model)))
 
 
-def pending_jargon_condition() -> Any:
+def pending_jargon_condition(model: Type[Jargon] = Jargon) -> Any:
     """待推断包括尚无结论的词条和缺少释义的历史黑话。"""
     return or_(
-        col(Jargon.is_jargon).is_(None),
-        and_(col(Jargon.is_jargon).is_(True), not_(jargon_has_meaning_condition())),
+        col(model.is_jargon).is_(None),
+        and_(col(model.is_jargon).is_(True), not_(jargon_has_meaning_condition(model))),
     )
 
 
@@ -507,8 +497,14 @@ def is_legacy_empty_meaning_jargon(is_jargon: Any, meaning: Any) -> bool:
     return bool(is_jargon) and not str(meaning or "").strip()
 
 
+def visible_in_chats(chats: List[str], model: Type[Jargon] = Jargon) -> Any:
+    matches = [col(model.id).in_(effective_scope_ids(chat, jargon_group_ids(chat))) for chat in dict.fromkeys(chats)]
+    return or_(*matches) if matches else col(model.id).in_([])
+
+
 def apply_jargon_list_filters(
     statement: Any,
+    model: Type[Jargon] = Jargon,
     *,
     search: Optional[str],
     session_id: Optional[str],
@@ -519,33 +515,30 @@ def apply_jargon_list_filters(
 ) -> Any:
     """向黑话列表查询追加筛选条件。"""
 
+    statement = statement.where(col(model.archived).is_(False))
     normalized_search = search.strip() if search else ""
     if normalized_search:
-        statement = statement.where(col(Jargon.content).contains(normalized_search))
+        statement = statement.where(col(model.content).contains(normalized_search))
 
     if session_id:
-        session_id_candidates = parse_session_id_candidates(session_id)
-        session_ids = session_id_candidates or [session_id]
-        session_id_filter = build_session_id_dict_filter(session_ids)
-        if session_id_filter is not None:
-            statement = statement.where(session_id_filter)
+        statement = statement.where(visible_in_chats(parse_session_id_candidates(session_id) or [session_id], model))
 
     if jargon_status == "confirmed_jargon":
-        statement = statement.where(effective_jargon_condition())
+        statement = statement.where(effective_jargon_condition(model))
     elif jargon_status == "confirmed_not_jargon":
-        statement = statement.where(col(Jargon.is_jargon).is_(False))
+        statement = statement.where(col(model.is_jargon).is_(False))
     elif jargon_status == "manual_jargon":
-        statement = statement.where(col(Jargon.created_by) == JargonCreatedBy.MANUAL)
+        statement = statement.where(col(model.allow_update).is_(False))
     elif jargon_status == "pending":
-        statement = statement.where(pending_jargon_condition())
+        statement = statement.where(pending_jargon_condition(model))
     elif is_jargon is not None:
-        statement = statement.where(effective_jargon_condition() if is_jargon else no_jargon_condition())
+        statement = statement.where(effective_jargon_condition(model) if is_jargon else no_jargon_condition(model))
 
     if is_complete is not None:
-        statement = statement.where(col(Jargon.is_complete) == is_complete)
+        statement = statement.where(col(model.is_complete) == is_complete)
 
     if is_global is not None:
-        statement = statement.where(col(Jargon.is_global) == is_global)
+        statement = statement.where(col(model.is_global) == is_global)
 
     return statement
 
@@ -602,14 +595,6 @@ def require_existing_session_ids(session_ids: Optional[List[str]]) -> List[str]:
     return normalized_session_ids
 
 
-def scopes_overlap(jargon: Jargon, target_session_ids: Set[str], target_is_global: bool) -> bool:
-    """判断黑话记录作用域是否与目标手动记录重叠。"""
-
-    if target_is_global or jargon.is_global:
-        return True
-    return bool(target_session_ids.intersection(parse_session_id_dict(jargon.session_id_dict)))
-
-
 def normalize_jargon_created_by(created_by: Any, jargon_id: Optional[int]) -> JargonCreatedBy:
     """兼容历史空值或异常值，并保持 WebUI 响应只输出合法创建来源。"""
 
@@ -649,6 +634,7 @@ def chat_session_to_export_target(chat_session: ChatSession, count: int = 0) -> 
 def jargon_to_export_item(
     jargon: Jargon,
     chat_session_by_session_id: Optional[Dict[str, ChatSession]] = None,
+    group: Optional[Dict[str, Any]] = None,
 ) -> JargonExportItem:
     """将数据库黑话记录转换为导出条目。"""
 
@@ -656,7 +642,9 @@ def jargon_to_export_item(
     targets: Optional[List[JargonTargetInfo]] = None
     if chat_session_by_session_id is not None:
         targets = []
-        for session_id, count in session_counts.items():
+        owners = resolved_members(group) if group else [jargon.scope_id] if jargon.scope_kind == "chat" else []
+        for session_id in sorted(owners):
+            count = session_counts.get(session_id, 0)
             chat_session = chat_session_by_session_id.get(session_id)
             if not chat_session:
                 continue
@@ -665,12 +653,15 @@ def jargon_to_export_item(
                 targets.append(target)
 
     return JargonExportItem(
+        scope_kind=jargon.scope_kind,
+        group_name=group["name"] if group else None,
         content=jargon.content,
         meaning=jargon.meaning or "",
         count=jargon.count,
         is_jargon=jargon.is_jargon,
         is_complete=jargon.is_complete,
         is_global=jargon.is_global,
+        allow_update=jargon.allow_update,
         created_by=normalize_jargon_created_by(jargon.created_by, jargon.id),
         targets=targets,
     )
@@ -704,6 +695,7 @@ def jargon_to_dict(
 
     return {
         "id": jargon.id,
+        "scope_kind": jargon.scope_kind, "scope_id": jargon.scope_id, "revision": jargon.revision, "archived": jargon.archived,
         "content": jargon.content,
         "meaning": jargon.meaning,
         "session_id": session_id,
@@ -715,6 +707,7 @@ def jargon_to_dict(
         "is_legacy_empty_meaning": is_legacy_empty_meaning,
         "is_complete": jargon.is_complete,
         "is_global": jargon.is_global,
+        "allow_update": jargon.allow_update,
         "created_by": normalize_jargon_created_by(jargon.created_by, jargon.id),
         "created_timestamp": jargon.created_timestamp,
         "updated_timestamp": jargon.updated_timestamp,
@@ -742,6 +735,7 @@ def jargon_list_row_to_dict(
 
     return {
         "id": row["id"],
+        "scope_kind": row["scope_kind"], "scope_id": row["scope_id"], "revision": row["revision"], "archived": row["archived"],
         "content": row["content"],
         "meaning": row["meaning"],
         "session_id": session_id,
@@ -753,49 +747,203 @@ def jargon_list_row_to_dict(
         "is_legacy_empty_meaning": is_legacy_empty_meaning,
         "is_complete": row["is_complete"],
         "is_global": row["is_global"],
+        "allow_update": row["allow_update"],
         "created_by": normalize_jargon_created_by(row["created_by"], row["id"]),
         "created_timestamp": row["created_timestamp"] or "",
         "updated_timestamp": row["updated_timestamp"] or "",
     }
 
 
-def build_jargon_compatible_select() -> Any:
+def build_jargon_compatible_select(model: Type[Jargon] = Jargon) -> Any:
     """构建黑话兼容读取列，避免历史异常值触发 ORM 类型转换错误。"""
 
     return select(
-        col(Jargon.id).label("id"),
-        col(Jargon.content).label("content"),
-        col(Jargon.meaning).label("meaning"),
-        col(Jargon.session_id_dict).label("session_id_dict"),
-        col(Jargon.count).label("count"),
-        col(Jargon.is_jargon).label("is_jargon"),
-        col(Jargon.is_complete).label("is_complete"),
-        col(Jargon.is_global).label("is_global"),
-        col(Jargon.created_by).label("created_by"),
-        cast(col(Jargon.created_timestamp), SQLString).label("created_timestamp"),
-        cast(col(Jargon.updated_timestamp), SQLString).label("updated_timestamp"),
+        col(model.id).label("id"), model.scope_kind, model.scope_id, model.revision, model.archived,
+        col(model.content).label("content"),
+        col(model.meaning).label("meaning"),
+        col(model.session_id_dict).label("session_id_dict"),
+        col(model.count).label("count"),
+        col(model.is_jargon).label("is_jargon"),
+        col(model.is_complete).label("is_complete"),
+        col(model.is_global).label("is_global"),
+        col(model.allow_update).label("allow_update"),
+        col(model.created_by).label("created_by"),
+        cast(col(model.created_timestamp), SQLString).label("created_timestamp"),
+        cast(col(model.updated_timestamp), SQLString).label("updated_timestamp"),
     )
 
 
-def build_jargon_list_select() -> Any:
+def build_jargon_list_select(model: Type[Jargon] = Jargon) -> Any:
     """构建黑话列表读取列，列表页不读取原始上下文大字段。"""
 
     return select(
-        col(Jargon.id).label("id"),
-        col(Jargon.content).label("content"),
-        col(Jargon.meaning).label("meaning"),
-        col(Jargon.session_id_dict).label("session_id_dict"),
-        col(Jargon.count).label("count"),
-        col(Jargon.is_jargon).label("is_jargon"),
-        col(Jargon.is_complete).label("is_complete"),
-        col(Jargon.is_global).label("is_global"),
-        col(Jargon.created_by).label("created_by"),
-        cast(col(Jargon.created_timestamp), SQLString).label("created_timestamp"),
-        cast(col(Jargon.updated_timestamp), SQLString).label("updated_timestamp"),
+        col(model.id).label("id"), model.scope_kind, model.scope_id, model.revision, model.archived,
+        col(model.content).label("content"),
+        col(model.meaning).label("meaning"),
+        col(model.session_id_dict).label("session_id_dict"),
+        col(model.count).label("count"),
+        col(model.is_jargon).label("is_jargon"),
+        col(model.is_complete).label("is_complete"),
+        col(model.is_global).label("is_global"),
+        col(model.allow_update).label("allow_update"),
+        col(model.created_by).label("created_by"),
+        cast(col(model.created_timestamp), SQLString).label("created_timestamp"),
+        cast(col(model.updated_timestamp), SQLString).label("updated_timestamp"),
     )
 
 
 # ==================== API 端点 ====================
+
+
+class JargonScopeChange(BaseModel):
+    action: Literal["move", "merge", "split"]
+    kind: Literal["chat", "group", "global"]
+    target: str = ""
+    versions: Dict[int, int]
+    inherit_id: int
+
+
+def scope_names(scopes: List[Tuple[str, str, int]], session: Session) -> Dict[Tuple[str, str], str]:
+    names = build_session_display_name_cache([scope_id for kind, scope_id, _ in scopes if kind == "chat"], session)
+    groups = {group["id"]: group["name"] for group in list_groups()}
+    return {(kind, scope_id): (
+        names.get(scope_id, scope_id) if kind == "chat" else
+        groups.get(scope_id, "已删除共享组") if kind == "group" else
+        "通用词库" if kind == "global" else f"旧记录 #{version_id}"
+    ) for kind, scope_id, version_id in scopes}
+
+
+@router.get("/library/versions")
+def jargon_versions(content: str, include_history: bool = True):
+    with get_db_session(auto_commit=False) as session:
+        model = read_jargons()
+        statement = select(model).where(func.lower(func.trim(model.content)) == term_key(content))
+        if not include_history:
+            statement = statement.where(col(model.archived).is_(False))
+        rows = list(session.exec(statement.order_by(model.archived, model.id)).all())
+        names = scope_names([(row.scope_kind, row.scope_id, row.id) for row in rows], session)
+        chats = build_session_display_name_cache([sid for row in rows for sid in get_session_ids(row.session_id_dict)], session)
+        return [dict(jargon_to_dict(row, session, chats), scope_name=names[row.scope_kind, row.scope_id],
+                     baseline_id=row.baseline_id, last_inference_count=row.last_inference_count) for row in rows]
+
+
+@router.get("/library/evidence/{jargon_id}")
+def jargon_evidence(jargon_id: int, offset: int = Query(0, ge=0)):
+    with get_db_session(auto_commit=False) as session:
+        stmt = select(JargonLearningRecord).join(JargonEvidenceLink, JargonEvidenceLink.record_id == JargonLearningRecord.id)
+        inherited = inherited_source(session.connection(), jargon_id)
+        rows = session.exec(stmt.where(JargonEvidenceLink.jargon_id == (inherited[0] if inherited else jargon_id))
+                            .order_by(col(JargonLearningRecord.id).desc()).offset(offset).limit(20)).all()
+        names = build_session_display_name_cache([r.session_id for r in rows if r.session_id], session)
+        groups_by_record = {}
+        for row in rows:
+            if row.excerpt.strip() or not row.evidence:
+                continue
+            try:
+                groups_by_record[row.id] = normalize_evidence_message_groups(json.loads(row.evidence))
+            except json.JSONDecodeError:
+                logger.warning(f"黑话学习记录 {row.id} 的消息引用无法解析")
+        keys = sorted({(ref["platform"], ref["message_id"]) for groups in groups_by_record.values()
+                       for group in groups for ref in group})
+        messages: Dict[Tuple[str, str], List[Messages]] = {}
+        for start in range(0, len(keys), 400):
+            query = select(Messages).options(
+                load_only(Messages.platform, Messages.message_id, Messages.session_id, Messages.user_cardname,
+                          Messages.user_nickname, Messages.timestamp, Messages.processed_plain_text),
+                with_expression(Messages.raw_content, case(
+                    (func.nullif(Messages.processed_plain_text, "").is_(None), Messages.raw_content)
+                )),
+            ).where(tuple_(Messages.platform, Messages.message_id).in_(keys[start:start + 400]))
+            for message in session.exec(query):
+                messages.setdefault((message.platform, message.message_id), []).append(message)
+
+        result = []
+        for row in rows:
+            passages = []
+            unavailable = 0
+            for group in groups_by_record.get(row.id, []):
+                passage = []
+                for ref in group:
+                    matches = messages.get((ref["platform"], ref["message_id"]), [])
+                    if row.session_id:
+                        matches = [m for m in matches if m.session_id == row.session_id]
+                    if len(matches) != 1:
+                        unavailable += 1
+                        continue
+                    message = matches[0]
+                    text = message.processed_plain_text or extract_learning_text(
+                        MessageUtils.from_db_record_msg_to_MaiSeq(message.raw_content)
+                    )
+                    if text.strip():
+                        passage.append({"sender": message.user_cardname or message.user_nickname,
+                                        "time": message.timestamp, "text": text})
+                    else:
+                        unavailable += 1
+                if passage:
+                    passages.append(passage)
+            result.append(dict(row.model_dump(), passages=passages, unavailable=unavailable,
+                               source_name="导入文段" if row.scope_kind == "import"
+                               else names.get(row.session_id, "旧记录（来源未确定）")))
+        return result
+
+
+def require_jargon_group(session: Session, group_id: str) -> None:
+    group = session.get(SharingGroup, group_id)
+    capability = session.get(SharingGroupCapability, (group_id, "jargon"))
+    if not group or not group.enabled or not capability or not capability.enabled:
+        raise HTTPException(409, "请选择启用黑话的共享组")
+
+
+@router.post("/library/scope")
+def change_jargon_scope(request: JargonScopeChange):
+    if request.kind == "chat":
+        require_existing_session_id(request.target)
+    elif request.kind == "global" and request.target:
+        raise HTTPException(400, "通用词条无需目标 ID")
+    with get_db_session() as session:
+        session.connection().exec_driver_sql("BEGIN IMMEDIATE")
+        if request.kind == "group":
+            require_jargon_group(session, request.target)
+        if request.kind == "chat" and stored_jargon_members(session.connection(), request.target):
+            raise HTTPException(409, "该聊天已加入黑话共享组，请选择共享组作为目标作用域")
+        materialize(session.connection(), list(request.versions))
+        sources = list(session.exec(select(Jargon).where(col(Jargon.id).in_(request.versions.keys()), Jargon.scope_kind != "snapshot")).all())
+        chosen = next((r for r in sources if r.id == request.inherit_id), None)
+        if not chosen or len(sources) != len(request.versions) or any(r.revision != request.versions[r.id] for r in sources):
+            raise HTTPException(409, "释义已变化，请刷新后重新选择")
+        if any(row.scope_kind == "global" for row in sources):
+            raise HTTPException(409, "通用词条不能移动、复制或参与作用域合并")
+        if request.kind == "global" and (request.action != "move" or len(sources) != 1):
+            raise HTTPException(400, "请选择一个普通词条转为通用词条")
+        if any(term_key(r.content) != term_key(chosen.content) for r in sources):
+            raise HTTPException(400, "只能合并同名词条")
+        if any(r.archived for r in sources) and request.action != "split":
+            raise HTTPException(409, "历史版本只能复制到新的作用域")
+        target = scope_row(session, chosen.content, request.kind, request.target)
+        if request.kind == "global" and target:
+            raise HTTPException(409, "通用词库已有同名词条")
+        if request.action != "merge" and len(sources) != 1:
+            raise HTTPException(400, "请选择一个来源")
+        if target and (request.action != "merge" or target.id not in request.versions):
+            raise HTTPException(409, "目标已存在同名释义，请在合并中选择继承版本")
+        if request.action != "split":
+            for row in sources:
+                row.archived = True
+                row.revision += 1
+            session.flush()
+        result = copy_version(session, chosen, request.kind, request.target)
+        if request.kind == "global":
+            result.allow_update = True
+            result.is_complete = False
+        inherit_evidence(session, result, sources)
+        return {"id": result.id}
+
+
+def has_snapshot_members(session: Session) -> bool:
+    """在同一读事务内选择实体表或包含继承版本的视图。"""
+    db = session.connection()
+    db.exec_driver_sql("BEGIN")
+    return db.exec_driver_sql("SELECT 1 FROM jargon_snapshot_members WHERE chat IS NOT NULL LIMIT 1").first() is not None
 
 
 @router.get("/list", response_model=JargonListResponse)
@@ -811,8 +959,11 @@ def get_jargon_list(
     ),
     is_jargon: Optional[bool] = Query(None, description="按是否是黑话筛选"),
     is_complete: Optional[bool] = Query(None, description="按是否推断完成筛选"),
-    is_global: Optional[bool] = Query(None, description="按是否全局筛选"),
-    sort_by: str = Query("time", description="黑话排序: time/time_asc/created/created_asc"),
+    is_global: Optional[bool] = Query(None, description="按是否为通用词条筛选"),
+    grouped: bool = Query(False),
+    compact: bool = False,
+    group_id: Optional[str] = Query(None),
+    sort_by: str = Query("time", description="黑话排序: time/time_asc/created/created_asc/count"),
 ) -> JargonListResponse:
     """获取黑话列表。
 
@@ -825,60 +976,99 @@ def get_jargon_list(
         jargon_status: 黑话判定状态筛选条件。
         is_jargon: 是否为黑话的筛选条件。
         is_complete: 是否推断完成的筛选条件。
-        is_global: 是否为全局黑话的筛选条件。
-        sort_by: 按更新时间（活跃时间）或创建时间正反序排列。
+        is_global: 是否为通用词条的筛选条件。
+        sort_by: 按活跃时间、创建时间或遇见次数排列。
 
     Returns:
         JargonListResponse: 分页后的黑话列表。
     """
     try:
-        if sort_by not in {"time", "time_asc", "created", "created_asc"}:
+        if sort_by not in {"time", "time_asc", "created", "created_asc", "count"}:
             raise HTTPException(status_code=400, detail=f"不支持的黑话排序: {sort_by}")
 
-        statement = apply_jargon_list_filters(
-            build_jargon_list_select(),
-            search=search,
-            session_id=session_id,
-            jargon_status=jargon_status,
-            is_jargon=is_jargon,
-            is_complete=is_complete,
-            is_global=is_global,
-        )
-        # 黑话以更新时间表示最近活跃；排序在分页前完成，空时间放最后，ID 保证分页稳定。
-        sort_column = col(Jargon.created_timestamp) if sort_by.startswith("created") else col(Jargon.updated_timestamp)
-        ascending = sort_by.endswith("_asc")
-        statement = statement.order_by(
-            case((sort_column.is_(None), 1), else_=0),
-            sort_column.asc() if ascending else sort_column.desc(),
-            col(Jargon.id).asc() if ascending else col(Jargon.id).desc(),
-        )
-
-        count_statement = apply_jargon_list_filters(
-            select(Jargon.id),
-            search=search,
-            session_id=session_id,
-            jargon_status=jargon_status,
-            is_jargon=is_jargon,
-            is_complete=is_complete,
-            is_global=is_global,
-        )
-
-        if session_ids is not None:
-            scope_filter = build_session_id_dict_filter(session_ids)
-            if scope_filter is None:
-                return JargonListResponse(total=0, page=page, page_size=page_size, data=[])
-            statement = statement.where(scope_filter)
-            count_statement = count_statement.where(scope_filter)
+        chats = (parse_session_id_candidates(session_id) or [session_id]) if session_id else session_ids
+        def filtered(model: Type[Jargon]) -> Any:
+            eligible = apply_jargon_list_filters(
+                build_jargon_list_select(model), model, search=search, session_id=session_id, jargon_status=jargon_status,
+                is_jargon=is_jargon, is_complete=is_complete, is_global=is_global,
+            )
+            if session_ids is not None:
+                eligible = eligible.where(visible_in_chats(session_ids, model))
+            if group_id:
+                eligible = eligible.where(model.scope_kind == "group", model.scope_id == group_id)
+            return eligible
 
         with get_db_session() as session:
-            total = count_jargon_query(session, count_statement)
-            offset = (page - 1) * page_size
-            page_rows = session.execute(statement.offset(offset).limit(page_size)).mappings().all()
-            page_session_ids: List[str] = []
-            for row in page_rows:
-                page_session_ids.extend(get_session_ids(str(row["session_id_dict"] or "{}")))
-            chat_name_cache = build_session_display_name_cache(page_session_ids, session, include_message_fallback=True)
-            data = [jargon_list_row_to_dict(row, session, chat_name_cache) for row in page_rows]
+            inherited = has_snapshot_members(session)
+            model = read_jargons(representative=grouped and not chats, chats=chats) if inherited else Jargon
+            eligible = filtered(model)
+            def sort_key(source: Type[Jargon]) -> Any:
+                if sort_by == "count":
+                    return col(source.count)
+                return col(source.created_timestamp) if sort_by.startswith("created") else col(source.updated_timestamp)
+
+            sort_column = sort_key(model)
+            ascending = sort_by.endswith("_asc")
+
+            def ordering(value: Any, row_id: Any) -> List[Any]:
+                return [case((value.is_(None), 1), else_=0), value.asc() if ascending else value.desc(),
+                        row_id.asc() if ascending else row_id.desc()]
+
+            order = ordering(sort_column, col(model.id))
+            count_statement = eligible
+            statement = eligible.order_by(*order)
+            if grouped:
+                term = func.lower(func.trim(model.content))
+                # 排序只需词、排序字段和 ID，不把每个聊天的完整释义写入临时排序表。
+                ranked = eligible.with_only_columns(
+                    model.content, model.id, sort_column.label("sort_value"),
+                    func.row_number().over(partition_by=term, order_by=order).label("n"),
+                ).subquery()
+                count_statement = select(ranked).where(ranked.c.n == 1)
+                statement = count_statement.add_columns(func.count().over().label("total")).order_by(
+                    *ordering(ranked.c.sort_value, ranked.c.id))
+            page_rows = session.execute(statement.offset((page - 1) * page_size).limit(page_size)).mappings().all()
+            if grouped:
+                total = page_rows[0]["total"] if page_rows else (0 if page == 1 else count_jargon_query(session, count_statement))
+            else:
+                total = count_jargon_query(session, count_statement)
+            if grouped and page_rows:
+                keys = [term_key(row["content"]) for row in page_rows]
+                full = read_jargons(chats=chats) if inherited else Jargon
+                # 先用词名索引提取当前页，再应用分类。否则 SQLite 会再次扫描该分类的所有记录。
+                candidates = build_jargon_list_select(full).where(func.lower(func.trim(full.content)).in_(keys)).cte(
+                    "page_versions").prefix_with("MATERIALIZED")
+                full = aliased(Jargon, candidates, adapt_on_names=True)
+                statement = filtered(full).order_by(*ordering(sort_key(full), full.id))
+                variants = session.execute(statement).mappings().all()
+                names = scope_names([(r["scope_kind"], r["scope_id"], r["id"]) for r in variants], session)
+            else:
+                variants = page_rows
+            by_term: Dict[str, List[Mapping[str, Any]]] = {}
+            if grouped:
+                for row in variants:
+                    by_term.setdefault(term_key(row["content"]), []).append(row)
+            visible_rows = [rows[0] for rows in by_term.values()] if grouped and compact else variants
+            session_ids_on_page = [sid for row in visible_rows for sid in get_session_ids(row["session_id_dict"])]
+            cache = build_session_display_name_cache(session_ids_on_page, session, include_message_fallback=True)
+            if grouped:
+                data = []
+                for page_row in page_rows:
+                    matches = by_term[term_key(page_row["content"])]
+                    versions = []
+                    for row in matches[:1] if compact else matches:
+                        version = jargon_list_row_to_dict(row, session, cache)
+                        version["scope_name"] = names[row["scope_kind"], row["scope_id"]]
+                        versions.append(version)
+                    data.append({
+                        **versions[0],
+                        "scope_ids": [r["id"] for r in matches],
+                        "scope_names": [names[r["scope_kind"], r["scope_id"]] for r in matches],
+                        "meaning_count": len({r["meaning"] for r in matches if r["meaning"]}),
+                        "scope_versions": versions if len(versions) > 1 else [],
+                    })
+            else:
+                data = [jargon_list_row_to_dict(row, session, cache) for row in variants]
 
         return JargonListResponse(
             success=True,
@@ -888,6 +1078,8 @@ def get_jargon_list(
             data=data,
         )
 
+    except HTTPException:
+        raise
     except Exception as e:
         logger.error(f"获取黑话列表失败: {e}")
         raise HTTPException(status_code=500, detail=f"获取黑话列表失败: {str(e)}") from e
@@ -902,26 +1094,69 @@ def get_chat_list(include_empty: bool = Query(False, description="是否包含�
     """
     try:
         with get_db_session() as session:
-            seen_session_ids: Set[str] = set()
-            jargon_counts: Dict[str, int] = {}
-            # 每个归属聊天计一次词条，和按聊天筛选列表一致；遇见次数不作为词条数。
-            # 全局词条不单独创建侧栏聊天，但计入已有聊天能浏览到的记录。
-            for session_id_dict, is_global in session.exec(select(Jargon.session_id_dict, Jargon.is_global)).all():
-                session_ids = parse_session_id_dict(session_id_dict).keys()
-                for session_id in session_ids:
-                    jargon_counts[session_id] = jargon_counts.get(session_id, 0) + 1
-                if include_empty or not is_global:
-                    seen_session_ids.update(session_ids)
-
+            chat_sessions = session.exec(select(ChatSession)).all()
+            db = session.connection()
+            local_counts = dict(db.exec_driver_sql("""SELECT scope_id,count(*) FROM jargons
+                WHERE archived=0 AND scope_kind='chat' GROUP BY scope_id""").all())
+            terms: Dict[Tuple[str, str], Set[str]] = {}
+            for kind, owner, key in session.exec(select(
+                Jargon.scope_kind, Jargon.scope_id, func.lower(func.trim(Jargon.content))
+            ).where(col(Jargon.archived) == false(), col(Jargon.scope_kind).in_(["global", "group"]))):
+                terms.setdefault((kind, owner), set()).add(key)
+            seen_session_ids = set(local_counts)
+            inherited = session.connection().exec_driver_sql(
+                "SELECT chat,snapshot FROM jargon_snapshot_members WHERE chat IS NOT NULL"
+            ).all()
+            seen_session_ids.update(chat for chat, _ in inherited)
+            frozen_terms: Dict[str, Set[str]] = {}
+            excluded: Dict[str, Set[str]] = {}
+            for snap, key in session.connection().exec_driver_sql("""SELECT scope_id,lower(trim(content)) FROM jargons
+                    WHERE scope_kind='snapshot' AND scope_id IN (SELECT snapshot FROM jargon_snapshot_members WHERE chat IS NOT NULL)"""):
+                frozen_terms.setdefault(snap, set()).add(key)
+            for chat, key in session.connection().exec_driver_sql("""SELECT m.chat,lower(trim(f.content))
+                    FROM jargons fork JOIN jargon_snapshot_members m ON m.end_id=(
+                        SELECT min(end_id) FROM jargon_snapshot_members WHERE end_id>=-fork.id)
+                    JOIN jargons f ON f.id=-fork.id-m.shift AND f.scope_id=m.snapshot
+                    WHERE fork.id<0 AND m.chat IS NOT NULL"""):
+                excluded.setdefault(chat, set()).add(key)
+            known_ids = seen_session_ids | {chat.session_id for chat in chat_sessions}
+            shared_groups: Dict[str, List[str]] = {}
+            for group in list_groups():
+                group_terms = terms.get(("group", group["id"]))
+                if group_terms and group["enabled"] and group["capabilities"].get("jargon"):
+                    for sid in resolved_members(group):
+                        shared_groups.setdefault(sid, []).append(group["id"])
+            global_terms = terms.get(("global", ""), set())
+            # 物理聊天词条直接按作用域索引计数；同一组或快照的共享词集只构建一次。
+            snapshots = dict(inherited)
+            shared_cache: Dict[Tuple[Tuple[str, ...], Optional[str]], Set[str]] = {}
+            jargon_counts = {}
+            for sid in known_ids:
+                owners = tuple(shared_groups.get(sid, ()))
+                snapshot = snapshots.get(sid)
+                cache_key = owners, snapshot
+                if cache_key not in shared_cache:
+                    shared_cache[cache_key] = global_terms.union(
+                        *(terms["group", owner] for owner in owners), frozen_terms.get(snapshot, ()))
+                shared = shared_cache[cache_key]
+                hidden = excluded.get(sid)
+                if hidden:
+                    shared = shared - (hidden - global_terms).difference(*(terms["group", owner] for owner in owners))
+                local = local_counts.get(sid, 0)
+                overlap = 0
+                if local and shared:
+                    if local < len(shared):
+                        overlap = sum(key in shared for key in db.exec_driver_sql("""
+                            SELECT lower(trim(content)) FROM jargons WHERE archived=0 AND scope_kind='chat' AND scope_id=?
+                        """, (sid,)).scalars())
+                    else:
+                        overlap = db.exec_driver_sql("""SELECT count(*) FROM json_each(?) k WHERE EXISTS (
+                            SELECT 1 FROM jargons WHERE archived=0 AND scope_kind='chat' AND scope_id=?
+                            AND lower(trim(content))=k.value)""", (json.dumps(list(shared)), sid)).scalar_one()
+                jargon_counts[sid] = local + len(shared) - overlap
+            if not include_empty:
+                chat_sessions = [chat for chat in chat_sessions if jargon_counts[chat.session_id]]
             chat_by_session_id: Dict[str, ChatInfoResponse] = {}
-
-            chat_session_statement = select(ChatSession)
-            if not include_empty and seen_session_ids:
-                chat_session_statement = chat_session_statement.where(col(ChatSession.session_id).in_(seen_session_ids))
-            elif not include_empty:
-                chat_session_statement = chat_session_statement.where(col(ChatSession.session_id) == "")
-
-            chat_sessions = session.exec(chat_session_statement).all()
             display_name_cache = {
                 chat_session.session_id: chat_session_to_display_name(chat_session) for chat_session in chat_sessions
             }
@@ -975,9 +1210,12 @@ def get_chat_list(include_empty: bool = Query(False, description="是否包含�
 @router.get("/groups", response_model=JargonGroupListResponse)
 def get_jargon_groups() -> JargonGroupListResponse:
     """按黑话共享配置解析组成员，不生成新的会话 ID。"""
+    enabled = [group for group in list_groups() if group["enabled"] and group["capabilities"].get("jargon")]
+    if not enabled:
+        return JargonGroupListResponse(data=[])
     chats = {chat.session_id: chat for chat in get_chat_list(include_empty=True).data}
     groups: List[JargonGroupInfo] = []
-    for index, group in enumerate(group for group in list_groups() if group["enabled"] and group["capabilities"].get("jargon")):
+    for index, group in enumerate(enabled):
         session_ids = resolved_members(group)
         is_global = any(rule == {"platform": "*", "item_id": "*", "rule_type": "all"} for rule in group["rules"])
         resolved_ids = sorted(session_ids)
@@ -992,21 +1230,39 @@ def get_jargon_groups() -> JargonGroupListResponse:
                 is_global=is_global,
             )
         )
-    # 按组查询记录数，同一条黑话命中多个成员时只计一次。
     with get_db_session() as session:
-        for group_info in groups:
-            statement = select(Jargon.id)
-            if not group_info.is_global:
-                scope_filter = build_session_id_dict_filter(group_info.session_ids)
-                if scope_filter is None:
-                    continue
-                statement = statement.where(scope_filter)
-            group_info.jargon_count = count_jargon_query(session, statement)
+        for g in groups:
+            g.jargon_count = session.exec(select(func.count()).select_from(Jargon).where(
+                col(Jargon.archived).is_(False), Jargon.scope_kind == "group", Jargon.scope_id == g.id)).one()
     return JargonGroupListResponse(data=groups)
 
 
+@router.get("/stats/overview")
+def get_jargon_overview() -> Dict[str, int]:
+    """读取首屏和侧栏实际使用的词数。"""
+    with get_db_session() as session:
+        inherited = has_snapshot_members(session)
+        model = read_jargons(representative=True) if inherited else Jargon
+        distinct_terms = select(func.count(func.distinct(func.lower(func.trim(model.content))))).where(
+            col(model.archived).is_(False))
+        # 实体词库沿词名索引跳到下一个不同的词，避免对数百万份相同词名逐一去重。
+        total = session.exec(distinct_terms).one() if inherited else session.connection().exec_driver_sql("""
+            WITH RECURSIVE terms(term) AS (
+                SELECT min(lower(trim(content))) FROM jargons
+                UNION ALL SELECT (SELECT min(lower(trim(content))) FROM jargons WHERE lower(trim(content))>terms.term)
+                FROM terms WHERE term IS NOT NULL
+            ) SELECT count(*) FROM terms WHERE term IS NOT NULL AND EXISTS (
+                SELECT 1 FROM jargons WHERE lower(trim(content))=terms.term AND archived=0)
+        """).scalar_one()
+        return {
+            "total": total,
+            "confirmed_jargon": session.exec(distinct_terms.where(effective_jargon_condition(model))).one(),
+            "complete_count": session.exec(distinct_terms.where(col(model.is_complete).is_(True))).one(),
+        }
+
+
 @router.get("/stats/summary", response_model=JargonStatsResponse)
-def get_jargon_stats() -> JargonStatsResponse:
+def get_jargon_stats(include_chat_distribution: bool = True) -> JargonStatsResponse:
     """获取黑话统计数据。
 
     Returns:
@@ -1014,32 +1270,39 @@ def get_jargon_stats() -> JargonStatsResponse:
     """
     try:
         with get_db_session() as session:
-            total = session.exec(select(func.count()).select_from(Jargon)).one()
-            confirmed_jargon = session.exec(
-                select(func.count()).select_from(Jargon).where(effective_jargon_condition())
-            ).one()
-            confirmed_not_jargon = session.exec(
-                select(func.count())
-                .select_from(Jargon)
-                .where(col(Jargon.is_jargon).is_(False))
-            ).one()
-            pending = session.exec(
-                select(func.count()).select_from(Jargon).where(pending_jargon_condition())
-            ).one()
-            manual_jargon = session.exec(
-                select(func.count()).select_from(Jargon).where(col(Jargon.created_by) == JargonCreatedBy.MANUAL)
-            ).one()
-            global_count = session.exec(
-                select(func.count()).select_from(Jargon).where(col(Jargon.is_global).is_(True))
-            ).one()
-            complete_count = session.exec(
-                select(func.count()).select_from(Jargon).where(col(Jargon.is_complete).is_(True))
-            ).one()
-
+            model = read_jargons(representative=True) if has_snapshot_members(session) else Jargon
+            # 每个词在不同域可以有不同状态，各项统计分别判断是否至少命中一个域。
+            conditions = {
+                "confirmed_jargon": effective_jargon_condition(model),
+                "confirmed_not_jargon": col(model.is_jargon).is_(False),
+                "pending": pending_jargon_condition(model),
+                "manual_jargon": col(model.allow_update).is_(False),
+                "global_count": col(model.is_global).is_(True),
+                "complete_count": col(model.is_complete).is_(True),
+            }
+            by_term = select(*(
+                func.max(case((condition, 1), else_=0)).label(name) for name, condition in conditions.items()
+            )).where(col(model.archived).is_(False)).group_by(func.lower(func.trim(model.content))).subquery()
+            counts = dict(session.execute(select(
+                func.count().label("total"),
+                *(func.coalesce(func.sum(by_term.c[name]), 0).label(name) for name in conditions),
+            ).select_from(by_term)).mappings().one())
             top_chats_counter: Dict[str, int] = {}
-            for session_id_dict in session.exec(select(Jargon.session_id_dict)).all():
-                for session_id in parse_session_id_dict(session_id_dict):
-                    top_chats_counter[session_id] = top_chats_counter.get(session_id, 0) + 1
+            # 相同快照按仍引用该词的聊天数计权，避免展开整个“词 × 聊天”关系。
+            if include_chat_distribution:
+                for session_id_dict, weight in session.connection().exec_driver_sql("""
+                    WITH members AS (SELECT snapshot,count(*) n FROM jargon_snapshot_members
+                                     WHERE chat IS NOT NULL GROUP BY snapshot),
+                    taken AS (SELECT -fork.id-m.shift AS source, count(*) n FROM jargons fork
+                              JOIN jargon_snapshot_members m ON m.end_id=(
+                                  SELECT min(end_id) FROM jargon_snapshot_members WHERE end_id>=-fork.id)
+                              WHERE fork.id<0 AND m.chat IS NOT NULL GROUP BY source)
+                    SELECT session_id_dict,1 FROM jargons WHERE archived=0
+                    UNION ALL SELECT f.session_id_dict,m.n-coalesce(t.n,0) FROM members m
+                        JOIN jargons f ON f.scope_kind='snapshot' AND f.scope_id=m.snapshot
+                        LEFT JOIN taken t ON t.source=f.id WHERE m.n>coalesce(t.n,0)"""):
+                    for session_id in parse_session_id_dict(session_id_dict):
+                        top_chats_counter[session_id] = top_chats_counter.get(session_id, 0) + weight
 
             top_chats_dict = dict(sorted(top_chats_counter.items(), key=lambda item: item[1], reverse=True)[:5])
             chat_count = len(top_chats_counter)
@@ -1047,13 +1310,7 @@ def get_jargon_stats() -> JargonStatsResponse:
         return JargonStatsResponse(
             success=True,
             data={
-                "total": total,
-                "confirmed_jargon": confirmed_jargon,
-                "confirmed_not_jargon": confirmed_not_jargon,
-                "pending": pending,
-                "manual_jargon": manual_jargon,
-                "global_count": global_count,
-                "complete_count": complete_count,
+                **counts,
                 "chat_count": chat_count,
                 "top_chats": top_chats_dict,
             },
@@ -1069,14 +1326,15 @@ def export_jargons(request: JargonExportRequest) -> JargonExportResponse:
     """导出黑话记录，可选携带 platform/id/type 形式的聊天目标信息。"""
 
     try:
-        statement = select(Jargon).order_by(col(Jargon.count).desc(), col(Jargon.id).desc())
-        if request.session_ids is not None:
-            scope_filter = build_session_id_dict_filter(request.session_ids)
-            # 显式空范围必须返回空集，不能退化为导出全部。
-            statement = statement.where(scope_filter if scope_filter is not None else col(Jargon.id).in_([]))
+        model = read_jargons(chats=request.session_ids)
+        statement = select(model).where(col(model.archived).is_(False)).order_by(col(model.count).desc(), col(model.id).desc())
+        if request.group_id is not None:
+            statement = statement.where(model.scope_kind == "group", model.scope_id == request.group_id)
+        elif request.session_ids is not None:
+            statement = statement.where(visible_in_chats(request.session_ids, model))
         if request.ids is not None:
             unique_ids = list(dict.fromkeys(request.ids))
-            statement = statement.where(col(Jargon.id).in_(unique_ids))
+            statement = statement.where(col(model.id).in_(unique_ids))
 
         with get_db_session() as session:
             jargons = session.exec(statement).all()
@@ -1085,11 +1343,15 @@ def export_jargons(request: JargonExportRequest) -> JargonExportResponse:
                 missing_ids = sorted(set(request.ids) - found_ids)
                 raise HTTPException(status_code=400, detail=f"部分黑话不存在: {missing_ids}")
 
+            groups = {g["id"]: g for g in list_groups()} if any(row.scope_kind == "group" for row in jargons) else {}
             chat_session_by_session_id: Optional[Dict[str, ChatSession]] = None
             if request.include_chat_info:
                 session_ids: List[str] = []
                 for jargon in jargons:
-                    session_ids.extend(parse_session_id_dict(jargon.session_id_dict).keys())
+                    if jargon.scope_kind == "chat":
+                        session_ids.append(jargon.scope_id)
+                    elif jargon.scope_kind == "group" and jargon.scope_id in groups:
+                        session_ids.extend(resolved_members(groups[jargon.scope_id]))
                 unique_session_ids = list(dict.fromkeys(session_ids))
                 chat_session_by_session_id = {}
                 if unique_session_ids:
@@ -1100,7 +1362,7 @@ def export_jargons(request: JargonExportRequest) -> JargonExportResponse:
                         chat_session.session_id: chat_session for chat_session in chat_sessions
                     }
 
-            items = [jargon_to_export_item(jargon, chat_session_by_session_id) for jargon in jargons]
+            items = [jargon_to_export_item(jargon, chat_session_by_session_id, groups.get(jargon.scope_id)) for jargon in jargons]
 
         return JargonExportResponse(
             exported_at=datetime.now().isoformat(),
@@ -1116,44 +1378,70 @@ def export_jargons(request: JargonExportRequest) -> JargonExportResponse:
         raise HTTPException(status_code=500, detail=f"导出黑话失败: {str(e)}") from e
 
 
-def find_import_conflicts(
-    session: Session, content: str, target_session_ids: Set[str], is_global: bool
-) -> List[Jargon]:
-    same_content = session.exec(select(Jargon).where(col(Jargon.content) == content).order_by(col(Jargon.id))).all()
-    return [
-        record for record in same_content
-        if (record.is_global if is_global else scopes_overlap(record, target_session_ids, False))
-    ]
+def import_scopes(session: Session, chats: Set[str], is_global: bool) -> Set[Tuple[str, str]]:
+    if is_global:
+        return {("global", "")}
+    owners = set()
+    for chat in chats:
+        groups = stored_jargon_members(session.connection(), chat)
+        if len(groups) > 1:
+            raise HTTPException(409, "聊天的黑话共享组重叠，请先解决冲突")
+        owners.add(("group", groups[0][0]) if groups else ("chat", chat))
+    return owners
 
 
-def conflict_record(jargon: Jargon) -> JargonConflictRecord:
+def find_import_conflicts(session: Session, content: str, owners: Set[Tuple[str, str]]) -> List[Jargon]:
+    model = read_jargons(chats=[owner for kind, owner in owners if kind == "chat"])
+    stmt = select(model).where(col(model.archived).is_(False),
+                                func.lower(func.trim(model.content)) == term_key(content))
+    scope = tuple_(model.scope_kind, model.scope_id).in_(owners)
+    return list(session.exec(stmt.where(scope).order_by(col(model.id))).all())
+
+
+def conflict_record(session: Session, jargon: Jargon) -> JargonConflictRecord:
     return JargonConflictRecord(
         id=jargon.id, meaning=jargon.meaning, is_global=jargon.is_global,
-        session_ids=sorted(get_session_ids(jargon.session_id_dict)),
+        group_name=session.get(SharingGroup, jargon.scope_id).name if jargon.scope_kind == "group" else None,
+        session_ids=[jargon.scope_id] if jargon.scope_kind == "chat" else [],
     )
 
 
-def replace_import_meanings(records: List[Jargon], item: JargonExportItem, targets: Set[str]) -> None:
+def apply_import_meanings(records: List[Jargon], item: JargonExportItem, *, merge: bool = False) -> None:
     """原地更新已确认的同名记录，保留证据、遇见次数和已关联的聊天。"""
-    covered: Set[str] = set()
     for row in records:
-        covered.update(get_session_ids(row.session_id_dict))
-        row.meaning = item.meaning.strip()
-        row.is_jargon = bool(row.meaning)
-        row.is_complete = item.is_complete
+        row.revision += 1
+        incoming = item.meaning.strip()
+        if merge:
+            existing = row.meaning.rstrip()
+            if incoming and incoming != existing.strip() and not existing.endswith("\n\n" + incoming):
+                row.meaning = f"{existing}\n\n{incoming}" if existing else incoming
+        else:
+            row.meaning = incoming
+        row.is_jargon = None if item.is_jargon and not row.meaning else item.is_jargon
         row.created_by = JargonCreatedBy.MANUAL
+        if item.allow_update is not None:
+            row.allow_update = item.allow_update
+        elif row.scope_kind != "global":
+            row.allow_update = False
         row.updated_timestamp = datetime.now()
-    missing = targets - covered
-    if missing and not any(row.is_global for row in records):
-        row = records[0]
-        counts = parse_session_id_dict(row.session_id_dict)
-        counts.update({session_id: 1 for session_id in missing})
-        row.session_id_dict = dump_session_id_dict(counts)
+
+
+def link_import_evidence(session: Session, item: JargonImportItem, rows: List[Jargon]) -> None:
+    if not item.excerpt or not rows:
+        return
+    event = JargonLearningRecord(content=item.content, scope_kind="import", scope_id="", excerpt=item.excerpt,
+                                 recorded_at=datetime.now())
+    session.add(event)
+    session.flush()
+    for row in rows:
+        session.add(JargonEvidenceLink(jargon_id=row.id, record_id=event.id))
+    if all(row.scope_kind != "global" for row in rows):
+        attach_common_learning(session, event)
 
 
 def import_target_sessions(request: JargonImportRequest) -> List[str]:
     if request.is_global and request.target_session_ids:
-        raise HTTPException(status_code=400, detail="全局导入不能同时指定聊天")
+        raise HTTPException(status_code=400, detail="导入通用词库时不能同时指定聊天")
     if not request.jargons:
         raise HTTPException(status_code=400, detail="导入文件中没有黑话")
     return [] if request.is_global else require_existing_session_ids(request.target_session_ids)
@@ -1165,16 +1453,17 @@ def preview_jargon_import(request: JargonImportRequest) -> List[JargonImportConf
     targets = set(import_target_sessions(request))
     result: List[JargonImportConflict] = []
     with get_db_session(auto_commit=False) as session:
+        owners = import_scopes(session, targets, request.is_global)
         for content in dict.fromkeys(item.content.strip() for item in request.jargons):
-            records = find_import_conflicts(session, content, targets, request.is_global)
+            records = find_import_conflicts(session, content, owners)
             if records:
-                result.append(JargonImportConflict(content=content, records=[conflict_record(row) for row in records]))
+                result.append(JargonImportConflict(content=content, records=[conflict_record(session, row) for row in records]))
     return result
 
 
 @router.post("/import", response_model=JargonImportResponse)
 def import_jargons(request: JargonImportRequest) -> JargonImportResponse:
-    """将黑话 JSON 导入到用户选择的真实聊天流或全局。"""
+    """将黑话 JSON 导入到用户选择的真实聊天流或通用词库。"""
 
     try:
         target_session_ids = import_target_sessions(request)
@@ -1184,10 +1473,13 @@ def import_jargons(request: JargonImportRequest) -> JargonImportResponse:
         target_session_id_set = set(target_session_ids)
 
         with get_db_session() as session:
-            if request.replacements is not None:
+            session.connection().exec_driver_sql("BEGIN IMMEDIATE")
+            targets = import_scopes(session, target_session_id_set, request.is_global)
+            reviewed = request.replacements is not None or bool(request.merges)
+            replacements = request.replacements or {}
+            if reviewed:
                 # 在同一 SQLite 写事务中校验快照和提交，避免覆盖确认期间的新修改。
-                session.connection().exec_driver_sql("BEGIN IMMEDIATE")
-                titles = [item.content.strip() for item in request.jargons]
+                titles = [term_key(item.content.strip()) for item in request.jargons]
                 if len(set(titles)) != len(titles):
                     raise HTTPException(status_code=400, detail="所选候选包含同名词条，请修改后再导入")
             for item in request.jargons:
@@ -1197,45 +1489,56 @@ def import_jargons(request: JargonImportRequest) -> JargonImportResponse:
                     continue
 
                 meaning = item.meaning.strip()
-                overlapping_jargons = find_import_conflicts(session, content, target_session_id_set, request.is_global)
-                if request.replacements is not None:
+                imported_rows = []
+                overlapping_jargons = find_import_conflicts(session, content, targets)
+                if reviewed:
                     if content in request.reviewed_skips:
                         skipped_count += 1
                         continue
-                    expected = request.replacements.get(content, [])
-                    if expected != [conflict_record(row) for row in overlapping_jargons]:
+                    expected = request.merges[content] if content in request.merges else replacements.get(content, [])
+                    if expected != [conflict_record(session, row) for row in overlapping_jargons]:
                         raise HTTPException(status_code=409, detail=f"「{content}」的冲突记录已变化，请重新导入并确认")
                     if overlapping_jargons:
-                        replace_import_meanings(overlapping_jargons, item, target_session_id_set)
-                        imported_count += 1
-                        continue
+                        materialize(session.connection(), [row.id for row in overlapping_jargons])
+                        apply_import_meanings(overlapping_jargons, item, merge=content in request.merges)
+                        imported_rows.extend(overlapping_jargons)
+                        remaining = targets - {(row.scope_kind, row.scope_id) for row in overlapping_jargons}
+                        if request.is_global or not remaining:
+                            link_import_evidence(session, item, imported_rows)
+                            imported_count += 1
+                            continue
+                        overlapping_jargons = []
+                    else:
+                        remaining = targets
 
                 if overlapping_jargons and request.conflict_strategy == "skip":
                     skipped_count += 1
                     continue
 
-                if request.conflict_strategy == "overwrite":
-                    for existing_jargon in overlapping_jargons:
-                        session.delete(existing_jargon)
-                    if overlapping_jargons:
-                        session.flush()
+                owners = remaining if reviewed else targets
+                if request.conflict_strategy == "overwrite" and overlapping_jargons:
+                    materialize(session.connection(), [row.id for row in overlapping_jargons])
+                    apply_import_meanings(overlapping_jargons, item)
+                    imported_rows.extend(overlapping_jargons)
+                    owners = owners - {(row.scope_kind, row.scope_id) for row in overlapping_jargons}
+                    if request.is_global or not owners:
+                        link_import_evidence(session, item, imported_rows)
+                        imported_count += 1
+                        continue
 
-                session_counts = {
-                    session_id: max(item.count, 1)
-                    for session_id in target_session_ids
-                }
-                jargon = Jargon(
-                    content=content,
-                    meaning=meaning,
-                    session_id_dict=dump_session_id_dict(session_counts),
-                    count=max(item.count, 0),
-                    is_jargon=None if item.is_jargon and not meaning else item.is_jargon,
-                    is_complete=item.is_complete,
-                    is_global=request.is_global,
-                    created_by=JargonCreatedBy.MANUAL,
-                    updated_timestamp=datetime.now(),
-                )
-                session.add(jargon)
+                session.flush()
+                for kind, owner in sorted(owners):
+                    row = Jargon(
+                        content=content, meaning=meaning, scope_kind=kind,
+                        scope_id=owner, session_id_dict=dump_session_id_dict({owner: max(item.count, 1)} if kind == "chat" else {}),
+                        count=max(item.count, 0), is_jargon=None if item.is_jargon and not meaning else item.is_jargon,
+                        allow_update=item.allow_update if item.allow_update is not None else request.is_global,
+                        is_complete=item.is_complete and not request.is_global, is_global=request.is_global, created_by=JargonCreatedBy.MANUAL,
+                    )
+                    session.add(row)
+                    imported_rows.append(row)
+                session.flush()
+                link_import_evidence(session, item, imported_rows)
                 imported_count += 1
 
         logger.info(
@@ -1268,11 +1571,14 @@ def get_jargon_detail(jargon_id: int) -> JargonDetailResponse:
     """
     try:
         with get_db_session() as session:
+            inherited = inherited_source(session.connection(), jargon_id)
             row = session.execute(
-                build_jargon_compatible_select().where(col(Jargon.id) == jargon_id)
+                build_jargon_compatible_select().where(col(Jargon.id) == (inherited[0] if inherited else jargon_id))
             ).mappings().first()
-            if row is None:
+            if row is None or (row["scope_kind"] == "snapshot" and not inherited):
                 raise HTTPException(status_code=404, detail="黑话不存在")
+            if inherited:
+                row = dict(row, id=jargon_id, scope_kind="chat", scope_id=inherited[1], archived=False, revision=0)
             data = JargonResponse(**jargon_list_row_to_dict(row, session))
 
         return JargonDetailResponse(success=True, data=data)
@@ -1303,49 +1609,43 @@ def create_jargon(request: JargonCreateRequest) -> JargonCreateResponse:
         raw_session_ids = request.session_ids if request.session_ids is not None else (
             [request.session_id] if request.session_id else []
         )
-        # 全局黑话不要求来源聊天；兼容已有调用方提供的真实来源聊天。
-        session_ids = require_existing_session_ids(raw_session_ids) if raw_session_ids or not request.is_global else []
-        target_session_ids = set(session_ids)
+        # 通用词条不要求来源聊天；兼容已有调用方提供的真实来源聊天。
+        if request.group_id:
+            if raw_session_ids or request.is_global:
+                raise HTTPException(400, "请选择一个归属范围")
+        session_ids = [] if request.group_id else (
+            require_existing_session_ids(raw_session_ids) if raw_session_ids or not request.is_global else []
+        )
         with get_db_session() as session:
-            same_content_jargons = session.exec(select(Jargon).where(col(Jargon.content) == content)).all()
-            existing = next(
-                (
-                    jargon
-                    for jargon in same_content_jargons
-                    if normalize_jargon_created_by(jargon.created_by, jargon.id) == JargonCreatedBy.MANUAL
-                    and (jargon.is_global if request.is_global else scopes_overlap(jargon, target_session_ids, False))
-                ),
-                None,
-            )
-            if existing is not None:
-                raise HTTPException(status_code=400, detail="该范围中已存在相同内容的手动黑话")
-
-            replaced_ai_count = 0
-            for existing_jargon in same_content_jargons:
-                if normalize_jargon_created_by(existing_jargon.created_by, existing_jargon.id) != JargonCreatedBy.AI:
-                    continue
-                if not (
-                    existing_jargon.is_global if request.is_global
-                    else scopes_overlap(existing_jargon, target_session_ids, False)
-                ):
-                    continue
-                session.delete(existing_jargon)
-                replaced_ai_count += 1
-
-            jargon = Jargon(
-                content=content,
-                meaning=meaning,
-                session_id_dict=build_session_id_dict_for_sessions(session_ids),
-                count=0,
-                is_jargon=True if meaning else None,
-                is_complete=False,
-                is_global=request.is_global,
-                created_by=JargonCreatedBy.MANUAL,
-            )
-            session.add(jargon)
+            session.connection().exec_driver_sql("BEGIN IMMEDIATE")
+            if request.group_id:
+                require_jargon_group(session, request.group_id)
+                owners = {("group", request.group_id)}
+            else:
+                owners = import_scopes(session, set(session_ids), request.is_global)
+            existing = find_import_conflicts(session, content, owners)
+            if any(row.created_by == JargonCreatedBy.MANUAL or not row.allow_update for row in existing):
+                raise HTTPException(status_code=400, detail="该范围中已有同名的手动或暂停更新词条")
+            materialize(session.connection(), [row.id for row in existing])
+            for row in existing:
+                row.archived = True
+                row.revision += 1
             session.flush()
-
-            logger.info(f"创建手动黑话成功: id={jargon.id}, content={content}, replaced_ai_count={replaced_ai_count}")
+            for kind, owner in sorted(owners):
+                previous = next((row for row in existing if (row.scope_kind, row.scope_id) == (kind, owner)), None)
+                if previous:
+                    jargon = copy_version(session, previous, previous.scope_kind, owner)
+                    jargon.meaning = meaning
+                    jargon.created_by = JargonCreatedBy.MANUAL
+                    jargon.allow_update = request.is_global
+                    jargon.is_jargon = True if meaning else None
+                    continue
+                jargon = Jargon(content=content, meaning=meaning, scope_kind=kind,
+                                scope_id=owner, allow_update=request.is_global, is_global=request.is_global, created_by=JargonCreatedBy.MANUAL,
+                                session_id_dict=build_session_id_dict_for_sessions([owner] if kind == "chat" else []),
+                                is_jargon=True if meaning else None)
+                session.add(jargon)
+                session.flush()
             data = JargonResponse(**jargon_to_dict(jargon, session))
 
         return JargonCreateResponse(success=True, message="创建成功", data=data)
@@ -1355,6 +1655,33 @@ def create_jargon(request: JargonCreateRequest) -> JargonCreateResponse:
     except Exception as e:
         logger.error(f"创建黑话失败: {e}")
         raise HTTPException(status_code=500, detail=f"创建黑话失败: {str(e)}") from e
+
+
+def apply_jargon_edit(session: Session, jargon: Jargon, update_data: Dict[str, Any]) -> None:
+    if {"session_ids", "session_id", "is_global"} & update_data.keys():
+        ids = update_data.get("session_ids")
+        if ids is None and update_data.get("session_id"):
+            ids = [update_data["session_id"]]
+        global_target = update_data.get("is_global", jargon.is_global)
+        if global_target != jargon.is_global or (ids is not None and set(ids) != set(get_session_ids(jargon.session_id_dict))):
+            raise HTTPException(status_code=409, detail="请使用管理作用域操作修改归属")
+    jargon.revision += 1
+    if "meaning" in update_data:
+        jargon.meaning = update_data["meaning"] or ""
+    if "is_global" in update_data and update_data["is_global"] is not None:
+        jargon.is_global = update_data["is_global"]
+    if "is_jargon" in update_data:
+        jargon.is_jargon = update_data["is_jargon"]
+    if "created_by" in update_data and update_data["created_by"] is not None:
+        jargon.created_by = update_data["created_by"]
+        if "allow_update" not in update_data:
+            jargon.allow_update = jargon.created_by != JargonCreatedBy.MANUAL
+    if update_data.get("allow_update") is not None:
+        jargon.allow_update = update_data["allow_update"]
+    if jargon.scope_kind == "global" and jargon.allow_update:
+        jargon.is_complete = False
+    jargon.updated_timestamp = datetime.now()
+    session.add(jargon)
 
 
 @router.patch("/{jargon_id}", response_model=JargonUpdateResponse)
@@ -1370,32 +1697,33 @@ def update_jargon(jargon_id: int, request: JargonUpdateRequest) -> JargonUpdateR
     """
     try:
         with get_db_session() as session:
+            session.connection().exec_driver_sql("BEGIN IMMEDIATE")
+            materialize(session.connection(), [jargon_id])
             jargon = session.exec(select(Jargon).where(col(Jargon.id) == jargon_id)).first()
-            if not jargon:
+            if not jargon or jargon.archived:
                 raise HTTPException(status_code=404, detail="黑话不存在")
 
-            if update_data := request.model_dump(exclude_unset=True):
-                if "session_ids" in update_data and update_data["session_ids"] is not None:
-                    session_ids = require_existing_session_ids(update_data["session_ids"])
-                    jargon.session_id_dict = build_session_id_dict_for_sessions(session_ids, max(jargon.count, 1))
-                elif "session_id" in update_data and update_data["session_id"] is not None:
-                    session_id = require_existing_session_id(update_data["session_id"])
-                    jargon.session_id_dict = build_session_id_dict_for_session(session_id, max(jargon.count, 1))
-                if "content" in update_data and update_data["content"] is not None:
-                    content = update_data["content"].strip()
-                    if not content:
-                        raise HTTPException(status_code=400, detail="黑话内容不能为空")
-                    jargon.content = content
-                if "meaning" in update_data:
-                    jargon.meaning = update_data["meaning"] or ""
-                if "is_global" in update_data and update_data["is_global"] is not None:
-                    jargon.is_global = update_data["is_global"]
-                if "is_jargon" in update_data:
-                    jargon.is_jargon = update_data["is_jargon"]
-                if "created_by" in update_data and update_data["created_by"] is not None:
-                    jargon.created_by = update_data["created_by"]
-                jargon.updated_timestamp = datetime.now()
-                session.add(jargon)
+            if request.revision is not None and request.revision != jargon.revision:
+                raise HTTPException(409, "词条已更新，请重新打开后编辑")
+            changes = request.model_dump(exclude_unset=True, exclude={"revision", "all_scope_revisions"})
+            content = changes.pop("content", None)
+            if content is not None and content != jargon.content:
+                raise HTTPException(409, "词条名称无法修改，请新建词条")
+            targets = [jargon]
+            if request.all_scope_revisions is not None:
+                if changes.keys() - {"meaning", "allow_update", "is_jargon"}:
+                    raise HTTPException(400, "保存到全部仅支持修改含义、状态和更新开关")
+                model = read_jargons()
+                versions = dict(session.exec(select(model.id, model.revision).where(
+                    col(model.archived).is_(False), func.lower(func.trim(model.content)) == term_key(jargon.content)
+                )).all())
+                if versions != request.all_scope_revisions:
+                    raise HTTPException(409, "作用域或释义已变化，请重新打开词条后再保存")
+                materialize(session.connection(), list(versions))
+                targets = session.exec(select(Jargon).where(col(Jargon.id).in_(versions))).all()
+            if changes:
+                for target in targets:
+                    apply_jargon_edit(session, target, changes)
 
             logger.info(f"更新黑话成功: id={jargon_id}")
             data = JargonResponse(**jargon_to_dict(jargon, session))
@@ -1421,12 +1749,15 @@ def delete_jargon(jargon_id: int) -> JargonDeleteResponse:
     """
     try:
         with get_db_session() as session:
+            session.connection().exec_driver_sql("BEGIN IMMEDIATE")
+            materialize(session.connection(), [jargon_id])
             jargon = session.exec(select(Jargon).where(col(Jargon.id) == jargon_id)).first()
-            if not jargon:
+            if not jargon or jargon.scope_kind == "snapshot":
                 raise HTTPException(status_code=404, detail="黑话不存在")
 
             content = jargon.content
-            session.delete(jargon)
+            jargon.archived = True
+            jargon.revision += 1
 
             logger.info(f"删除黑话成功: id={jargon_id}, content={content}")
 
@@ -1454,7 +1785,9 @@ def batch_delete_jargons(request: BatchDeleteRequest) -> JargonDeleteResponse:
             raise HTTPException(status_code=400, detail="ID列表不能为空")
 
         with get_db_session() as session:
-            result = session.exec(delete(Jargon).where(col(Jargon.id).in_(request.ids)))
+            session.connection().exec_driver_sql("BEGIN IMMEDIATE")
+            materialize(session.connection(), request.ids)
+            result = session.exec(update(Jargon).where(col(Jargon.id).in_(request.ids), col(Jargon.archived).is_(False)).values(archived=True, revision=Jargon.revision + 1))
             deleted_count = result.rowcount or 0
 
             logger.info(f"批量删除黑话成功: 删除了 {deleted_count} 条记录")
@@ -1491,8 +1824,11 @@ def batch_set_jargon_status(
             raise HTTPException(status_code=400, detail="ID列表不能为空")
 
         with get_db_session() as session:
-            jargons = session.exec(select(Jargon).where(col(Jargon.id).in_(ids))).all()
+            session.connection().exec_driver_sql("BEGIN IMMEDIATE")
+            materialize(session.connection(), ids)
+            jargons = session.exec(select(Jargon).where(col(Jargon.id).in_(ids), col(Jargon.archived).is_(False))).all()
             for jargon in jargons:
+                jargon.revision += 1
                 jargon.is_jargon = is_jargon
                 jargon.updated_timestamp = datetime.now()
                 session.add(jargon)

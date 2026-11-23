@@ -25,7 +25,7 @@ export interface SharingGroup extends SharingGroupInput {
 }
 const base = '/api/webui/sharing-groups'
 export const getSharingGroups = () =>
-  backendApi.get<{ data: SharingGroup[]; capabilities: Record<string, string> }>(base)
+  backendApi.get<{ data: SharingGroup[]; jargon_conflicts?: { left: string; right: string; member: string }[]; capabilities: Record<string, string> }>(base)
 export const saveSharingGroup = (data: SharingGroupInput, id?: string) =>
   id
     ? backendApi.put<SharingGroup>(`${base}/${encodeURIComponent(id)}`, { body: data })

@@ -1,5 +1,7 @@
 """独立相通组管理；同步端点由 WebUI 线程池执行。"""
 
+from itertools import combinations
+
 from fastapi import APIRouter, HTTPException, Query
 
 from src.services import sharing_group_service as service
@@ -12,7 +14,10 @@ def list_groups():
     groups = service.list_groups()
     for group in groups:
         group["resolved_ids"] = sorted(service.resolved_members(group))
-    return {"data": groups, "capabilities": service.CAPABILITIES}
+    enabled = [g for g in groups if g["enabled"] and g["capabilities"].get("jargon")]
+    overlaps = [dict(left=a["name"], right=b["name"], member=member)
+                for a, b in combinations(enabled, 2) if (member := service.jargon_group_overlap(a, b))]
+    return {"data": groups, "capabilities": service.CAPABILITIES, "jargon_conflicts": overlaps}
 
 
 @router.post("")

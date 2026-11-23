@@ -42,7 +42,7 @@ async def test_context_status_tracks_parallel_injections(monkeypatch: pytest.Mon
         _update_stage_status=lambda *args, **kwargs: statuses.append(args),
     )
     engine._build_action_tool_definitions = AsyncMock(return_value=([], "工具目录"))
-    engine._refresh_jargon_reference_message = lambda: None
+    engine._refresh_jargon_reference_message = AsyncMock(return_value=None)
     engine._emit_flow_step = AsyncMock()
     engine._run_interruptible_planner = AsyncMock()
 

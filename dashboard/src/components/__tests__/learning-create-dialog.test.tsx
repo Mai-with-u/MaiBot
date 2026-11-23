@@ -94,7 +94,7 @@ describe('LearningCreateDialog', () => {
         ['chat1'],
         [first],
         false,
-        ...(kind === 'jargon' ? [expect.any(Function)] : [])
+        ...(kind === 'jargon' ? [expect.any(Function), true] : [])
       )
     )
     expect(success).toHaveBeenCalledOnce()
@@ -118,6 +118,9 @@ describe('LearningCreateDialog', () => {
     show('jargon')
     await start()
     await screen.findByText('学习完成')
+    const lock = screen.getByRole('checkbox', { name: '锁定含义' })
+    expect(lock).toBeChecked()
+    fireEvent.click(lock)
     fireEvent.click(screen.getByRole('button', { name: '导入所选（2）' }))
     const dialog = await screen.findByRole('alertdialog')
     expect(dialog).toHaveTextContent('库中的释义')
@@ -127,6 +130,7 @@ describe('LearningCreateDialog', () => {
     fireEvent.click(screen.getByRole('button', { name: '确认替换' }))
     await waitFor(() => expect(importJargons).toHaveBeenCalledWith(expect.objectContaining({
       replacements: { [first.title]: records, [second.title]: otherRecords }, reviewed_skips: [],
+      jargons: [first, second].map(item => expect.objectContaining({ content: item.title, allow_update: true })),
     })))
   })
 
@@ -306,7 +310,7 @@ describe('LearningCreateDialog', () => {
       await start()
       await screen.findByText('学习完成')
       expect(screen.getByText('未提供原文依据，可确认后导入')).toBeInTheDocument()
-      fireEvent.click(screen.getByRole('button', { name: '全局（所有聊天）' }))
+      fireEvent.click(screen.getByRole('button', { name: kind === 'jargon' ? '通用词库' : '全局（所有聊天）' }))
       expect(screen.getByRole('button', { name: '导入所选（1）' })).toBeEnabled()
       const noun = kind === 'expression' ? '表达方式' : '黑话'
       fireEvent.click(screen.getByRole('button', { name: `编辑第 1 条${noun}` }))
@@ -326,7 +330,7 @@ describe('LearningCreateDialog', () => {
           [],
           [{ title: '编辑后的内容', description: '编辑后的含义' }],
           true,
-          ...(kind === 'jargon' ? [expect.any(Function)] : [])
+          ...(kind === 'jargon' ? [expect.any(Function), true] : [])
         )
       )
       expect(success).toHaveBeenCalledWith(true)

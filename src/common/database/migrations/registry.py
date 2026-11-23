@@ -22,8 +22,7 @@ class MigrationRegistry:
     def register(self, step: MigrationStep) -> None:
         """注册单个迁移步骤。
 
-        当前注册表要求每个步骤只负责相邻版本间的升级，以确保迁移链路易于审计、
-        易于回放，也便于后续生产问题排查。
+        未发布的版本可以合并为一步，已注册的升级区间不能重叠。
 
         Args:
             step: 待注册的迁移步骤定义。
@@ -31,10 +30,6 @@ class MigrationRegistry:
         Raises:
             DatabaseMigrationConfigurationError: 当步骤定义冲突或版本跨度不合法时抛出。
         """
-        if step.version_to != step.version_from + 1:
-            raise DatabaseMigrationConfigurationError(
-                "迁移步骤必须使用相邻版本号定义，例如 2 -> 3。"
-            )
         if step.version_from in self._steps_by_from_version:
             existing_step = self._steps_by_from_version[step.version_from]
             raise DatabaseMigrationConfigurationError(
@@ -45,6 +40,8 @@ class MigrationRegistry:
                 raise DatabaseMigrationConfigurationError(
                     f"目标版本 {step.version_to} 已由迁移步骤 {registered_step.name} 占用。"
                 )
+            if step.version_from < registered_step.version_to and registered_step.version_from < step.version_to:
+                raise DatabaseMigrationConfigurationError(f"迁移区间与 {registered_step.name} 重叠。")
         self._steps_by_from_version[step.version_from] = step
 
     def register_many(self, steps: List[MigrationStep]) -> None:

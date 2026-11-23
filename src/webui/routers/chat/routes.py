@@ -14,12 +14,15 @@ import tomlkit
 
 from src.chat.heart_flow.heartflow_manager import heartflow_manager
 from src.chat.message_receive.chat_manager import chat_manager as core_chat_manager
+from src.common.database.jargon_snapshots import detach_snapshots
 from src.common.database.database import get_db_session
 from src.common.database.database_model import (
     ChatSession,
     Expression,
     HighFrequencyTerm,
     Jargon,
+    JargonEvidenceLink,
+    JargonLearningRecord,
     Messages,
     Individual,
     PersonInfo,
@@ -304,21 +307,25 @@ def _get_jargon_counts_by_session(session_ids: List[str]) -> Dict[str, int]:
     if not session_ids:
         return {}
 
-    session_id_set = set(session_ids)
-    counts = {session_id: 0 for session_id in session_ids}
-    with get_db_session() as session:
-        statement = select(Jargon.session_id_dict).where(col(Jargon.session_id_dict).is_not(None))
-        for raw_session_id_dict in session.exec(statement).all():
-            try:
-                session_counts = json.loads(raw_session_id_dict or "{}")
-            except json.JSONDecodeError:
-                continue
-            if not isinstance(session_counts, dict):
-                continue
-            for session_id in session_counts:
-                if session_id in session_id_set:
-                    counts[session_id] += 1
-    return counts
+    with get_db_session(auto_commit=False) as session:
+        counts = dict(session.exec(select(Jargon.scope_id, func.count()).where(
+            Jargon.scope_kind == "chat", col(Jargon.scope_id).in_(session_ids), col(Jargon.archived).is_(False)
+        ).group_by(Jargon.scope_id)).all())
+        # 每个快照只统计一次总词数；扣除该聊天已分离（包括已归档）的词。
+        for chat, inherited in session.connection().exec_driver_sql("""WITH members AS (
+                SELECT * FROM jargon_snapshot_members WHERE chat IN (SELECT value FROM json_each(?))
+            ), sizes AS (
+                SELECT scope_id,count(*) n FROM jargons WHERE scope_kind='snapshot'
+                AND scope_id IN (SELECT snapshot FROM members) GROUP BY scope_id
+            ), overrides AS (
+                SELECT m.chat,count(*) n FROM jargons j JOIN members m ON m.end_id=(
+                    SELECT min(end_id) FROM jargon_snapshot_members WHERE end_id>=-j.id)
+                WHERE j.id<0 GROUP BY m.chat
+            )
+            SELECT m.chat,s.n-coalesce(o.n,0) FROM members m JOIN sizes s ON m.snapshot=s.scope_id
+            LEFT JOIN overrides o ON o.chat=m.chat""", (json.dumps(session_ids),)):
+            counts[chat] = counts.get(chat, 0) + inherited
+        return counts
 
 
 def _chat_session_to_response(
@@ -1186,40 +1193,18 @@ def _delete_rows_by_text_field(session: Any, model: Any, field_name: str, sessio
 
 
 def _delete_or_unlink_jargons(session: Any, session_id: str) -> Dict[str, int]:
-    """清理黑话中的聊天流关联；仅剩当前聊天流时删除整条黑话。"""
-
-    deleted = 0
-    unlinked = 0
-    removed_refs = 0
-    candidate_statement = select(Jargon).where(func.instr(col(Jargon.session_id_dict), f'"{session_id}"') > 0)
-    candidates = session.exec(candidate_statement).all()
-    for jargon in candidates:
-        try:
-            session_counts = json.loads(jargon.session_id_dict or "{}")
-        except json.JSONDecodeError:
-            logger.warning(f"跳过无法解析 session_id_dict 的黑话记录: jargon_id={jargon.id}")
-            continue
-        if not isinstance(session_counts, dict) or session_id not in session_counts:
-            continue
-
-        removed_count = int(session_counts.pop(session_id, 0) or 0)
-        removed_refs += 1
-        if not session_counts and not jargon.is_global:
-            session.delete(jargon)
-            deleted += 1
-            continue
-
-        jargon.session_id_dict = json.dumps(session_counts, ensure_ascii=False)
-        if removed_count > 0:
-            jargon.count = max(0, int(jargon.count or 0) - removed_count)
-        session.add(jargon)
-        unlinked += 1
-
-    return {
-        "deleted": deleted,
-        "unlinked": unlinked,
-        "removed_refs": removed_refs,
-    }
+    """删除聊天时清理可确定来源的原始素材，保留其他作用域的释义及推断进度。"""
+    evidence = select(JargonLearningRecord.id).where(JargonLearningRecord.session_id == session_id)
+    removed_links = session.exec(delete(JargonEvidenceLink).where(col(JargonEvidenceLink.record_id).in_(evidence)))
+    detach_snapshots(session.connection(), [session_id])
+    removed_records = session.exec(delete(JargonLearningRecord).where(JargonLearningRecord.session_id == session_id))
+    rows = session.exec(select(Jargon).where(
+        Jargon.scope_kind == "chat", Jargon.scope_id == session_id, col(Jargon.archived).is_(False)
+    )).all()
+    for row in rows:
+        row.archived = True
+        row.revision += 1
+    return {"deleted": len(rows), "unlinked": removed_records.rowcount, "removed_refs": removed_links.rowcount}
 
 
 def _release_deleted_chat_runtime(session_id: str) -> None:

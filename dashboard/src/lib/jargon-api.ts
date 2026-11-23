@@ -6,6 +6,7 @@
  */
 import { backendApi } from '@/lib/http'
 import type {
+  Jargon,
   JargonChatListResponse,
   JargonCreateRequest,
   JargonCreateResponse,
@@ -23,6 +24,20 @@ import type {
 } from '@/types/jargon'
 
 const API_BASE = '/api/webui/jargon'
+
+export const getJargonVersions = (content: string, includeHistory = true) =>
+  backendApi.get<Jargon[]>(`${API_BASE}/library/versions`, { query: { content, include_history: includeHistory } })
+
+export type JargonScopeAction = 'move' | 'merge' | 'split'
+export const changeJargonScope = (body: {
+  action: JargonScopeAction; kind: string; target: string; versions: Record<number, number>; inherit_id: number
+}) => backendApi.post<{ id: number | null }>(`${API_BASE}/library/scope`, { body })
+
+export const getJargonEvidence = (id: number, offset: number) =>
+  backendApi.get<{ id: number; source_name: string; excerpt: string; recorded_at: string | null;
+    passages?: { sender: string; time: string; text: string }[][]; unavailable?: number; evidence?: string | null }[]>(
+    `${API_BASE}/library/evidence/${id}`, { query: { offset } }
+  )
 
 /** 获取黑话配置中的共享组与已解析的聊天成员。 */
 export async function getJargonGroups(): Promise<JargonGroupListResponse> {
@@ -52,7 +67,10 @@ export async function getJargonList(params: {
   search?: string
   session_id?: string
   session_ids?: string[]
-  sort_by?: 'time' | 'time_asc' | 'created' | 'created_asc'
+  sort_by?: 'time' | 'time_asc' | 'created' | 'created_asc' | 'count'
+  grouped?: boolean
+  compact?: boolean
+  group_id?: string
   jargon_status?: 'confirmed_jargon' | 'confirmed_not_jargon' | 'manual_jargon' | 'pending'
   is_jargon?: boolean | null
   is_complete?: boolean
@@ -66,6 +84,9 @@ export async function getJargonList(params: {
       session_id: params.session_id || undefined,
       session_ids: params.session_ids,
       sort_by: params.sort_by,
+      grouped: params.grouped,
+      compact: params.compact,
+      group_id: params.group_id,
       jargon_status: params.jargon_status,
       is_jargon: params.is_jargon,
       is_complete: params.is_complete,
@@ -88,6 +109,7 @@ export async function getJargonDetail(jargonId: number): Promise<JargonDetailRes
  * 导出黑话
  */
 export async function exportJargons(params: {
+  group_id?: string
   ids?: number[]
   session_ids?: string[]
   include_chat_info?: boolean
@@ -95,6 +117,7 @@ export async function exportJargons(params: {
   return backendApi.post<JargonExportResponse>(`${API_BASE}/export`, {
     body: {
       ids: params.ids,
+      group_id: params.group_id,
       session_ids: params.session_ids,
       include_chat_info: params.include_chat_info ?? false,
     },
@@ -164,8 +187,13 @@ export async function batchDeleteJargons(jargonIds: number[]): Promise<JargonDel
 /**
  * 获取黑话统计数据
  */
-export async function getJargonStats(): Promise<JargonStatsResponse> {
+export const getJargonOverview = () => backendApi.get<{ total: number; confirmed_jargon: number; complete_count: number }>(
+  `${API_BASE}/stats/overview`, { errorMessage: '获取黑话概览失败' }
+)
+
+export async function getJargonStats(includeChatDistribution = true): Promise<JargonStatsResponse> {
   return backendApi.get<JargonStatsResponse>(`${API_BASE}/stats/summary`, {
+    ...(includeChatDistribution ? {} : { query: { include_chat_distribution: false } }),
     errorMessage: '获取黑话统计失败',
   })
 }

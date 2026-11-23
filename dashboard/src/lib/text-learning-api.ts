@@ -1,6 +1,6 @@
 import { backendApi } from '@/lib/http'
 import { importExpressions } from '@/lib/expression-api'
-import type { JargonImportConflict, JargonImportRequest } from '@/types/jargon'
+import type { JargonConflictAction, JargonImportConflict, JargonImportRequest } from '@/types/jargon'
 import { importJargons, previewJargonImport } from '@/lib/jargon-api'
 
 export type LearningKind = 'expression' | 'jargon'
@@ -65,7 +65,8 @@ export async function importLearningCandidates(
   isGlobal = false,
   reviewConflict?: (
     conflict: JargonImportConflict, meaning: string, remaining: number
-  ) => Promise<{ replace: boolean; applyToAll: boolean }>
+  ) => Promise<{ action: JargonConflictAction; applyToAll: boolean }>,
+  lockMeaning = true
 ) {
   if ((!isGlobal && !targetIds.length) || !candidates.length)
     throw new Error('请选择导入目标和候选')
@@ -100,10 +101,12 @@ export async function importLearningCandidates(
     conflict_strategy: 'skip',
     jargons: items.map((candidate) => ({
       content: candidate.title,
+      excerpt: candidate.evidence,
       meaning: candidate.description,
       count: 1,
       is_jargon: true,
-      is_complete: true,
+      allow_update: !lockMeaning,
+      is_complete: false,
       is_global: isGlobal,
       created_by: 'MANUAL',
     })),
@@ -113,19 +116,22 @@ export async function importLearningCandidates(
     if (meanings.size !== items.length) throw new Error('所选候选包含同名词条，请修改后再导入')
     const conflicts = await previewJargonImport(request)
     const replacements = new Map<string, JargonImportConflict['records']>()
+    const merges = new Map<string, JargonImportConflict['records']>()
     const skips: string[] = []
-    let batchDecision: boolean | undefined
+    let batchDecision: JargonConflictAction | undefined
     for (const [index, conflict] of conflicts.entries()) {
-      let replace = batchDecision
-      if (replace === undefined) {
+      let action: JargonConflictAction | undefined = batchDecision
+      if (action === undefined) {
         const decision = await reviewConflict(conflict, meanings.get(conflict.content)!, conflicts.length - index)
-        replace = decision.replace
-        if (decision.applyToAll) batchDecision = replace
+        action = decision.action
+        if (decision.applyToAll) batchDecision = action
       }
-      if (replace) replacements.set(conflict.content, conflict.records)
+      if (action === 'merge') merges.set(conflict.content, conflict.records)
+      else if (action === 'replace') replacements.set(conflict.content, conflict.records)
       else skips.push(conflict.content)
     }
     request.replacements = Object.fromEntries(replacements)
+    if (merges.size) request.merges = Object.fromEntries(merges)
     request.reviewed_skips = skips
   }
   return importJargons(request)

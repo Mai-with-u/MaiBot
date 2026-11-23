@@ -85,9 +85,9 @@ class MigrationPlanner:
 
         while next_version < target_version:
             step = registry.get_step(next_version)
-            if step is None:
+            if step is None or step.version_to > target_version:
                 raise MissingMigrationStepError(
-                    f"缺少从版本 {next_version} 升级到版本 {next_version + 1} 的迁移步骤。"
+                    f"缺少从版本 {next_version} 升级到版本 {target_version} 的迁移步骤。"
                 )
             planned_steps.append(step)
             next_version = step.version_to

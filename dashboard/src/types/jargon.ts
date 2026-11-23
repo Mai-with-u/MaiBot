@@ -8,6 +8,17 @@
 export type JargonCreatedBy = 'AI' | 'MANUAL'
 
 export interface Jargon {
+  scope_kind?: 'chat' | 'group' | 'global' | 'baseline'
+  scope_id?: string
+  scope_name?: string
+  scope_names?: string[]
+  scope_ids?: number[]
+  scope_versions?: Jargon[]
+  meaning_count?: number
+  revision?: number
+  archived?: boolean
+  baseline_id?: number | null
+  last_inference_count?: number
   id: number
   content: string
   meaning: string | null
@@ -20,6 +31,7 @@ export interface Jargon {
   is_jargon: boolean | null
   is_legacy_empty_meaning: boolean
   is_complete: boolean
+  allow_update: boolean
   created_by: JargonCreatedBy
   created_timestamp: string
   updated_timestamp: string
@@ -78,11 +90,14 @@ export interface JargonTargetInfo {
  * 黑话导出条目
  */
 export interface JargonExportItem {
+  scope_kind?: string | null
+  group_name?: string | null
   content: string
   meaning: string
   count: number
   is_jargon: boolean | null
   is_complete: boolean
+  allow_update?: boolean
   is_global: boolean
   created_by: JargonCreatedBy
   targets?: JargonTargetInfo[] | null
@@ -106,15 +121,18 @@ export interface JargonExportResponse {
  */
 export interface JargonImportConflict {
   content: string
-  records: { id: number; meaning: string; is_global: boolean; session_ids: string[] }[]
+  records: { group_name?: string | null; id: number; meaning: string; is_global: boolean; session_ids: string[] }[]
 }
 
+export type JargonConflictAction = 'skip' | 'replace' | 'merge'
+
 export interface JargonImportRequest {
+  merges?: Record<string, JargonImportConflict['records']>
   replacements?: Record<string, JargonImportConflict['records']>
   reviewed_skips?: string[]
   target_session_ids: string[]
   is_global?: boolean
-  jargons: JargonExportItem[]
+  jargons: (JargonExportItem & { excerpt?: string })[]
   conflict_strategy?: 'skip' | 'overwrite'
 }
 
@@ -152,6 +170,7 @@ export interface JargonDetailResponse {
  * 黑话创建请求
  */
 export interface JargonCreateRequest {
+  group_id?: string
   content: string
   meaning?: string
   session_id?: string
@@ -163,12 +182,14 @@ export interface JargonCreateRequest {
  * 黑话更新请求
  */
 export interface JargonUpdateRequest {
-  content?: string
+  all_scope_revisions?: Record<number, number>
+  revision?: number
   meaning?: string
   session_id?: string
   session_ids?: string[]
   is_global?: boolean
   is_jargon?: boolean | null
+  allow_update?: boolean
   created_by?: JargonCreatedBy
 }
 

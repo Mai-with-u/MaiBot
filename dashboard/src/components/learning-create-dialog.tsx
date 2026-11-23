@@ -2,7 +2,7 @@ import { useQuery } from '@tanstack/react-query'
 import { ArrowLeft, BookOpen, Loader2, PenLine } from 'lucide-react'
 import { useEffect, useRef, useState } from 'react'
 
-import type { JargonImportConflict } from '@/types/jargon'
+import type { JargonConflictAction, JargonImportConflict } from '@/types/jargon'
 import {
   AlertDialog, AlertDialogAction, AlertDialogCancel, AlertDialogContent, AlertDialogDescription,
   AlertDialogFooter, AlertDialogHeader, AlertDialogTitle,
@@ -70,6 +70,7 @@ export function LearningCreateDialog({
   const [text, setText] = useState('')
   const [targetIds, setTargetIds] = useState<string[]>(initialTargetIds)
   const [isGlobal, setIsGlobal] = useState(false)
+  const [lockMeaning, setLockMeaning] = useState(true)
   const [chunks, setChunks] = useState<string[]>([])
   const [chunkStates, setChunkStates] = useState<ChunkState[]>([])
   const [activeChunkIndex, setActiveChunkIndex] = useState<number | null>(null)
@@ -89,7 +90,7 @@ export function LearningCreateDialog({
   } | null>(null)
   const [applyToAll, setApplyToAll] = useState(false)
   const decisionRef = useRef<{
-    resolve: (decision: { replace: boolean; applyToAll: boolean }) => void
+    resolve: (decision: { action: JargonConflictAction; applyToAll: boolean }) => void
     reject: (error: Error) => void
   } | null>(null)
   const mounted = useRef(true)
@@ -103,15 +104,15 @@ export function LearningCreateDialog({
   }, [])
 
   const reviewConflict = (conflict: JargonImportConflict, meaning: string, remaining: number) =>
-    new Promise<{ replace: boolean; applyToAll: boolean }>((resolve, reject) => {
+    new Promise<{ action: JargonConflictAction; applyToAll: boolean }>((resolve, reject) => {
       if (!mounted.current) return reject(new Error('导入已取消'))
       decisionRef.current = { resolve, reject }
       setApplyToAll(false)
       setDuplicate({ conflict, meaning, remaining })
     })
 
-  const resolveConflict = (replace: boolean, remember = false) => {
-    decisionRef.current?.resolve({ replace, applyToAll: remember })
+  const resolveConflict = (action: JargonConflictAction, remember = false) => {
+    decisionRef.current?.resolve({ action, applyToAll: remember })
     decisionRef.current = null
     setDuplicate(null)
   }
@@ -170,6 +171,7 @@ export function LearningCreateDialog({
     setError('')
     setImportResult('')
     setImportedByTarget({})
+    setLockMeaning(true)
   }
 
   const learn = async (retryIndices?: number[]) => {
@@ -243,7 +245,7 @@ export function LearningCreateDialog({
         isGlobal ? [] : validTargetIds,
         selectedIndices.map((index) => editedCandidates[index]),
         isGlobal,
-        ...(kind === 'jargon' ? [reviewConflict] as const : [])
+        ...(kind === 'jargon' ? [reviewConflict, lockMeaning] as const : [])
       )
       if (!result.success) throw new Error(result.message)
       onSuccess(isGlobal)
@@ -273,7 +275,15 @@ export function LearningCreateDialog({
 
   const changeOpen = (next: boolean) => {
     if (learningBusy.current || importBusy.current) return
-    if (!next) setMode(initialMode)
+    if (!next) {
+      setMode(initialMode)
+      if (importResult) {
+        resetLearning()
+        setText('')
+        setTargetIds(initialTargetIds)
+        setIsGlobal(false)
+      }
+    }
     onOpenChange(next)
   }
 
@@ -300,7 +310,7 @@ export function LearningCreateDialog({
                 type="button"
                 className="hover:bg-accent focus-visible:ring-ring flex flex-col items-start gap-3 rounded-lg border p-5 text-left outline-none focus-visible:ring-2"
                 onClick={() => {
-                  onOpenChange(false)
+                  changeOpen(false)
                   onManual()
                 }}
               >
@@ -397,12 +407,14 @@ export function LearningCreateDialog({
                         disabled={importing}
                         onClick={() => setIsGlobal(true)}
                       >
-                        全局（所有聊天）
+                        {kind === 'jargon' ? '通用词库' : '全局（所有聊天）'}
                       </Button>
                     </div>
                     {isGlobal ? (
                       <p className="text-muted-foreground text-xs">
-                        所有现有及以后新增的聊天均可使用，仍遵守各聊天的使用开关。
+                        {kind === 'jargon'
+                          ? '所有启用黑话的聊天都可使用此释义。'
+                          : '所有现有及以后新增的聊天均可使用，仍遵守各聊天的使用开关。'}
                       </p>
                     ) : (
                       <>
@@ -475,6 +487,13 @@ export function LearningCreateDialog({
                       />
                       全选
                     </label>
+                    {kind === 'jargon' && (
+                      <Label className="flex items-center gap-2">
+                        <Checkbox checked={lockMeaning} disabled={importing}
+                          onCheckedChange={(checked) => setLockMeaning(checked === true)} />
+                        锁定含义
+                      </Label>
+                    )}
                     <span className="text-muted-foreground">
                       已选 {selectedIndices.length} / {availableIndices.length} 条
                     </span>
@@ -621,17 +640,17 @@ export function LearningCreateDialog({
             </Button>
           )}
         </DialogFooter>
-        <AlertDialog open={duplicate !== null} onOpenChange={(next) => { if (!next) resolveConflict(false) }}>
+        <AlertDialog open={duplicate !== null} onOpenChange={(next) => { if (!next) resolveConflict('skip') }}>
           <AlertDialogContent>
             <AlertDialogHeader>
-              <AlertDialogTitle>替换「{duplicate?.conflict.content}」的释义？</AlertDialogTitle>
-              <AlertDialogDescription>替换后，以下同名记录将使用新释义，并锁定为黑话。</AlertDialogDescription>
+              <AlertDialogTitle>「{duplicate?.conflict.content}」已有释义</AlertDialogTitle>
+              <AlertDialogDescription>合并会把新释义另起一段，追加到各作用域的已有释义后。</AlertDialogDescription>
             </AlertDialogHeader>
             {duplicate && (
               <div className="max-h-[45vh] space-y-3 overflow-y-auto text-sm">
                 {duplicate.conflict.records.map((record) => (
                   <div key={record.id}>
-                    <p className="text-muted-foreground">已有释义 · {record.is_global ? '全局' :
+                    <p className="text-muted-foreground">已有释义 · {record.is_global ? '通用词库' : record.group_name ??
                       record.session_ids.map((id) => targets.find((target) => target.value === id)?.label ?? id).join('、')}</p>
                     <p className="whitespace-pre-wrap break-words">{record.meaning || '暂无释义'}</p>
                   </div>
@@ -649,8 +668,9 @@ export function LearningCreateDialog({
               </div>
             )}
             <AlertDialogFooter>
-              <AlertDialogCancel onClick={() => resolveConflict(false, applyToAll)}>跳过此词</AlertDialogCancel>
-              <AlertDialogAction onClick={() => resolveConflict(true, applyToAll)}>确认替换</AlertDialogAction>
+              <AlertDialogCancel onClick={() => resolveConflict('skip', applyToAll)}>跳过此词</AlertDialogCancel>
+              <AlertDialogAction onClick={() => resolveConflict('merge', applyToAll)}>合并释义</AlertDialogAction>
+              <AlertDialogAction onClick={() => resolveConflict('replace', applyToAll)}>确认替换</AlertDialogAction>
             </AlertDialogFooter>
           </AlertDialogContent>
         </AlertDialog>

@@ -1,7 +1,7 @@
 import { Settings } from 'lucide-react'
-import { useMutation, useQuery } from '@tanstack/react-query'
+import { useMutation, useQuery, useQueryClient } from '@tanstack/react-query'
 import { Check, ChevronDown, Trash2, Upload, X } from 'lucide-react'
-import { useImperativeHandle, useState } from 'react'
+import { useEffect, useImperativeHandle, useRef, useState } from 'react'
 import type { Ref } from 'react'
 
 import { ChatScopeFilterPanel } from '@/components/chat-scope-filter-panel'
@@ -41,8 +41,10 @@ import {
   exportJargons,
   getJargonChatList,
   getJargonDetail,
+  getJargonVersions,
   getJargonGroups,
   getJargonList,
+  getJargonOverview,
   getJargonStats,
 } from '@/lib/jargon-api'
 
@@ -59,10 +61,10 @@ import type { StatsData } from './types'
 import type { LearningBrowserTabs, LearningCreateHandle } from '../learning'
 
 interface JargonFilters {
-  sortBy: 'time' | 'time_asc' | 'created' | 'created_asc'
+  sortBy: 'time' | 'time_asc' | 'created' | 'created_asc' | 'count'
   summary: JargonSummaryTab
   chatId: string
-  browseMode: 'chat' | 'group' | 'all'
+  browseMode: 'chat' | 'group'
   groupIndex: string | null
 }
 
@@ -79,6 +81,8 @@ export function JargonManagementPage({
   browserTabs?: LearningBrowserTabs
   createHandle?: Ref<LearningCreateHandle>
 }) {
+  const queryClient = useQueryClient()
+  const detailRequest = useRef(0)
   const [selectedJargon, setSelectedJargon] = useState<Jargon | null>(null)
   const [isDetailDialogOpen, setIsDetailDialogOpen] = useState(false)
   const [isCreateDialogOpen, setIsCreateDialogOpen] = useState(false)
@@ -113,7 +117,7 @@ export function JargonManagementPage({
     initialFilters: {
       summary: 'confirmed_jargon',
       chatId: 'all',
-      browseMode: 'all',
+      browseMode: 'chat',
       groupIndex: null,
       sortBy: 'time',
     },
@@ -128,15 +132,7 @@ export function JargonManagementPage({
       ].includes(filters.summary)
         ? (filters.summary as JargonStatusFilter)
         : undefined
-      const group =
-        filters.browseMode === 'group'
-          ? groups.find((item) => item.id === filters.groupIndex)
-          : undefined
-      // 未选组或组内尚无真实聊天流时返回空，避免误显示全部词条。
-      if (
-        filters.browseMode === 'group' &&
-        (!group || (!group.is_global && group.session_ids.length === 0))
-      ) {
+      if (filters.browseMode === 'group' && !filters.groupIndex) {
         return { items: [], total: 0 }
       }
       const result = await getJargonList({
@@ -149,7 +145,9 @@ export function JargonManagementPage({
           filters.chatId !== 'all'
             ? filters.chatId
             : undefined,
-        session_ids: group && !group.is_global ? group.session_ids : undefined,
+        grouped: true,
+        compact: true,
+        group_id: filters.browseMode === 'group' ? filters.groupIndex ?? undefined : undefined,
         jargon_status: summaryStatus,
         sort_by: filters.sortBy,
         is_complete: filters.summary === 'complete_count' ? true : undefined,
@@ -158,7 +156,20 @@ export function JargonManagementPage({
       return { items: result.data, total: result.total }
     },
   })
+  const historySearch = useMutation({
+    mutationFn: (content: string) => getJargonVersions(content),
+    onSuccess: rows => {
+      const saved = rows.find(row => row.archived)
+      if (!saved) { toast({ title: '未找到同名历史版本' }); return }
+      setSelectedJargon(saved)
+      setIsDetailDialogOpen(true)
+    },
+    meta: { errorTitle: '读取历史版本失败' },
+  })
   const jargons = list.items
+  const detailIndex = selectedJargon
+    ? jargons.findIndex((row) => row.id === selectedJargon.id || row.scope_ids?.includes(selectedJargon.id) || row.content === selectedJargon.content)
+    : -1
   const total = list.total
   const loading = list.isPending || (list.isFetching && jargons.length === 0)
   const page = list.page
@@ -166,7 +177,19 @@ export function JargonManagementPage({
   const summaryFilter = list.filters.summary
   const filterChatId = list.filters.chatId
   const { browseMode, groupIndex } = list.filters
+  const firstGroupId = groups[0]?.id ?? null
+  const selectedGroupExists = groups.some((group) => group.id === groupIndex)
+  const setFilter = list.setFilter
+  useEffect(() => {
+    if (browseMode === 'group' && groupsQuery.isSuccess && !selectedGroupExists && groupIndex !== firstGroupId) {
+      setFilter('groupIndex', firstGroupId)
+    }
+  }, [browseMode, groupsQuery.isSuccess, selectedGroupExists, groupIndex, firstGroupId, setFilter])
+
   const selectedIds = list.selectedIds
+  const scopeSelections = useRef(new Map<number, number[]>())
+  const selectedVersions = new Set([...selectedIds].flatMap(id => scopeSelections.current.get(id) ?? [id]))
+  const rememberScopes = (row: Jargon) => scopeSelections.current.set(row.id, row.scope_ids ?? [row.id])
 
   // 删除末页最后一项后同步实际查询页，避免分页显示与返回的数据错位。
   if (!list.isPending && !list.isFetching && !list.isError && list.page > list.totalPages) {
@@ -174,9 +197,12 @@ export function JargonManagementPage({
   }
 
   // 统计数据：失败时保持占位数值，不打断页面
+  const [summaryOpen, setSummaryOpen] = useState(false)
+  const overview = useQuery({ queryKey: ['jargon', 'overview'], queryFn: getJargonOverview })
   const statsQuery = useQuery({
     queryKey: ['jargon', 'stats'],
-    queryFn: getJargonStats,
+    queryFn: () => getJargonStats(false),
+    enabled: summaryOpen,
   })
   const stats: StatsData = statsQuery.data?.data ?? {
     total: 0,
@@ -193,14 +219,8 @@ export function JargonManagementPage({
   const chatListQuery = useQuery({
     queryKey: ['jargon', 'chats'],
     queryFn: async () => {
-      const [sidebarResponse, formResponse] = await Promise.all([
-        getJargonChatList(),
-        getJargonChatList({ include_empty: true }),
-      ])
-      return {
-        sidebar: sidebarResponse.data,
-        form: formResponse.data,
-      }
+      const { data } = await getJargonChatList({ include_empty: true })
+      return { sidebar: data.filter(chat => chat.jargon_count), form: data }
     },
   })
   const chatList: JargonChatInfo[] = chatListQuery.data?.sidebar ?? []
@@ -209,13 +229,15 @@ export function JargonManagementPage({
   // 任何写操作成功后，按 'jargon' 前缀整体失效（列表 + 统计 + 聊天列表）
   const invalidateJargon = () => list.invalidate()
 
-  // 列表行先即时打开详情弹窗，详情字段再按需补齐。
+  // 展开的作用域行直接打开对应释义。
   const handleViewDetail = async (jargon: Jargon) => {
+    detailRequest.current++
     setSelectedJargon(jargon)
     setIsDetailDialogOpen(true)
+    if (jargon.scope_kind) return
     try {
       const response = await getJargonDetail(jargon.id)
-      setSelectedJargon((current) => (current?.id === jargon.id ? response.data : current))
+      setSelectedJargon((current) => (current?.id === jargon.id ? { ...current, ...response.data } : current))
     } catch (error) {
       toast({
         title: '加载详情失败',
@@ -225,14 +247,25 @@ export function JargonManagementPage({
     }
   }
 
-  // 编辑黑话
-  const handleEdit = (jargon: Jargon) => {
-    handleViewDetail(jargon)
+  const openTerm = async (row: Jargon) => {
+    if (!row.scope_kind || row.is_global) return handleViewDetail(row)
+    const request = ++detailRequest.current
+    try {
+      const versions = await queryClient.fetchQuery({
+        queryKey: ['jargon', 'versions', row.content, false],
+        queryFn: () => getJargonVersions(row.content, false),
+      })
+      if (request === detailRequest.current) {
+        await handleViewDetail(versions.find(version => version.scope_kind === 'global') ?? row)
+      }
+    } catch (error) {
+      if (request === detailRequest.current) toast({ title: '加载详情失败', description: String(error), variant: 'destructive' })
+    }
   }
 
   // 删除黑话（失败由全局 mutation 错误 toast 呈现）
   const deleteMutation = useMutation({
-    mutationFn: (jargon: Jargon) => deleteJargon(jargon.id),
+    mutationFn: (jargon: Jargon) => jargon.scope_ids?.length ? batchDeleteJargons(jargon.scope_ids) : deleteJargon(jargon.id),
     meta: { errorTitle: '删除失败' },
     onSuccess: (_data, jargon) => {
       toast({
@@ -267,7 +300,7 @@ export function JargonManagementPage({
 
   // 批量删除
   const handleBatchDelete = () => {
-    batchDeleteMutation.mutate(Array.from(selectedIds))
+    batchDeleteMutation.mutate(Array.from(selectedVersions))
   }
 
   // 批量设置为黑话（失败由全局 mutation 错误 toast 呈现）
@@ -287,25 +320,26 @@ export function JargonManagementPage({
 
   // 批量设置为黑话
   const handleBatchSetJargon = (isJargon: boolean) => {
-    batchSetJargonMutation.mutate({ ids: Array.from(selectedIds), isJargon })
+    batchSetJargonMutation.mutate({ ids: Array.from(selectedVersions), isJargon })
   }
 
   const handleChatChange = (chatId: string) => {
     list.updateFilters((filters) => ({
       ...filters,
-      summary: filters.summary === 'global_count' ? 'confirmed_jargon' : filters.summary,
+      summary: chatId !== 'all' && filters.summary === 'global_count' ? 'confirmed_jargon' : filters.summary,
       chatId,
-      browseMode: chatId === 'all' ? 'all' : 'chat',
+      browseMode: 'chat',
       groupIndex: null,
     }))
   }
 
   const handleBrowseModeChange = (mode: JargonFilters['browseMode']) => {
+    if (mode === browseMode) return
     list.updateFilters((filters) => ({
       ...filters,
       browseMode: mode,
       chatId: mode === 'chat' ? filters.chatId : 'all',
-      groupIndex: mode === 'group' ? (groups[0]?.id ?? null) : null,
+      groupIndex: mode === 'group' ? firstGroupId : null,
       summary: mode === 'group' && filters.summary === 'global_count' ? 'confirmed_jargon' : filters.summary,
     }))
   }
@@ -316,7 +350,7 @@ export function JargonManagementPage({
       ...filters,
       summary,
       chatId: summary === 'global_count' ? 'all' : filters.chatId,
-      browseMode: summary === 'global_count' ? 'all' : filters.browseMode,
+      browseMode: summary === 'global_count' ? 'chat' : filters.browseMode,
       groupIndex: summary === 'global_count' ? null : filters.groupIndex,
     }))
   }
@@ -341,13 +375,13 @@ export function JargonManagementPage({
     },
     {
       value: 'manual_jargon',
-      label: '已锁定',
+      label: '已暂停更新',
       count: stats.manual_jargon,
       className: 'text-amber-600',
     },
     {
       value: 'global_count',
-      label: '全局黑话',
+      label: '通用词条',
       count: stats.global_count,
       className: 'text-blue-600',
     },
@@ -366,6 +400,8 @@ export function JargonManagementPage({
   ]
   const activeSummary =
     summaryOptions.find((option) => option.value === summaryFilter) ?? summaryOptions[0]
+  const activeCount = statsQuery.data ? activeSummary.count
+    : summaryFilter === 'confirmed_jargon' || summaryFilter === 'complete_count' ? overview.data?.[summaryFilter] : undefined
 
   const toolbar = (
     <DataToolbar
@@ -386,9 +422,10 @@ export function JargonManagementPage({
               <SelectItem value="time_asc">最早活跃</SelectItem>
               <SelectItem value="created">最新创建</SelectItem>
               <SelectItem value="created_asc">最早创建</SelectItem>
+              <SelectItem value="count">遇见最多</SelectItem>
             </SelectContent>
           </Select>
-          <DropdownMenu>
+          <DropdownMenu onOpenChange={setSummaryOpen}>
             <DropdownMenuTrigger asChild>
               <Button
                 variant="outline"
@@ -397,7 +434,7 @@ export function JargonManagementPage({
               >
                 <span>{activeSummary.label}</span>
                 <span className={cn('tabular-nums', activeSummary.className)}>
-                  {activeSummary.count.toLocaleString()}
+                  {activeCount?.toLocaleString() ?? '…'}
                 </span>
                 <ChevronDown className="h-4 w-4" />
               </Button>
@@ -412,7 +449,7 @@ export function JargonManagementPage({
                   >
                     <span>{option.label}</span>
                     <span className={cn('ml-auto pl-4 tabular-nums', option.className)}>
-                      {option.count.toLocaleString()}
+                      {statsQuery.data ? option.count.toLocaleString() : '…'}
                     </span>
                   </DropdownMenuRadioItem>
                 ))}
@@ -460,8 +497,8 @@ export function JargonManagementPage({
   const summary = (
     <MetricStrip
       items={[
-        { label: '黑话', value: stats.confirmed_jargon.toLocaleString(), positive: true },
-        { label: '推断完成', value: stats.complete_count.toLocaleString() },
+        { label: '黑话', value: overview.data?.confirmed_jargon.toLocaleString() ?? '…', positive: true },
+        { label: '推断完成', value: overview.data?.complete_count.toLocaleString() ?? '…' },
       ]}
     />
   )
@@ -471,7 +508,7 @@ export function JargonManagementPage({
       {isExportDialogOpen && (
         <LearningExportDialog
           kind="jargon"
-          selectedIds={selectedIds}
+          selectedIds={selectedVersions}
           chats={chatList.map((chat) => ({
             id: chat.session_id,
             name: formatChatDisplayName(chat.chat_name, chat.account_id),
@@ -484,7 +521,7 @@ export function JargonManagementPage({
             isGlobal: group.is_global,
             details: [
               group.name,
-              group.is_global ? '全局共享组：包含全部聊天' : `包含 ${group.members.length} 个聊天`,
+              group.is_global ? '所有聊天在此组共同学习黑话' : `包含 ${group.members.length} 个聊天`,
               ...group.members.map((member) =>
                 [
                   formatChatDisplayName(member.chat_name, member.account_id),
@@ -502,8 +539,8 @@ export function JargonManagementPage({
             void groupsQuery.refetch()
           }}
           onBack={() => setIsExportDialogOpen(false)}
-          onExport={({ ids, chatIds, includeChatInfo }) =>
-            exportJargons({ ids, session_ids: chatIds, include_chat_info: includeChatInfo })
+          onExport={({ ids, chatIds, groupId, includeChatInfo }) =>
+            exportJargons({ ids, session_ids: groupId ? undefined : chatIds, group_id: groupId, include_chat_info: includeChatInfo })
           }
         />
       )}
@@ -516,12 +553,12 @@ export function JargonManagementPage({
               density="compact"
               title="聊天范围"
               titleActions={
-                browseMode !== 'chat' && (
+                browseMode === 'group' && (
                   <Button asChild variant="ghost" size="icon-xs">
                     <a
-                      href={`/chat-management?kind=jargon&group=${browseMode === 'all' ? 'all' : (groupIndex ?? 'all')}`}
-                      title="管理当前相通组"
-                      aria-label="管理当前相通组"
+                      href={groupIndex ? `/chat-management?kind=jargon&group=${encodeURIComponent(groupIndex)}` : '/chat-management?kind=jargon'}
+                      title="管理相通组"
+                      aria-label="管理相通组"
                     >
                       <Settings className="h-3 w-3" />
                     </a>
@@ -529,53 +566,44 @@ export function JargonManagementPage({
                 )
               }
               titleMeta={
-                browseMode === 'chat' ? `${chatList.length} 个` : `${groups.length + 1} 组`
+                browseMode === 'chat' ? `${chatList.length} 个` : `${groups.length} 组`
               }
               modes={[
                 { label: '聊天', value: 'chat' },
                 { label: '相通', value: 'group' },
               ]}
-              activeMode={browseMode === 'chat' ? 'chat' : 'group'}
-              onModeChange={(mode) => handleBrowseModeChange(mode === 'group' ? 'all' : 'chat')}
+              activeMode={browseMode}
+              onModeChange={handleBrowseModeChange}
               items={
                 browseMode === 'chat'
-                  ? chatList.map((chat) => ({
-                      id: chat.session_id,
-                      label: chat.chat_name,
-                      meta: chat.jargon_count?.toLocaleString(),
-                      description: formatChatTargetLabel(chat),
-                      descriptionTitle: formatChatTargetLabel(chat),
-                      title: formatChatDisplayName(chat.chat_name, chat.account_id),
-                    }))
-                  : [
-                      {
-                        id: 'all',
-                        label: '全部',
-                        description: '包含全部聊天',
-                        title: '全部聊天的相通组',
-                        meta: statsQuery.data?.data.total.toLocaleString(),
-                      },
-                      ...groups.map((group) => {
-                        const memberNames = group.members
-                          .map((chat) => formatChatDisplayName(chat.chat_name, chat.account_id))
-                          .join('、')
-                        return {
-                          id: group.id,
-                          meta: group.jargon_count.toLocaleString(),
-                          label: `${group.name}${group.is_global ? '（全局）' : ''}`,
-                          description: memberNames || '暂无已解析聊天',
-                          descriptionTitle: memberNames,
-                          title: memberNames,
-                        }
-                      }),
+                  ? [
+                      { id: 'all', label: '全部', title: '全部聊天', meta: overview.data?.total.toLocaleString() },
+                      ...chatList.map((chat) => ({
+                        id: chat.session_id,
+                        label: chat.chat_name,
+                        meta: chat.jargon_count?.toLocaleString(),
+                        description: formatChatTargetLabel(chat),
+                        descriptionTitle: formatChatTargetLabel(chat),
+                        title: formatChatDisplayName(chat.chat_name, chat.account_id),
+                      })),
                     ]
+                  : groups.map((group) => {
+                      const memberNames = group.members
+                        .map((chat) => formatChatDisplayName(chat.chat_name, chat.account_id))
+                        .join('、')
+                      return {
+                        id: group.id,
+                        meta: group.jargon_count.toLocaleString(),
+                        label: `${group.name}${group.is_global ? '（所有聊天）' : ''}`,
+                        description: memberNames || '暂无已解析聊天',
+                        descriptionTitle: memberNames,
+                        title: memberNames,
+                      }
+                    })
               }
-              selectedItemId={
-                browseMode === 'chat' ? filterChatId : browseMode === 'all' ? 'all' : groupIndex
-              }
+              selectedItemId={browseMode === 'chat' ? filterChatId : groupIndex}
               onItemSelect={(id) => {
                 if (browseMode === 'chat') handleChatChange(String(id))
-                else if (id === 'all') handleBrowseModeChange('all')
                 else {
                   list.updateFilters((filters) => ({
                     ...filters,
@@ -587,21 +615,14 @@ export function JargonManagementPage({
               }}
               emptyContent={
                 <div className="text-muted-foreground px-2 py-6 text-center text-sm">
-                  {browseMode === 'all'
-                    ? '当前显示全部黑话'
-                    : browseMode === 'group'
-                      ? groupsQuery.isError
-                        ? '相通组加载失败'
-                        : groupsQuery.isPending
-                          ? '正在加载相通组...'
-                          : '暂无相通组'
-                      : chatListQuery.isError
-                        ? '聊天列表加载失败'
-                        : chatListQuery.isPending
-                          ? '正在加载聊天...'
-                          : '暂无聊天'}
+                  {groupsQuery.isError ? '相通组加载失败' : groupsQuery.isPending ? '正在加载相通组...' : '暂无相通组'}
                 </div>
               }
+              footer={browseMode === 'chat' && (chatListQuery.isPending || chatListQuery.isError) && (
+                <span className="text-muted-foreground text-xs">
+                  {chatListQuery.isError ? '聊天列表加载失败' : '正在加载聊天...'}
+                </span>
+              )}
               collapsed={scopePanelCollapsed}
               onCollapsedChange={setScopePanelCollapsed}
               collapseLabel="折叠范围列表"
@@ -624,20 +645,22 @@ export function JargonManagementPage({
             <JargonList
               className="min-h-0"
               toolbar={toolbar}
+              emptyAction={list.searchInput.trim() && <Button size="xs" variant="outline"
+                disabled={historySearch.isPending} onClick={() => historySearch.mutate(list.searchInput.trim())}>
+                查看同名历史版本
+              </Button>}
               jargons={jargons}
               loading={loading}
               total={total}
               page={page}
               pageSize={pageSize}
               selectedIds={selectedIds}
-              hideChatColumn={
-                summaryFilter === 'global_count' ||
-                (browseMode === 'chat' && filterChatId !== 'all')
-              }
-              onEdit={handleEdit}
+              hideChatColumn={summaryFilter === 'global_count'}
+              onEdit={handleViewDetail}
+              onOpenTerm={openTerm}
               onDelete={(jargon) => setDeleteConfirmJargon(jargon)}
-              onToggleSelect={list.toggle}
-              onToggleSelectAll={list.toggleAll}
+              onToggleSelect={id => { const row = jargons.find(item => item.id === id); if (row) rememberScopes(row); list.toggle(id) }}
+              onToggleSelectAll={() => { jargons.forEach(rememberScopes); list.toggleAll() }}
               onPageChange={list.goToPage}
               onPageSizeChange={list.setPageSize}
             />
@@ -649,8 +672,17 @@ export function JargonManagementPage({
       <JargonDetailDialog
         jargon={selectedJargon}
         open={isDetailDialogOpen}
-        onOpenChange={setIsDetailDialogOpen}
+        onOpenChange={(open) => { detailRequest.current++; setIsDetailDialogOpen(open) }}
         chatList={formChatList}
+        groups={groups}
+        pageNavigation={detailIndex >= 0 ? {
+          index: detailIndex, count: jargons.length,
+          go: (offset) => { const row = jargons[detailIndex + offset]; if (row) void openTerm(row) },
+        } : undefined}
+        onScopeChange={(value) => {
+          setSelectedJargon(value)
+          if (!value) setIsDetailDialogOpen(false)
+        }}
         onChanged={(jargon) => {
           setSelectedJargon(jargon)
           invalidateJargon()
@@ -666,26 +698,17 @@ export function JargonManagementPage({
         initialMode="auto"
         onManual={() => setIsCreateDialogOpen(true)}
         onSuccess={(isGlobal) => {
-          if (isGlobal)
-            list.updateFilters((filters) => ({
-              ...filters,
-              browseMode: 'all',
-              summary: 'global_count',
-            }))
+          if (isGlobal) handleSummaryChange('global_count')
           invalidateJargon()
         }}
       />
       <JargonCreateDialog
+        groups={groups}
         open={isCreateDialogOpen}
         onOpenChange={setIsCreateDialogOpen}
         chatList={formChatList}
         onSuccess={(isGlobal) => {
-          if (isGlobal)
-            list.updateFilters((filters) => ({
-              ...filters,
-              browseMode: 'all',
-              summary: 'global_count',
-            }))
+          if (isGlobal) handleSummaryChange('global_count')
           invalidateJargon()
           setIsCreateDialogOpen(false)
         }}
@@ -704,7 +727,7 @@ export function JargonManagementPage({
         open={isBatchDeleteDialogOpen}
         onOpenChange={setIsBatchDeleteDialogOpen}
         onConfirm={handleBatchDelete}
-        count={selectedIds.size}
+        count={selectedVersions.size}
       />
     </div>
   )

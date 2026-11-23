@@ -1,4 +1,6 @@
-import { cleanup, render, screen, waitFor } from '@testing-library/react'
+import { useState } from 'react'
+import { QueryClient, QueryClientProvider } from '@tanstack/react-query'
+import { cleanup, render, screen, waitFor, within } from '@testing-library/react'
 import userEvent from '@testing-library/user-event'
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest'
 
@@ -9,6 +11,7 @@ import {
   JargonDetailDialog,
   JargonExportDialog,
 } from '../JargonDialogs'
+import { JargonList } from '../JargonList'
 import * as jargonApi from '@/lib/jargon-api'
 
 import type { Jargon, JargonChatInfo } from '@/types/jargon'
@@ -39,6 +42,8 @@ vi.mock('@/lib/jargon-api', () => ({
   createJargon: vi.fn(),
   importJargons: vi.fn(),
   updateJargon: vi.fn(),
+  getJargonVersions: vi.fn(),
+  getJargonEvidence: vi.fn(),
 }))
 
 interface MultiSelectStubProps {
@@ -86,6 +91,7 @@ function makeJargon(id: number, overrides: Partial<Jargon> = {}): Jargon {
     is_jargon: true,
     is_legacy_empty_meaning: false,
     is_complete: false,
+    allow_update: true,
     created_by: 'AI',
     created_timestamp: '2026-01-01T00:00:00Z',
     updated_timestamp: '2026-01-02T00:00:00Z',
@@ -111,34 +117,22 @@ describe('JargonDetailDialog', () => {
 
   it('jargon 为 null 时不渲染对话框', () => {
     renderDetail(null)
-    expect(screen.queryByText('黑话详情')).not.toBeInTheDocument()
+    expect(screen.queryByRole('dialog')).not.toBeInTheDocument()
   })
 
   it('渲染详情：表单初值与状态徽章', () => {
     renderDetail(
       makeJargon(7, { is_global: true, is_complete: true, is_legacy_empty_meaning: true })
     )
-    expect(screen.getByText('黑话详情')).toBeInTheDocument()
-    expect(screen.getByLabelText('内容')).toHaveValue('黑话7')
-    expect(screen.getByLabelText('含义')).toHaveValue('含义7')
-    // 状态徽章区：黑话 / 旧数据 / AI / 全局 / 推断完成
-    // （「黑话」同时出现在徽章与黑话状态 Select 的隐藏原生 option 中）
-    expect(screen.getAllByText('黑话').length).toBeGreaterThanOrEqual(1)
+    expect(screen.getByRole('dialog', { name: '黑话7' })).toBeInTheDocument()
     expect(screen.getByText('旧数据')).toBeInTheDocument()
-    expect(screen.getByText('AI')).toBeInTheDocument()
-    expect(screen.getByText('全局')).toBeInTheDocument()
     expect(screen.getByText('推断完成')).toBeInTheDocument()
-  })
-
-  it('内容清空后保存触发验证失败，不调用更新接口', async () => {
-    const user = userEvent.setup()
-    renderDetail(makeJargon(1))
-    await user.clear(screen.getByLabelText('内容'))
-    await user.click(screen.getByRole('button', { name: '保存' }))
-    expect(toastMock).toHaveBeenCalledWith(
-      expect.objectContaining({ title: '验证失败', description: '黑话内容不能为空' })
-    )
-    expect(jargonApi.updateJargon).not.toHaveBeenCalled()
+    expect(screen.queryByRole('button', { name: '编辑' })).not.toBeInTheDocument()
+    expect(screen.queryByRole('textbox', { name: '内容' })).not.toBeInTheDocument()
+    expect(screen.getByLabelText('含义')).toHaveValue('含义7')
+    expect(screen.getByRole('combobox', { name: '黑话状态' })).toHaveTextContent('黑话')
+    expect(screen.getByRole('switch', { name: '通用词条' })).toBeChecked()
+    expect(screen.getByRole('button', { name: '保存' })).toBeDisabled()
   })
 
   it('清空聊天后保存提示至少选择一个聊天', async () => {
@@ -154,23 +148,24 @@ describe('JargonDetailDialog', () => {
 
   it('保存成功：以编辑后的表单调用 updateJargon，onChanged 收到返回数据', async () => {
     const user = userEvent.setup()
-    const updated = makeJargon(1, { content: '新内容' })
+    const updated = makeJargon(1, { meaning: '新含义' })
     vi.mocked(jargonApi.updateJargon).mockResolvedValue({
       success: true,
       message: 'ok',
       data: updated,
     })
     const { onChanged } = renderDetail(makeJargon(1))
-    const input = screen.getByLabelText('内容')
+    const input = screen.getByLabelText('含义')
     await user.clear(input)
-    await user.type(input, '新内容')
+    await user.type(input, '新含义')
     await user.click(screen.getByRole('button', { name: '保存' }))
     await waitFor(() =>
       expect(jargonApi.updateJargon).toHaveBeenCalledWith(
         1,
-        expect.objectContaining({ content: '新内容', session_ids: ['s1'], is_jargon: true, created_by: 'MANUAL' })
+        expect.objectContaining({ meaning: '新含义', session_ids: ['s1'], is_jargon: true, allow_update: false })
       )
     )
+    expect(vi.mocked(jargonApi.updateJargon).mock.calls[0][1]).not.toHaveProperty('content')
     expect(onChanged).toHaveBeenCalledWith(updated)
     expect(toastMock).toHaveBeenCalledWith(expect.objectContaining({ title: '保存成功' }))
   })
@@ -179,6 +174,7 @@ describe('JargonDetailDialog', () => {
     const user = userEvent.setup()
     vi.mocked(jargonApi.updateJargon).mockRejectedValue(new Error('后端错误'))
     const { onChanged } = renderDetail(makeJargon(1))
+    await user.click(screen.getByRole('checkbox', { name: '允许更新' }))
     await user.click(screen.getByRole('button', { name: '保存' }))
     await waitFor(() =>
       expect(toastMock).toHaveBeenCalledWith(
@@ -188,34 +184,35 @@ describe('JargonDetailDialog', () => {
     expect(onChanged).not.toHaveBeenCalled()
   })
 
-  it('AI 记录有含义时可锁定含义：以 MANUAL + is_jargon 调用更新', async () => {
+  it('可以暂停自动更新', async () => {
     const user = userEvent.setup()
-    const pinned = makeJargon(1, { created_by: 'MANUAL' })
+    const pinned = makeJargon(1, { created_by: 'MANUAL', allow_update: false })
     vi.mocked(jargonApi.updateJargon).mockResolvedValue({
       success: true,
       message: 'ok',
       data: pinned,
     })
     const { onChanged } = renderDetail(makeJargon(1, { meaning: '老含义' }))
-    await user.click(screen.getByRole('checkbox', { name: '锁定含义' }))
+    await user.click(screen.getByRole('checkbox', { name: '允许更新' }))
     expect(jargonApi.updateJargon).not.toHaveBeenCalled()
     await user.click(screen.getByRole('button', { name: '保存' }))
     await waitFor(() =>
       expect(jargonApi.updateJargon).toHaveBeenCalledWith(
         1,
-        expect.objectContaining({ meaning: '老含义', created_by: 'MANUAL', is_jargon: true })
+        expect.objectContaining({ meaning: '老含义', allow_update: false, is_jargon: true })
       )
     )
     expect(onChanged).toHaveBeenCalledWith(pinned)
     expect(toastMock).toHaveBeenCalledWith(expect.objectContaining({ title: '保存成功' }))
   })
 
-  it('AI 记录无含义时锁定含义按钮禁用', () => {
-    renderDetail(makeJargon(1, { meaning: null }))
-    expect(screen.getByRole('checkbox', { name: '锁定含义' })).toBeDisabled()
+  it('积累中的词条默认允许更新', () => {
+    renderDetail(makeJargon(1, { meaning: null, is_jargon: null }))
+    expect(screen.getByRole('combobox', { name: '黑话状态' })).toHaveTextContent('积累中')
+    expect(screen.getByRole('checkbox', { name: '允许更新' })).toBeChecked()
   })
 
-  it('MANUAL 记录显示解锁含义：以 created_by=AI 调用更新', async () => {
+  it('可恢复手动词条的自动更新', async () => {
     const user = userEvent.setup()
     const unpinned = makeJargon(1, { created_by: 'AI' })
     vi.mocked(jargonApi.updateJargon).mockResolvedValue({
@@ -223,16 +220,16 @@ describe('JargonDetailDialog', () => {
       message: 'ok',
       data: unpinned,
     })
-    renderDetail(makeJargon(1, { created_by: 'MANUAL' }))
-    const lock = screen.getByRole('checkbox', { name: '锁定含义' })
-    expect(lock).toBeChecked()
+    renderDetail(makeJargon(1, { created_by: 'MANUAL', allow_update: false }))
+    const lock = screen.getByRole('checkbox', { name: '允许更新' })
+    expect(lock).not.toBeChecked()
     await user.click(lock)
     expect(jargonApi.updateJargon).not.toHaveBeenCalled()
     await user.click(screen.getByRole('button', { name: '保存' }))
     await waitFor(() =>
       expect(jargonApi.updateJargon).toHaveBeenCalledWith(
         1,
-        expect.objectContaining({ created_by: 'AI' })
+        expect.objectContaining({ allow_update: true })
       )
     )
     expect(toastMock).toHaveBeenCalledWith(expect.objectContaining({ title: '保存成功' }))
@@ -246,6 +243,7 @@ describe('JargonDetailDialog', () => {
       data: makeJargon(1),
     })
     renderDetail(makeJargon(1, { session_ids: [] }))
+    await user.click(screen.getByRole('checkbox', { name: '允许更新' }))
     await user.click(screen.getByRole('button', { name: '保存' }))
     await waitFor(() =>
       expect(jargonApi.updateJargon).toHaveBeenCalledWith(
@@ -268,22 +266,24 @@ describe('JargonDetailDialog', () => {
     const meaningInput = screen.getByLabelText('含义')
     await user.clear(meaningInput)
     await user.type(meaningInput, '新含义')
-    const lock = screen.getByRole('checkbox', { name: '锁定含义' })
-    expect(lock).toBeChecked()
+    const lock = screen.getByRole('checkbox', { name: '允许更新' })
+    expect(lock).not.toBeChecked()
     await user.click(lock)
 
-    await user.click(screen.getByRole('combobox'))
+    await user.click(screen.getByRole('combobox', { name: '黑话状态' }))
     await user.click(await screen.findByRole('option', { name: '不是黑话' }))
+    expect(meaningInput).toBeDisabled()
+    expect(lock).toBeEnabled()
     expect(screen.getAllByText('不是黑话').length).toBeGreaterThanOrEqual(1)
 
-    await user.click(screen.getByRole('switch', { name: '全局黑话' }))
+    await user.click(screen.getByRole('switch', { name: '通用词条' }))
     await user.click(screen.getByRole('button', { name: '保存' }))
 
     await waitFor(() =>
       expect(jargonApi.updateJargon).toHaveBeenCalledWith(
         1,
         expect.objectContaining({
-          meaning: '新含义',
+          meaning: undefined,
           is_jargon: false,
           is_global: true,
         })
@@ -299,6 +299,7 @@ describe('JargonDetailDialog', () => {
       message: 'ok',
     } as never)
     const { onChanged } = renderDetail(makeJargon(1))
+    await user.click(screen.getByRole('checkbox', { name: '允许更新' }))
     await user.click(screen.getByRole('button', { name: '保存' }))
     await waitFor(() =>
       expect(toastMock).toHaveBeenCalledWith(expect.objectContaining({ title: '保存成功' }))
@@ -310,6 +311,7 @@ describe('JargonDetailDialog', () => {
     const user = userEvent.setup()
     vi.mocked(jargonApi.updateJargon).mockRejectedValue('boom')
     renderDetail(makeJargon(1))
+    await user.click(screen.getByRole('checkbox', { name: '允许更新' }))
     await user.click(screen.getByRole('button', { name: '保存' }))
     await waitFor(() =>
       expect(toastMock).toHaveBeenCalledWith(
@@ -318,23 +320,27 @@ describe('JargonDetailDialog', () => {
     )
   })
 
-  it('右上角关闭时放弃未保存的锁定修改', async () => {
+  it('右上角关闭时可以继续编辑或放弃修改', async () => {
     const user = userEvent.setup()
     const { onOpenChange } = renderDetail(makeJargon(1))
-    await user.click(screen.getByRole('checkbox', { name: '锁定含义' }))
+    await user.click(screen.getByRole('checkbox', { name: '允许更新' }))
     await user.click(screen.getByRole('button', { name: '关闭' }))
+    expect(onOpenChange).not.toHaveBeenCalled()
+    await user.click(screen.getByRole('button', { name: '继续编辑' }))
+    expect(screen.getByRole('checkbox', { name: '允许更新' })).not.toBeChecked()
+    await user.click(screen.getByRole('button', { name: '关闭' }))
+    await user.click(screen.getByRole('button', { name: '放弃修改' }))
     expect(onOpenChange).toHaveBeenCalledWith(false)
     expect(jargonApi.updateJargon).not.toHaveBeenCalled()
   })
 
-  it('勾选后清空含义，保存时提示填写释义', async () => {
+  it('暂停更新后也可以保存空释义', async () => {
     const user = userEvent.setup()
     renderDetail(makeJargon(1))
-    await user.click(screen.getByRole('checkbox', { name: '锁定含义' }))
+    await user.click(screen.getByRole('checkbox', { name: '允许更新' }))
     await user.clear(screen.getByLabelText('含义'))
     await user.click(screen.getByRole('button', { name: '保存' }))
-    expect(toastMock).toHaveBeenCalledWith(expect.objectContaining({ description: '请先填写要锁定的含义' }))
-    expect(jargonApi.updateJargon).not.toHaveBeenCalled()
+    expect(jargonApi.updateJargon).toHaveBeenCalledWith(1, expect.objectContaining({ allow_update: false, meaning: '' }))
   })
 })
 
@@ -415,7 +421,7 @@ describe('JargonCreateDialog', () => {
     const { onSuccess } = renderCreate()
     await user.type(screen.getByLabelText(/内容/), '新词')
     await user.type(screen.getByLabelText('含义'), '解释')
-    await user.click(screen.getByRole('switch', { name: '全局（所有聊天）' }))
+    await user.click(screen.getByRole('switch', { name: '通用词条' }))
     await user.click(screen.getByRole('button', { name: '创建' }))
     await waitFor(() =>
       expect(jargonApi.createJargon).toHaveBeenCalledWith({
@@ -540,7 +546,7 @@ describe('删除确认对话框', () => {
         onConfirm={onConfirm}
       />
     )
-    expect(screen.getByRole('alertdialog')).toHaveTextContent('确定要删除黑话 "词A" 吗')
+    expect(screen.getByRole('alertdialog')).toHaveTextContent('删除「词A」')
     await user.click(screen.getByRole('button', { name: '删除' }))
     expect(onConfirm).toHaveBeenCalledTimes(1)
   })
@@ -549,8 +555,116 @@ describe('删除确认对话框', () => {
     const user = userEvent.setup()
     const onConfirm = vi.fn()
     render(<BatchDeleteConfirmDialog open onOpenChange={vi.fn()} onConfirm={onConfirm} count={3} />)
-    expect(screen.getByRole('alertdialog')).toHaveTextContent('您即将删除 3 个黑话')
+    expect(screen.getByRole('alertdialog')).toHaveTextContent('3 条释义')
     await user.click(screen.getByRole('button', { name: '确认删除' }))
     expect(onConfirm).toHaveBeenCalledTimes(1)
   })
+})
+
+
+it('在归属详情中按来源查看素材，编辑时保留正在修改的版本', async () => {
+  const user = userEvent.setup()
+  const row = makeJargon(1, { scope_kind: 'chat', scope_id: 's1', scope_name: '测试群' })
+  const other = makeJargon(2, { content: row.content, scope_kind: 'global', scope_name: '通用词库', meaning: '另一种解释' })
+  const switchScope = vi.fn()
+  vi.mocked(jargonApi.getJargonVersions).mockResolvedValue([
+    row, other, makeJargon(3, { content: row.content, scope_name: '归档群', archived: true }),
+  ])
+  vi.mocked(jargonApi.getJargonEvidence).mockResolvedValue([
+    { id: 11, source_name: '测试群', excerpt: '当时的上下文', recorded_at: null },
+    { id: 12, source_name: '旧记录', excerpt: '', evidence: '[[{"platform":"qq","message_id":"1"}]]', recorded_at: null },
+  ])
+  function Detail() {
+    const [selected, setSelected] = useState(row)
+    return <JargonDetailDialog jargon={selected} open onOpenChange={vi.fn()} chatList={chatList}
+      onScopeChange={(next) => { if (next) { switchScope(next); setSelected(next) } }} onChanged={vi.fn()} />
+  }
+  render(<QueryClientProvider client={new QueryClient()}><Detail /></QueryClientProvider>)
+  const index = within(await screen.findByRole('navigation', { name: '作用域索引' }))
+  const globalScope = await index.findByRole('button', { name: '通用词库' })
+  expect(index.getByRole('button', { name: '测试群' })).toHaveAttribute('aria-pressed', 'true')
+  expect(screen.getByRole('textbox', { name: '含义' })).toHaveValue('含义1')
+  await user.click(globalScope)
+  const global = screen.getByRole('article', { name: '通用词库' })
+  expect(within(global).getByRole('textbox', { name: '含义' })).toHaveValue('另一种解释')
+  expect(screen.queryByRole('article', { name: '测试群' })).not.toBeInTheDocument()
+  expect(switchScope).toHaveBeenCalledWith(other)
+  const disclosure = screen.getByText(/其他作用域（1）/)
+  expect(disclosure.closest('details')).not.toHaveAttribute('open')
+  expect(disclosure).toHaveTextContent('1 个释义不同')
+  await user.click(disclosure)
+  expect(screen.queryByText('归档群')).not.toBeInTheDocument()
+  expect(within(screen.getByRole('article', { name: '通用词库' })).getByRole('button', { name: '保存' })).toBeVisible()
+  expect(screen.getByRole('textbox', { name: '含义' })).toHaveValue('另一种解释')
+  await user.click(screen.getByRole('button', { name: '测试群' }))
+  await user.click(within(screen.getByRole('article', { name: '测试群' })).getByRole('button', { name: '线索来源' }))
+  await user.click(await screen.findByText(/测试群 · 历史线索/))
+  expect(screen.getByText('当时的上下文')).toBeVisible()
+  await user.click(screen.getByText('旧记录 · 历史线索'))
+  expect(screen.getByText('这条线索只返回了消息引用，尚未取得聊天原文')).toBeVisible()
+  await user.click(screen.getByRole('tab', { name: '释义' }))
+  await user.type(screen.getByRole('textbox', { name: '含义' }), '更新')
+  await user.click(screen.getByRole('button', { name: '取消' }))
+  await user.click(screen.getByRole('button', { name: '继续编辑' }))
+  expect(screen.getByRole('textbox', { name: '含义' })).toHaveValue('含义1更新')
+  await user.click(screen.getByRole('button', { name: '取消' }))
+  await user.click(screen.getByRole('button', { name: '放弃修改' }))
+  expect(screen.getByRole('textbox', { name: '含义' })).toHaveValue('含义1')
+
+})
+
+it('保存到全部只提交本次改动和所有生效作用域的版本号', async () => {
+  const user = userEvent.setup()
+  const row = makeJargon(1, {scope_kind: 'chat', scope_id: 'A', revision: 2})
+  const other = makeJargon(2, {scope_kind: 'group', scope_id: 'AB', revision: 5, content: row.content})
+  vi.mocked(jargonApi.getJargonVersions).mockResolvedValue([row, other])
+  vi.mocked(jargonApi.updateJargon).mockResolvedValue({success: true, message: 'ok', data: row})
+  render(<QueryClientProvider client={new QueryClient()}>
+    <JargonDetailDialog jargon={row} open onOpenChange={vi.fn()} chatList={chatList} onScopeChange={vi.fn()} onChanged={vi.fn()} />
+  </QueryClientProvider>)
+  await screen.findByRole('button', {name: '保存到全部'})
+  await user.click(screen.getByRole('checkbox', {name: '允许更新'}))
+  await user.click(screen.getByRole('button', {name: '保存到全部'}))
+  expect(jargonApi.updateJargon).toHaveBeenCalledWith(1, {
+    allow_update: false, revision: 2, all_scope_revisions: {1: 2, 2: 5},
+  })
+})
+
+it('按词选择，每个作用域各占一行，共享组的多个聊天共用一行', async () => {
+  const user = userEvent.setup()
+  const first = makeJargon(1, {
+    scope_kind: 'group', scope_id: 'ab', scope_name: '共享组', meaning: '圈内用法',
+    session_ids: ['a', 'b'], chat_names: ['A 群', 'B 群'],
+  })
+  const second = makeJargon(2, { scope_name: '通用词库', meaning: '通用解释' })
+  const third = makeJargon(3, { scope_name: '测试群', meaning: '圈内用法' })
+  vi.mocked(jargonApi.getJargonVersions).mockResolvedValue([third, first, second])
+  const word = { ...first, scope_ids: [1, 2, 3] }
+  const edit = vi.fn()
+  const remove = vi.fn()
+  render(<QueryClientProvider client={new QueryClient()}><JargonList jargons={[word]} loading={false} total={1} page={1} pageSize={20}
+    selectedIds={new Set()} onEdit={edit} onDelete={remove} onToggleSelect={vi.fn()}
+    onToggleSelectAll={vi.fn()} onPageChange={vi.fn()} /></QueryClientProvider>)
+  const table = within(screen.getByRole('table', { name: '黑话列表' }))
+  const toggle = table.getByRole('button', { name: /展开.*3 个作用域/ })
+  expect(toggle).toHaveAttribute('aria-expanded', 'false')
+  expect(table.getAllByRole('row')).toHaveLength(2)
+  expect(table.queryByText('通用解释')).toBeNull()
+  await user.click(toggle)
+  await table.findByText('通用解释')
+  expect(edit).not.toHaveBeenCalled()
+  expect(toggle).toHaveAttribute('aria-expanded', 'true')
+  expect(table.getAllByRole('row')).toHaveLength(4) // 表头和三个作用域
+  expect(table.getAllByText('圈内用法')).toHaveLength(2)
+  expect(table.getByRole('button', { name: '查看共享组释义' }).closest('tr')).toHaveTextContent('圈内用法')
+  expect(table.getByRole('button', { name: '查看测试群释义' }).closest('tr')).toHaveTextContent('圈内用法')
+  expect(table.getAllByRole('checkbox', { name: /选择黑话/ })).toHaveLength(1)
+  await user.click(table.getByText('通用解释'))
+  expect(edit).toHaveBeenLastCalledWith(second)
+  await user.click(table.getByRole('button', { name: '查看测试群释义' }))
+  expect(edit).toHaveBeenLastCalledWith(third)
+  await user.click(table.getByRole('button', { name: '删除黑话' }))
+  expect(remove).toHaveBeenCalledWith(word)
+  await user.click(toggle)
+  expect(table.getAllByRole('row')).toHaveLength(2)
 })

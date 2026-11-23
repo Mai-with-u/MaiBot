@@ -32,3 +32,11 @@
 :root [data-table-density='compact'] :is(th, td) > [role='checkbox'] {
   transform: none;
 }
+
+/* 合并的词条单元格用于展开，右侧每行单独打开该作用域的释义。 */
+@media (hover: hover) {
+  [data-jargon-row]:has(> [data-term-cell]:hover):not(:has([role='checkbox']:hover)) > [data-term-cell],
+  [data-jargon-row]:has(> td:not([data-term-cell]):hover):not(:has([role='checkbox']:hover, [data-jargon-delete]:hover)) > td:not([data-term-cell], [data-shared-actions]) {
+    background-color: hsl(var(--muted) / 65%);
+  }
+}

@@ -152,6 +152,14 @@
 :root[data-dashboard-style='millennium'] [data-dashboard-separator='true'][data-variant='groove'][data-orientation='horizontal'] { box-shadow: inset 0 -2px var(--mil-hi); }
 :root[data-dashboard-style='millennium'] [data-dashboard-separator='true'][data-variant='groove'][data-orientation='vertical'] { box-shadow: inset -2px 0 var(--mil-hi); }
 
+:root[data-dashboard-style='millennium'] [data-dashboard-dialog-content='true'][data-jargon-detail='true'] {
+  border-width: 0;
+}
+:root[data-dashboard-style='millennium'] [data-jargon-detail='true'] [data-variant='groove'][data-orientation='horizontal'] {
+  background: linear-gradient(to bottom, var(--mil-lo) 50%, var(--mil-hi) 50%);
+  box-shadow: none;
+}
+
 [data-dashboard-progress-indicator='true'][data-state='indeterminate'] {
   width: 35%;
   animation: dashboard-progress-pending 1.4s ease-in-out infinite alternate;

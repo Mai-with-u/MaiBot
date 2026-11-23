@@ -6,7 +6,6 @@ from typing import Sequence
 
 from sqlmodel import col, select
 
-import json
 import re
 import threading
 import time
@@ -14,8 +13,11 @@ import time
 from src.common.data_models.message_component_data_model import TextComponent
 from src.common.database.database import get_db_session
 from src.common.database.database_model import HighFrequencyTerm, Jargon
+from src.common.database.jargon_snapshots import read_jargons
+from src.common.database.jargon_scope_transfers import stored_jargon_members
 from src.common.logger import get_logger
 from src.common.utils.utils_config import JargonConfigUtils
+from src.services.jargon_scope_service import effective_scope_ids
 from src.chat.utils.utils import is_bot_self
 from src.maisaka.context.messages import LLMContextMessage, ReferenceMessage, ReferenceMessageType, SessionBackedMessage
 
@@ -34,8 +36,6 @@ class _JargonCandidate:
     content: str
     meaning: str
     count: int
-    is_global: bool
-    session_id_dict: str
 
 
 @dataclass(slots=True)
@@ -185,15 +185,17 @@ def match_jargons_for_context(
 
 
 def _load_scoped_jargon_candidates(session_id: str) -> list[_JargonCandidate]:
-    related_session_ids, _ = JargonConfigUtils.resolve_jargon_group_scope(session_id)
     candidates: list[_JargonCandidate] = []
 
     with get_db_session(auto_commit=False) as session:
+        groups = [group for group, _ in stored_jargon_members(session.connection(), session_id)]
+        version = Jargon if groups else read_jargons(chats=[session_id])
         records = session.exec(
-            select(Jargon)
-            .where(col(Jargon.is_jargon).is_(True))
-            .where(col(Jargon.meaning) != "")
-            .order_by(col(Jargon.count).desc(), col(Jargon.id).desc())
+            select(version.content, version.meaning, version.count)
+            .where(col(version.id).in_(effective_scope_ids(session_id, groups)))
+            .where(col(version.is_jargon).is_(True))
+            .where(col(version.meaning) != "")
+            .order_by(col(version.count).desc(), col(version.id).desc())
         ).all()
 
     for record in records:
@@ -201,15 +203,11 @@ def _load_scoped_jargon_candidates(session_id: str) -> list[_JargonCandidate]:
         meaning = str(record.meaning or "").strip()
         if not content or not meaning:
             continue
-        if not record.is_global and not _jargon_in_scope(str(record.session_id_dict or "{}"), related_session_ids):
-            continue
         candidates.append(
             _JargonCandidate(
                 content=content,
                 meaning=meaning,
                 count=int(record.count or 0),
-                is_global=bool(record.is_global),
-                session_id_dict=str(record.session_id_dict or "{}"),
             )
         )
 
@@ -284,17 +282,6 @@ def _extract_jargon_reference_content_from_line(line: str) -> str:
     normalized_line = re.sub(r"^\s*\d+\.\s*", "", str(line or "").strip(), count=1)
     match = _JARGON_REFERENCE_ITEM_RE.match(normalized_line)
     return match.group("content").strip() if match else ""
-
-
-def _jargon_in_scope(session_id_dict: str, related_session_ids: set[str]) -> bool:
-    try:
-        parsed_session_counts = json.loads(session_id_dict) if session_id_dict else {}
-    except (json.JSONDecodeError, TypeError) as exc:
-        logger.warning(f"解析黑话 session_id_dict 失败，已跳过该条黑话: {exc}")
-        return False
-    if not isinstance(parsed_session_counts, dict):
-        return False
-    return bool(related_session_ids.intersection(str(session_id) for session_id in parsed_session_counts))
 
 
 def _extract_other_user_texts(context_messages: Sequence[LLMContextMessage]) -> list[str]:

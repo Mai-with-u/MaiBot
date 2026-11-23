@@ -30,6 +30,7 @@ type ExportScope = 'selected' | 'all' | 'chat' | 'group'
 export interface LearningExportOptions {
   ids?: number[]
   chatIds?: string[]
+  groupId?: string
   includeChatInfo: boolean
 }
 
@@ -81,7 +82,7 @@ export function LearningExportDialog({
           id: String(item.id),
           label: `${item.name}${item.isGlobal ? '（全部聊天）' : `（${item.chatIds.length} 个聊天）`}`,
           keywords: [item.name, ...item.chatIds],
-          disabled: !item.isGlobal && item.chatIds.length === 0,
+          disabled: kind !== 'jargon' && !item.isGlobal && item.chatIds.length === 0,
           details: item.details,
         }))
   const selectedTargetId = scope === 'chat' ? chatId : groupId
@@ -90,7 +91,7 @@ export function LearningExportDialog({
   const invalid =
     (scope === 'selected' && selectedIds.size === 0) ||
     (scope === 'chat' && !chat) ||
-    (scope === 'group' && (!group || (!group.isGlobal && group.chatIds.length === 0))) ||
+    (scope === 'group' && (!group || (kind !== 'jargon' && !group.isGlobal && group.chatIds.length === 0))) ||
     (needsTargets && (loading || error))
 
   const handleExport = async () => {
@@ -98,6 +99,7 @@ export function LearningExportDialog({
     setExporting(true)
     try {
       const result = await onExport({
+        ...(kind === 'jargon' && scope === 'group' && { groupId }),
         ids: scope === 'selected' ? Array.from(selectedIds) : undefined,
         chatIds:
           scope === 'chat'

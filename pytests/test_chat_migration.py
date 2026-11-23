@@ -225,3 +225,27 @@ def test_gate_waits_for_active_work_without_stopping_other_chats():
         assert gate.active == {}
 
     asyncio.run(scenario())
+
+
+def test_scoped_jargon_copy_keeps_original_observations_and_checkpoints(store):
+    with store.engine.begin() as db:
+        for column in ("scope_kind TEXT DEFAULT 'chat'", "scope_id TEXT", "archived BOOLEAN DEFAULT 0",
+                       "baseline_id INTEGER", "revision INTEGER DEFAULT 0", "last_inference_count INTEGER DEFAULT 8"):
+            db.exec_driver_sql(f"ALTER TABLE jargons ADD COLUMN {column}")
+        db.exec_driver_sql("UPDATE jargons SET scope_id=CASE id WHEN 1 THEN 'A' ELSE 'B' END")
+        db.exec_driver_sql("""UPDATE jargons SET content='WORD', session_id_dict='{"A":10,"B":2}' WHERE id=1""")
+        db.exec_driver_sql("CREATE TABLE jargon_learning_records(id INTEGER PRIMARY KEY, session_id TEXT)")
+        db.exec_driver_sql("INSERT INTO jargon_learning_records VALUES (10,'A')")
+        db.exec_driver_sql("CREATE TABLE jargon_evidence_links(jargon_id INTEGER,record_id INTEGER,PRIMARY KEY(jargon_id,record_id))")
+        db.exec_driver_sql("INSERT INTO jargon_evidence_links VALUES(1,10)")
+    snapshot = store.snapshot("A", "B")
+    conflict = next(item for item in snapshot["conflicts"] if item["kind"] == "jargons")
+    assert conflict["choices"] == ["source", "target"]
+    execute(store, choice="source")
+    execute(store, choice="source")
+    with store.engine.connect() as db:
+        assert db.exec_driver_sql("SELECT archived,meaning FROM jargons WHERE id=2").one() == (1, "target meaning")
+        row = db.exec_driver_sql("SELECT id,last_inference_count,baseline_id FROM jargons WHERE scope_id='B' AND archived=0").one()
+        assert row[1:] == (8,1)
+        assert db.exec_driver_sql("SELECT record_id FROM jargon_evidence_links WHERE jargon_id=?", (row[0],)).scalar_one() == 10
+        assert db.exec_driver_sql("SELECT session_id FROM jargon_learning_records").all() == [("A",)]

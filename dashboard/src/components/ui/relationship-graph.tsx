@@ -1,5 +1,5 @@
 import { useEffect, useRef, useState, type ReactNode } from 'react'
-import { MessageCircle, UsersRound } from 'lucide-react'
+import { Globe, MessageCircle, UsersRound } from 'lucide-react'
 
 import { Button } from './button'
 import { Switch } from './switch'
@@ -10,6 +10,7 @@ export interface RelationshipNode {
   id: string
   label: string
   description?: string
+  isGlobal?: boolean
   opacity?: number
   colors?: string[]
   column: number
@@ -136,10 +137,15 @@ export function RelationshipGraph({
     const headerY = 60 + index * 104
     const spineX = 280 + index * 16
     const ownBands = bands.filter((band) => band.groups.some((owner) => owner.id === group.id))
+    const header = { x: 20, y: headerY, width: 244, height: 72 }
+    if (group.isGlobal) {
+      mergedRegions.set(group.id, [header])
+      return
+    }
     const top = Math.min(headerY + 26, ...ownBands.map((band) => band.y + 12))
     const bottom = Math.max(headerY + 42, ...ownBands.map((band) => band.y + band.height - 12))
     mergedRegions.set(group.id, [
-      { x: 20, y: headerY, width: 244, height: 72 },
+      header,
       { x: 256, y: headerY + 26, width: spineX - 248, height: 16 },
       { x: spineX, y: top, width: 8, height: bottom - top },
       ...ownBands.map((band) => ({
@@ -325,7 +331,7 @@ export function RelationshipGraph({
                   left: mergeShared ? 20 : index * 280 + 20,
                   top: mergeShared ? 60 + index * 104 : 48,
                   width: mergeShared ? 244 : 254,
-                  height: mergeShared ? 72 : regionHeight,
+                  height: mergeShared || group.isGlobal ? 72 : regionHeight,
                   borderColor: group.colors?.[0],
                   backgroundColor: mergeShared
                     ? 'transparent'
@@ -335,27 +341,29 @@ export function RelationshipGraph({
               >
                 <button
                   type="button"
-                  className={`hover:bg-accent flex w-full cursor-pointer items-start gap-2 px-3 py-3 text-left focus-visible:outline-2 ${mergeShared ? 'h-full' : 'border-b-2'}`}
+                  className={`hover:bg-accent flex w-full cursor-pointer items-start gap-2 px-3 py-3 text-left focus-visible:outline-2 ${mergeShared || group.isGlobal ? 'h-full' : 'border-b-2'}`}
                   style={{ borderColor: group.colors?.[0] }}
-                  title={`编辑${group.label}`}
+                  title={group.isGlobal ? `${group.label} · 覆盖所有现有和新增聊天，点击编辑` : `编辑${group.label}`}
                   onClick={() => onSelect(group.id)}
                   onMouseEnter={() => setFocusedId(group.id)}
                   onMouseLeave={() => setFocusedId(null)}
                   onFocus={() => setFocusedId(group.id)}
                   onBlur={() => setFocusedId(null)}
                 >
-                  <UsersRound
-                    className="mt-0.5 h-5 w-5 shrink-0"
-                    style={{ color: group.colors?.[0] }}
-                  />
-                  <span className="min-w-0">
-                    <strong className="block truncate">{group.label}</strong>
+                  <span className="mt-0.5 shrink-0" style={{ color: group.colors?.[0] }}>
+                    {group.isGlobal ? <Globe className="h-5 w-5" /> : <UsersRound className="h-5 w-5" />}
+                  </span>
+                  <span className="min-w-0 flex-1">
+                    <span className="flex items-center gap-2">
+                      <strong className="truncate">{group.label}</strong>
+                      {group.isGlobal && <span className="shrink-0 rounded border px-1 text-xs">所有聊天</span>}
+                    </span>
                     <span className="text-muted-foreground block truncate text-xs">
                       {group.description}
                     </span>
                   </span>
                 </button>
-                {!mergeShared && membersByGroup[index].length === 0 && (
+                {!mergeShared && !group.isGlobal && membersByGroup[index].length === 0 && (
                   <p className="text-muted-foreground px-3 pt-8 text-xs">
                     {edges.some((edge) => edge.from === group.id)
                       ? mergeShared

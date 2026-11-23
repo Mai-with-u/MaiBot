@@ -62,6 +62,7 @@ from .v53_to_v54 import migrate_v53_to_v54
 from .v54_to_v55 import migrate_v54_to_v55
 from .v55_to_v56 import migrate_v55_to_v56
 from .v56_to_v57 import migrate_v56_to_v57
+from .v57_to_v63 import migrate_v57_to_v63
 from .version_store import SQLiteUserVersionStore
 
 EMPTY_SCHEMA_VERSION = 0
@@ -122,7 +123,12 @@ V54_SCHEMA_VERSION = 54
 V55_SCHEMA_VERSION = 55
 V56_SCHEMA_VERSION = 56
 V57_SCHEMA_VERSION = 57
-LATEST_SCHEMA_VERSION = V57_SCHEMA_VERSION
+V58_SCHEMA_VERSION = 58
+V59_SCHEMA_VERSION = 59
+V61_SCHEMA_VERSION = 61
+V62_SCHEMA_VERSION = 62
+V63_SCHEMA_VERSION = 63
+LATEST_SCHEMA_VERSION = V63_SCHEMA_VERSION
 
 _LEGACY_V1_EXCLUSIVE_TABLES = (
     "chat_streams",
@@ -714,6 +720,14 @@ class LatestSchemaVersionDetector(BaseSchemaVersionDetector):
     def detect_version(self, snapshot: DatabaseSchemaSnapshot) -> Optional[int]:
         """检测数据库是否已经是当前最新结构。"""
 
+        if (all(snapshot.has_column("jargons", key) for key in ("scope_kind", "scope_id", "baseline_id", "archived", "revision"))
+                and snapshot.has_table("jargon_learning_records")
+                and snapshot.has_table("jargon_evidence_links")):
+            if snapshot.has_table("jargon_snapshot_members"):
+                if snapshot.has_column("jargons", "contributing_chats"):
+                    return V63_SCHEMA_VERSION if snapshot.has_column("jargons", "allow_update") else V62_SCHEMA_VERSION
+                return V61_SCHEMA_VERSION
+            return V59_SCHEMA_VERSION if snapshot.has_table("jargon_deferred_learning") else V58_SCHEMA_VERSION
         behavior_removed = not any(snapshot.has_table(table_name) for table_name in BEHAVIOR_TABLES)
         if not _detect_v37_base_schema(snapshot, behavior_removed=behavior_removed):
             return None
@@ -2079,6 +2093,11 @@ def build_default_migration_registry() -> MigrationRegistry:
                 version_from=V56_SCHEMA_VERSION, version_to=V57_SCHEMA_VERSION,
                 name="v56_to_v57", description="区分待推断词条与已判定的非黑话。",
                 handler=migrate_v56_to_v57,
+            ),
+            MigrationStep(
+                version_from=V57_SCHEMA_VERSION, version_to=V63_SCHEMA_VERSION,
+                name="v57_to_v63", description="迁移黑话作用域、原始线索、快照、推断进度和更新设置。",
+                handler=migrate_v57_to_v63,
             ),
         ]
     )

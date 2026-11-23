@@ -7,6 +7,7 @@ import asyncio
 import re
 
 from src.chat.utils.utils import is_bot_self
+from src.common.data_models.jargon_data_model import JargonEvidenceMessageGroup
 from src.common.data_models.llm_service_data_models import LLMResponseResult
 from src.common.logger import get_logger
 from src.config.config import global_config
@@ -19,7 +20,7 @@ from src.services.llm_service import LLMServiceClient
 from .expression_utils import parse_jargon_response
 from .learning_text import extract_learning_text
 from .pending_learning_buffer import PendingLearningBuffer
-from .jargon_miner import JargonEntry, JargonEvidenceMessageGroup, JargonMiner
+from .jargon_miner import JargonEntry, JargonMiner
 
 if TYPE_CHECKING:
     from src.chat.message_receive.message import SessionMessage
@@ -455,6 +456,7 @@ class JargonLearner:
         skipped_entries: Sequence[dict[str, str]],
         saved: int,
         updated: int,
+        deferred: int = 0,
     ) -> None:
         """记录黑话学习解析到写库的过程摘要。"""
 
@@ -463,7 +465,7 @@ class JargonLearner:
             f"status={status}, learning_session_id={jargon_miner.session_id}, "
             f"session_name={jargon_miner.session_name}, source_items={len(source_items)}, "
             f"parsed={len(parsed_entries)}, accepted={len(accepted_entries)}, "
-            f"skipped={len(skipped_entries)}, saved={saved}, updated={updated}"
+            f"skipped={len(skipped_entries)}, saved={saved}, updated={updated}, deferred={deferred}"
         )
 
     def _check_cached_jargons_in_messages(
@@ -607,12 +609,13 @@ class JargonLearner:
             )
             return False
 
-        saved, updated = await jargon_miner.process_extracted_entries(entries)
+        saved, updated, deferred = await jargon_miner.process_extracted_entries(entries)
+        persisted = saved + updated + deferred > 0
         # 展示本批交给黑话矿工处理的候选，不能把候选数量当成新增词条数量。
         if learned_contents is not None:
             learned_contents.extend(str(entry["content"]) for entry in entries)
         self._log_jargon_update_process(
-            status="persisted" if saved + updated > 0 else "no_database_change",
+            status="persisted" if persisted else "no_database_change",
             jargon_miner=jargon_miner,
             source_items=messages,
             parsed_entries=jargon_entries,
@@ -620,8 +623,11 @@ class JargonLearner:
             skipped_entries=skipped_entries,
             saved=saved,
             updated=updated,
+            deferred=deferred,
         )
         logger.info(f"成功处理 {len(entries)} 个黑话条目")
-        self.learning_status = "completed" if saved + updated > 0 else "no_results"
+        self.learning_status = "completed" if persisted else "no_results"
         self.learning_detail = f"处理 {len(entries)} 个候选，新增 {saved} 个、更新 {updated} 个词条"
-        return saved + updated > 0
+        if deferred:
+            self.learning_detail += f"，暂存 {deferred} 条线索"
+        return persisted
