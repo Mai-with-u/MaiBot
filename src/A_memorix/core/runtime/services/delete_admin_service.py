@@ -1332,19 +1332,30 @@ class MemoryDeleteAdminService(KernelServiceBase):
                         paragraph_hashes,
                         conn=conn,
                     )
+                    # 每段只保存自身证据及其关联 claim，避免每段都复制整批 claim。
+                    evidence_by_paragraph: Dict[str, List[Dict[str, Any]]] = {}
+                    for evidence in current_fact_snapshot.get("evidence", []):
+                        metadata = evidence.get("metadata") if isinstance(evidence.get("metadata"), dict) else {}
+                        if str(evidence.get("evidence_type", "") or "") == "source":
+                            owner_hash = str(metadata.get("paragraph_hash", "") or "").strip()
+                        else:
+                            owner_hash = str(evidence.get("evidence_id", "") or "").strip()
+                        evidence_by_paragraph.setdefault(owner_hash, []).append(evidence)
+                    claims_by_id = {
+                        str(claim.get("claim_id", "") or ""): claim
+                        for claim in current_fact_snapshot.get("claims", [])
+                    }
                     for item in plan.get("items", []):
                         if str(item.get("item_type", "") or "") != "paragraph":
                             continue
                         payload = item.get("payload") if isinstance(item.get("payload"), dict) else {}
                         paragraph_hash = str(item.get("item_hash", "") or "").strip()
+                        paragraph_evidence = evidence_by_paragraph.get(paragraph_hash, [])
+                        claim_ids = dict.fromkeys(str(evidence.get("claim_id", "") or "") for evidence in paragraph_evidence)
                         payload["fact_evidence_snapshot"] = {
-                            **current_fact_snapshot,
                             "paragraph_hashes": [paragraph_hash],
-                            "evidence": [
-                                evidence
-                                for evidence in current_fact_snapshot.get("evidence", [])
-                                if str(evidence.get("evidence_id", "") or "") == paragraph_hash
-                            ],
+                            "claims": [claims_by_id[claim_id] for claim_id in claim_ids if claim_id in claims_by_id],
+                            "evidence": paragraph_evidence,
                         }
                         item["payload"] = payload
                 operation = self.metadata_store.create_delete_operation(
@@ -1360,6 +1371,7 @@ class MemoryDeleteAdminService(KernelServiceBase):
                         "vector_ids": plan.get("vector_ids", []),
                         "state": "prepared",
                     },
+                    include_items=False,
                 )
                 operation_id = str(operation.get("operation_id", "") or "")
 
@@ -1644,6 +1656,7 @@ class MemoryDeleteAdminService(KernelServiceBase):
                     "superseded_delete_cleanup": superseded,
                 },
                 operation_id=operation_id,
+                include_items=False,
             )
             for item in relation_items:
                 hash_value = str(item["item_hash"])

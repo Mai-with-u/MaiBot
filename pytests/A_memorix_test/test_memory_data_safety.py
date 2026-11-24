@@ -1259,3 +1259,65 @@ async def test_entity_delete_marks_linked_episode_source_dirty(
     assert result["success"] is True
     assert result["sources"] == [source]
     assert after == before + 1
+
+
+@pytest.mark.asyncio
+async def test_source_delete_snapshots_only_paragraph_linked_claims(
+    metadata_store: MetadataStore,
+) -> None:
+    hash_a = metadata_store.add_paragraph("段落 A 的正文", source="group-source")
+    hash_b = metadata_store.add_paragraph("段落 B 的正文", source="group-source")
+
+    def claim(value_text: str, paragraph_hash: str, **evidence: Any) -> str:
+        return metadata_store.upsert_fact_claim(
+            scope_type="chat",
+            scope_id="group-1",
+            fact_key="topic",
+            value_text=value_text,
+            evidence_type=evidence.get("evidence_type", "paragraph"),
+            evidence_id=evidence.get("evidence_id", paragraph_hash),
+            evidence_metadata={"paragraph_hash": paragraph_hash},
+        )["claim_id"]
+
+    own_a = claim("只属于 A", hash_a)
+    own_b = claim("只属于 B", hash_b)
+    shared = claim("共享事实", hash_a)
+    claim("共享事实", hash_b)
+    source_b = claim("来源证据", hash_b, evidence_type="source", evidence_id="observation-b")
+
+    service = MemoryDeleteAdminService(_DeleteKernel(metadata_store))
+    deleted = await service._execute_delete_action(
+        mode="source",
+        selector={"sources": ["group-source"]},
+        requested_by="test",
+        reason="source_delete_test",
+    )
+    assert deleted["success"] is True
+    operation = metadata_store.get_delete_operation(str(deleted["operation_id"]))
+    assert operation is not None
+    snapshots = {
+        item["item_hash"]: item["payload"]["fact_evidence_snapshot"]
+        for item in operation["items"]
+        if item["item_type"] == "paragraph"
+    }
+    assert sorted(c["claim_id"] for c in snapshots[hash_a]["claims"]) == sorted([own_a, shared])
+    assert sorted(c["claim_id"] for c in snapshots[hash_b]["claims"]) == sorted([own_b, shared, source_b])
+    for claim_id in (own_a, own_b, shared, source_b):
+        assert metadata_store.get_fact_evidence(claim_id) == []
+
+    restored = await service._restore_delete_operation(operation)
+    assert restored["success"] is True
+    evidence = {
+        claim_id: sorted(
+            (row["evidence_type"], row["evidence_id"]) for row in metadata_store.get_fact_evidence(claim_id)
+        )
+        for claim_id in (own_a, own_b, shared, source_b)
+    }
+    assert evidence == {
+        own_a: [("paragraph", hash_a)],
+        own_b: [("paragraph", hash_b)],
+        shared: sorted([("paragraph", hash_a), ("paragraph", hash_b)]),
+        source_b: [("source", "observation-b")],
+    }
+    for claim_id in evidence:
+        assert metadata_store.get_fact_claim(claim_id)["status"] == "active"

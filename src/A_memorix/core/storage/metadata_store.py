@@ -2250,6 +2250,7 @@ class MetadataStore(
         status: str = "executed",
         summary: Optional[Dict[str, Any]] = None,
         operation_id: Optional[str] = None,
+        include_items: bool = True,
     ) -> Dict[str, Any]:
         op_id = str(operation_id or f"del_{uuid.uuid4().hex}").strip()
         created_at = datetime.now().timestamp()
@@ -2294,7 +2295,8 @@ class MetadataStore(
                     operation_id, item_type, item_hash, item_key, payload_json, created_at
                 ) VALUES (?, ?, ?, ?, ?, ?)
                 """,
-                [
+                # 生成器逐条序列化，避免一次性持有全部明细 JSON。
+                (
                     (
                         op_id,
                         item["item_type"],
@@ -2304,10 +2306,10 @@ class MetadataStore(
                         created_at,
                     )
                     for item in normalized_items
-                ],
+                ),
             )
         self._conn.commit()
-        return self.get_delete_operation(op_id) or {
+        return self.get_delete_operation(op_id, include_items=include_items) or {
             "operation_id": op_id,
             "mode": str(mode or "").strip(),
             "selector": selector,
@@ -2418,7 +2420,7 @@ class MetadataStore(
             items.append(payload)
         return items
 
-    def get_delete_operation(self, operation_id: str) -> Optional[Dict[str, Any]]:
+    def get_delete_operation(self, operation_id: str, *, include_items: bool = True) -> Optional[Dict[str, Any]]:
         token = str(operation_id or "").strip()
         if not token:
             return None
@@ -2439,6 +2441,8 @@ class MetadataStore(
         payload = dict(row)
         payload["selector"] = self._json_loads(payload.get("selector"), {})
         payload["summary"] = self._json_loads(payload.get("summary_json"), {})
+        if not include_items:
+            return payload
 
         cursor.execute(
             """
