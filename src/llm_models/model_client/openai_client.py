@@ -1947,9 +1947,19 @@ class OpenaiClient(AdapterClient[AsyncStream[ChatCompletionChunk], ChatCompletio
         }
 
         try:
-            request_overrides = split_openai_request_overrides(extra_params)
+            request_overrides = split_openai_request_overrides(
+                extra_params,
+                reserved_body_keys={"encoding_format"},
+            )
+            extra_body = dict(request_overrides.extra_body or {})
+            encoding_format = (extra_params or {}).get("encoding_format")
+            if encoding_format is None:
+                encoding_format = extra_body.pop("encoding_format", "float")
+            else:
+                extra_body.pop("encoding_format", None)
             snapshot_provider_request["request_kwargs"] = {
-                "extra_body": request_overrides.extra_body or None,
+                "encoding_format": encoding_format,
+                "extra_body": extra_body or None,
                 "extra_headers": request_overrides.extra_headers or None,
                 "extra_query": request_overrides.extra_query or None,
                 "input": embedding_input,
@@ -1958,9 +1968,10 @@ class OpenaiClient(AdapterClient[AsyncStream[ChatCompletionChunk], ChatCompletio
             raw_response = await self.client.embeddings.create(
                 model=model_info.model_identifier,
                 input=embedding_input,
+                encoding_format=encoding_format,
                 extra_headers=self._build_request_headers(request_overrides.extra_headers),
                 extra_query=request_overrides.extra_query or None,
-                extra_body=request_overrides.extra_body or None,
+                extra_body=extra_body or None,
             )
         except APIConnectionError as exc:
             snapshot_path = await asyncio.to_thread(
