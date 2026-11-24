@@ -852,10 +852,7 @@ class PersonProfileService:
             text = self._format_relation_evidence_text(rel)
             if not text:
                 continue
-            bucket = self._guess_profile_bucket(text)
-            if bucket == "stable_facts":
-                bucket = "relationship_settings"
-            self._append_profile_bucket(buckets, bucket, text)
+            self._append_profile_bucket(buckets, self._guess_profile_bucket(text), text)
 
         for item in vector_evidence:
             content = str(item.get("content", "") or "").strip()
@@ -973,7 +970,7 @@ class PersonProfileService:
             "recent_interactions",
             "uncertain_notes",
         )
-        parsed: Dict[str, List[str]] = {key: [] for key in allowed_keys}
+        parsed: Dict[str, List[str]] = {}
         for key in allowed_keys:
             values = payload.get(key)
             if not isinstance(values, list):
@@ -988,7 +985,7 @@ class PersonProfileService:
     ) -> Dict[str, List[str]]:
         buckets: Dict[str, List[str]] = {key: [] for key in fallback}
         for key in buckets:
-            source_values = llm_result.get(key) or fallback.get(key) or []
+            source_values = llm_result[key] if key in llm_result else fallback.get(key, [])
             for value in source_values:
                 self._append_profile_bucket(buckets, key, value)
         return buckets
@@ -1045,13 +1042,38 @@ class PersonProfileService:
             for token in ("身份", "职业", "工作", "学生", "老师", "作者", "画师", "设定", "角色", "来自")
         ):
             return "identity_settings"
-        if any(token in content for token in ("关系", "朋友", "同事", "群友", "主人", "搭档", "称呼", "叫", "认识")):
+        if any(
+            token in content for token in ("关系", "朋友", "同学", "同事", "群友", "主人", "搭档", "称呼", "叫", "认识")
+        ):
             return "relationship_settings"
         if any(
             token in content for token in ("喜欢", "讨厌", "偏好", "习惯", "不喜欢", "希望", "雷点", "介意", "更愿意")
         ):
             return "interaction_preferences"
+        if any(token in content for token in ("从小", "一直", "长大", "长期", "多年", "出生")):
+            return "stable_facts"
+        if cls._looks_recent_interaction(content):
+            return "recent_interactions"
         return "stable_facts"
+
+    @staticmethod
+    def _looks_recent_interaction(text: str) -> bool:
+        markers = (
+            "这周",
+            "本周",
+            "上周",
+            "昨天",
+            "前天",
+            "今晚",
+            "今早",
+            "中午",
+            "刚才",
+            "早饭",
+            "午饭",
+            "晚饭",
+            "没课",
+        )
+        return any(marker in text for marker in markers) or "了" in text.replace("了解", "")
 
     @staticmethod
     def _looks_uncertain_or_temporary(text: str) -> bool:

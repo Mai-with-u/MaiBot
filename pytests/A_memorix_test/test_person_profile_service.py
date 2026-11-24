@@ -525,3 +525,32 @@ async def test_model_classification_can_write_stable_profile() -> None:
 
     assert "旧金山" in "\n".join(sections["稳定了解"])
     assert "旧金山" not in "\n".join(sections["不确定信息"])
+
+
+def test_rule_based_profile_classification_separates_daily_events_from_relationships() -> None:
+    service = PersonProfileService(metadata_store=FakeMetadataStore(), retriever=FakeRetriever())
+
+    buckets = service._classify_profile_evidence_rule_based(
+        relation_edges=[
+            {"subject": "小禾", "predicate": "吃了", "object": "午饭"},
+            {"subject": "小禾", "predicate": "是", "object": "麦麦的朋友"},
+        ],
+        vector_evidence=[
+            {"content": "小禾这周三没课。"},
+            {"content": "小禾从小在海边长大。"},
+        ],
+    )
+
+    assert buckets["relationship_settings"] == ["小禾是麦麦的朋友。"]
+    assert buckets["recent_interactions"] == ["小禾吃了午饭。", "小禾这周三没课。"]
+    assert buckets["stable_facts"] == ["小禾从小在海边长大。"]
+
+
+def test_profile_classification_keeps_explicit_empty_llm_sections() -> None:
+    service = PersonProfileService(metadata_store=FakeMetadataStore(), retriever=FakeRetriever())
+    fallback = {"relationship_settings": ["小禾吃了午饭。"], "stable_facts": ["小禾从小在海边长大。"]}
+
+    parsed = service._parse_profile_classification_response(json.dumps({"relationship_settings": []}))
+    merged = service._merge_profile_classification(fallback, parsed)
+
+    assert merged == {"relationship_settings": [], "stable_facts": ["小禾从小在海边长大。"]}
