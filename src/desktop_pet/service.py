@@ -19,6 +19,7 @@ from src.core.internal_chat import INTERNAL_CHAT_PLATFORM, INTERNAL_CHAT_USER_ID
 from src.services.schedules.service import schedule_service
 
 from .app_conditions import matching_application, running_applications
+from .conversation import describe_conversation, require_current_conversation, resolve_conversation
 from .rendering import render_parts
 from .remote_protocol import RemotePeer, decode_screenshot
 from .screen import DesktopScreenshot, ScreenTimeline, capture_desktop, compose_screen_timeline
@@ -45,6 +46,7 @@ class DesktopPetService:
         self._closing = True
         self._reload_registered = False
         self._lifecycle_lock = asyncio.Lock()
+        self._skin_lock = asyncio.Lock()
         self._write_lock = asyncio.Lock()
         self._pending: Dict[str, asyncio.Future[Any]] = {}
         self._notifications: Set[asyncio.Task[None]] = set()
@@ -66,7 +68,9 @@ class DesktopPetService:
     def observe_stage(self, data: Dict[str, Any]) -> None:
         from .chat_tools import is_owner_chat
 
-        if self._ready and not self._closing and is_owner_chat(data["session_id"]):
+        if (self._ready and not self._closing
+                and (self.is_bound_conversation(data["session_id"]) or
+                     (not global_config.desktop_pet.conversation_session_id and is_owner_chat(data["session_id"])))):
             self._thinking_caption.update(data if caption_enabled() else {"session_id": data["session_id"]})
 
     def status(self) -> Dict[str, Any]:
@@ -115,6 +119,8 @@ class DesktopPetService:
                     and (self._ready or mode == "remote")):
                 if not caption_enabled():
                     self._thinking_caption.update({"session_id": ""})
+                if self._ready:
+                    await self._publish_conversation()
                 if self._ready and self._skin_id != global_config.desktop_pet.skin_id:
                     await self.apply_skin(global_config.desktop_pet.skin_id)
                 self._restart_proactive_wake()
@@ -235,11 +241,34 @@ class DesktopPetService:
         self._handle_event(event)
 
     async def remote_chat(self, peer: RemotePeer, request_id: str, payload: Dict[str, Any]) -> Dict[str, Any]:
+        self._require_remote(peer)
+        message_id = await self._relay_conversation(payload)
+        return {"accepted": True, "request_id": request_id, "message_id": message_id}
+
+    async def _relay_conversation(self, payload: Dict[str, Any]) -> str:
         from src.webui.routers.chat.service import relay_plugin_chat_message
 
-        self._require_remote(peer)
-        message_id = await relay_plugin_chat_message("builtin.desktop_pet", payload["text"], images=payload["images"])
-        return {"accepted": True, "request_id": request_id, "message_id": message_id}
+        conversation_id = global_config.desktop_pet.conversation_session_id
+        require_current_conversation(conversation_id, payload.get("conversation_id"))
+        return await relay_plugin_chat_message("builtin.desktop_pet", payload["text"], images=payload["images"],
+                                               conversation_id=conversation_id)
+
+    def is_bound_conversation(self, session_id: str) -> bool:
+        return bool(session_id and session_id == global_config.desktop_pet.conversation_session_id)
+
+    async def _publish_conversation(self) -> None:
+        if not self._can_stream_conversation():
+            return
+        session_id = global_config.desktop_pet.conversation_session_id
+        command = {"type": "conversation", "conversation_id": session_id, "name": "主人私聊"}
+        if session_id:
+            try:
+                session = await asyncio.to_thread(resolve_conversation, session_id)
+                command.update(describe_conversation(session))
+            except ValueError:
+                command["name"] = "所选会话不可用"
+        if session_id == global_config.desktop_pet.conversation_session_id:
+            await self._command(command)
 
     async def remote_todo(self, peer: RemotePeer, action: str, payload: Dict[str, Any]) -> Dict[str, Any]:
         self._require_remote(peer)
@@ -333,6 +362,7 @@ class DesktopPetService:
                 self._visible = True
                 logger.info("内置桌宠已出现在桌面上")
             self._observe(self.apply_skin(global_config.desktop_pet.skin_id))
+            self._observe(self._publish_conversation())
             if not already_ready:
                 self._observe(self._dispatch_hook("ready"))
             self._buttons_changed()
@@ -388,11 +418,19 @@ class DesktopPetService:
         from .rendering import render_history_events
 
         response = {"type": "history", "request_id": event["request_id"]}
+        conversation_id = global_config.desktop_pet.conversation_session_id
         try:
-            session_ids = await asyncio.to_thread(
-                chat_manager.resolve_session_ids_by_target,
-                platform=INTERNAL_CHAT_PLATFORM, target_id=INTERNAL_CHAT_USER_ID, chat_type="private",
-            )
+            if conversation_id:
+                if self._remote is not None and not self._remote.capabilities.get("chat_binding"):
+                    raise ValueError("此桌宠版本不支持会话绑定，请更新客户端")
+                response["conversation_id"] = conversation_id
+                session = await asyncio.to_thread(resolve_conversation, conversation_id)
+                session_ids = {session.session_id}
+            else:
+                session_ids = await asyncio.to_thread(
+                    chat_manager.resolve_session_ids_by_target,
+                    platform=INTERNAL_CHAT_PLATFORM, target_id=INTERNAL_CHAT_USER_ID, chat_type="private",
+                )
             cursors = event["cursors"]
             next_cursors = {}
             events = []
@@ -408,12 +446,13 @@ class DesktopPetService:
                 if page.has_more:
                     next_cursors[session_id] = page.oldest_event_id
             events.sort(key=lambda item: item["data"]["event_id"])
-            response.update(items=await asyncio.to_thread(render_history_events, events),
+            response.update(items=await asyncio.to_thread(render_history_events, events, show_senders=bool(conversation_id)),
                             cursors=next_cursors, has_more=bool(next_cursors))
         except Exception as exc:
             logger.exception("桌宠历史记录读取失败")
             response["error"] = str(exc)
-        await self._command(response)
+        if conversation_id == global_config.desktop_pet.conversation_session_id:
+            await self._command(response)
 
     def _require_screen_access(self) -> None:
         if not global_config.desktop_pet.screen_read_enabled:
@@ -826,14 +865,13 @@ class DesktopPetService:
             self._buttons_changed()
 
     async def _chat(self, request_id: str) -> None:
-        from src.webui.routers.chat.service import relay_plugin_chat_message
         from .attachments import read_request
 
         try:
             request = await asyncio.to_thread(
                 read_request, get_instance_root() / "temp" / "desktop_pet" / "requests", request_id,
             )
-            message_id = await relay_plugin_chat_message("builtin.desktop_pet", request["text"], images=request["images"])
+            message_id = await self._relay_conversation(request)
         except Exception as exc:
             # 单条消息投递失败只影响这一句，桌宠窗口继续运行。
             await self._command({"type": "failed", "request_id": request_id, "error": str(exc)})
@@ -886,15 +924,40 @@ class DesktopPetService:
         await self._command({"type": "chat_hotkey", "value": global_config.desktop_pet.chat_hotkey})
 
     async def apply_skin(self, skin_id: str) -> None:
-        from .skins import find_skin
+        from .skins import SkinAssets, find_skin
 
-        skin = await asyncio.to_thread(find_skin, get_instance_root(), skin_id)
-        await self._command({"type": "skin", "skin": skin})
-        changed = self._skin_id != skin_id
-        self._skin_id = skin_id
-        self._error = ""
-        if changed:
-            self._observe(self._dispatch_hook("skin_changed", skin_id=skin_id))
+        async with self._skin_lock:
+            peer = self._remote
+            assets: SkinAssets | None = {} if peer is not None and peer.capabilities.get("skin_assets") else None
+            report_loading = peer is not None and peer.capabilities.get("skin_loading") and skin_id != "builtin"
+            if report_loading:
+                await self._command({"type": "skin_loading", "active": True})
+            try:
+                skin = await asyncio.to_thread(find_skin, get_instance_root(), skin_id, asset_blobs=assets)
+            except Exception:
+                if report_loading and self._remote is peer:
+                    await self._command({"type": "skin_loading", "active": False})
+                raise
+            if self._remote is not peer:
+                raise ConnectionError("桌宠连接已变化")
+            command = {"type": "skin", "skin": skin}
+            if assets is not None and peer is not None:
+                previous_assets = peer.skin_assets
+                # 首帧尚未加载时，窗口仍可能请求旧皮肤的动画资源。
+                peer.skin_assets = {**previous_assets, **assets}
+                try:
+                    await self._command({**command, "skin_assets": True})
+                except BaseException:
+                    peer.skin_assets = previous_assets
+                    raise
+                peer.skin_assets = assets
+            else:
+                await self._command(command)
+            changed = self._skin_id != skin_id
+            self._skin_id = skin_id
+            self._error = ""
+            if changed:
+                self._observe(self._dispatch_hook("skin_changed", skin_id=skin_id))
 
     async def animation(self, owner: str, action: str, args: Dict[str, Any]) -> Dict[str, Any]:
         result = await self._command({"type": "animation", "owner": owner, "action": action, "args": args})
@@ -928,12 +991,23 @@ class DesktopPetService:
 
         if self._ready and not self._closing:
             session = chat_manager.get_session_by_session_id(session_id)
-            if (session is not None and session.platform == INTERNAL_CHAT_PLATFORM
-                    and not session.group_id and session.user_id == INTERNAL_CHAT_USER_ID):
+            conversation_id = global_config.desktop_pet.conversation_session_id
+            if (self.is_bound_conversation(session_id) or (not conversation_id and session is not None
+                    and session.platform == INTERNAL_CHAT_PLATFORM and not session.group_id
+                    and session.user_id == INTERNAL_CHAT_USER_ID)):
+                if conversation_id and self._remote is not None and not self._remote.capabilities.get("chat_binding"):
+                    return
                 self._thinking = True
-                self._observe(self._command({"type": "thinking"}))
+                command = {"type": "thinking"}
+                if conversation_id:
+                    command["conversation_id"] = conversation_id
+                self._observe(self._command(command))
 
     async def notify_reply(self, message: Dict[str, Any]) -> None:
+        if global_config.desktop_pet.conversation_session_id:
+            if self.is_bound_conversation(message.get("session_id", "")) and self._can_stream_conversation():
+                self._observe(self._render_reply(message["raw_message"], message["message_id"], message["session_id"]))
+            return
         if message["platform"] != INTERNAL_CHAT_PLATFORM:
             return
         info = message["message_info"]
@@ -944,17 +1018,35 @@ class DesktopPetService:
             return
         self._observe(self._render_reply(message["raw_message"], message["message_id"]))
 
-    async def _render_reply(self, segments: List[Dict[str, Any]], message_id: str) -> None:
+    def _can_stream_conversation(self) -> bool:
+        return self._ready and not self._closing and (self._remote is None or self._remote.capabilities.get("chat_binding", False))
+
+    def notify_conversation_message(self, message: Dict[str, Any]) -> None:
+        if self._can_stream_conversation():
+            self._observe(self._render_conversation_message(message))
+
+    async def _render_conversation_message(self, message: Dict[str, Any]) -> None:
+        parts = await asyncio.to_thread(render_parts, message["raw_message"], [])
+        if parts and self.is_bound_conversation(message["session_id"]) and self._can_stream_conversation():
+            user = message["message_info"]["user_info"]
+            await self._command({"type": "conversation_message", "conversation_id": message["session_id"],
+                                 "message_id": message["message_id"], "parts": parts,
+                                 "sender": user.get("user_cardname") or user.get("user_nickname") or user["user_id"]})
+
+    async def _render_reply(self, segments: List[Dict[str, Any]], message_id: str, conversation_id: str = "") -> None:
         skipped: List[str] = []
         parts = await asyncio.to_thread(render_parts, segments, skipped)
         if skipped:
             logger.info("桌宠气泡不显示 %s 消息段，完整内容见网页聊天室", "、".join(skipped))
-        if parts:
+        if parts and conversation_id == global_config.desktop_pet.conversation_session_id:
             # 主人会话的实际发言主动显示窗口；插件 notice 仍保持原有隐藏语义。
             if not self._visible:
                 await self.control("show")
-            await self._command({"type": "reply", "parts": parts, "message_id": message_id,
-                                 "sound": global_config.desktop_pet.message_sound})
+            command = {"type": "reply", "parts": parts, "message_id": message_id,
+                       "sound": global_config.desktop_pet.message_sound}
+            if conversation_id:
+                command["conversation_id"] = conversation_id
+            await self._command(command)
             self._thinking = False
             text = "".join(part.get("text", "") for part in parts if part.get("kind") == "text")
             self._bubble = _bubble_text(text) or "[图片]"

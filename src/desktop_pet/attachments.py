@@ -33,6 +33,6 @@ def read_request(directory: Path, request_id: str) -> Dict[str, Any]:
                     raise ValueError("图片不能超过 2500 万像素")
                 item["mime_type"] = Image.MIME[picture.format]
                 picture.verify()
-        return {"text": text, "images": images}
+        return {"text": text, "images": images, "conversation_id": request.get("conversation_id")}
     finally:
         path.unlink(missing_ok=True)

@@ -1595,6 +1595,15 @@ async def update_model_config(config_data: ConfigBody, catalog_revision: str | N
 
 @router.post("/bot/section/desktop_pet")
 async def update_desktop_pet_config(section_data: SectionBody):
+    if isinstance(section_data, dict) and (session_id := section_data.get("conversation_session_id")):
+        from src.desktop_pet.conversation import resolve_conversation
+
+        if not isinstance(session_id, str) or len(session_id) > 200:
+            raise HTTPException(422, "桌宠会话 ID 无效")
+        try:
+            await asyncio.to_thread(resolve_conversation, session_id)
+        except ValueError as exc:
+            raise HTTPException(422, str(exc)) from exc
     result = await asyncio.to_thread(update_bot_config_section, "desktop_pet", section_data)
     if not await run_on_main_loop(
         config_manager.reload_config(changed_scopes=["bot"], skip_if_unchanged=True)

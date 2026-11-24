@@ -1302,7 +1302,10 @@ async def handle_chat_message(
     return next_user_name
 
 
-async def relay_plugin_chat_message(plugin_id: str, content: str, *, images: Optional[List[Dict[str, str]]] = None) -> str:
+async def relay_plugin_chat_message(
+    plugin_id: str, content: str, *, images: Optional[List[Dict[str, str]]] = None,
+    conversation_id: str = "",
+) -> str:
     """把插件界面（如桌宠）里主人说的话投递到内部统一聊天，并同步给在线的网页聊天室。
 
     消息记录插件来源，不具备任何受保护命令权限。
@@ -1316,6 +1319,17 @@ async def relay_plugin_chat_message(plugin_id: str, content: str, *, images: Opt
     """
     user_name = await asyncio.to_thread(get_internal_chat_user_name)
     message_id = str(uuid.uuid4())
+    if conversation_id:
+        from src.desktop_pet.conversation import resolve_conversation, route_relay_message
+
+        session = await asyncio.to_thread(resolve_conversation, conversation_id)
+        message_data = create_message_data(content=content, user_id=INTERNAL_CHAT_USER_ID,
+                                           user_name=user_name, message_id=message_id, images=images)
+        message_data["message_info"]["additional_config"][PLUGIN_RELAY_CONFIG_KEY] = plugin_id
+        route_relay_message(message_data, session)
+        await chat_bot.message_process(message_data, bound_session=session)
+        return message_id
+
     await chat_manager.broadcast_to_group(
         None,
         {

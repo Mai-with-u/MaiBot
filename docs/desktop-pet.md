@@ -27,11 +27,11 @@ Windows 本机模式下，在其他应用中按 `Ctrl+Alt+M` 可显示桌宠、�
 
 使用对应系统的分发包时，无需安装 Python、Node.js、Rust 或完整 MaiBot。Windows 使用 WebView2 Runtime，安装器在缺少时在线安装；macOS 使用系统 WKWebView，Linux 使用 WebKitGTK 4.1 及相应桌面运行库。启动后填写宿主地址，在 WebUI 页面中登录；只有多个机器人时才需要选择目标。
 
-桌宠没有独立密码框，也不把密码写入本地配置。Windows、Linux 和 macOS 14 及以上为各服务器使用独立 WebView 数据存储；macOS 10.15～13 使用默认 WebKit 数据存储，遵循浏览器的 Cookie 域和路径隔离规则。固定密码登录沿用旧版的 7 天 Cookie，服务端不再额外设置 8 小时会话过期限制；Cookie 有效期内，重连和宿主重启可复用登录，检查登录状态不会延长有效期。Cookie 到期或被清除、会话撤销或宿主认证状态变化导致失效时重新显示 WebUI 登录页。桌宠 WebView 和另外打开的浏览器各自管理会话。
+Windows 可在桌宠连接页的「登录凭据」填写 WebUI 密码及 Nginx 账号密码，认证成功后使用当前 Windows 用户的 DPAPI 加密保存；不写入明文配置。保存范围为填写的服务器地址，远端使用 HTTPS。本机回环地址可用 HTTP。Windows、Linux 和 macOS 14 及以上为各服务器使用独立 WebView 数据存储；macOS 10.15～13 使用默认 WebKit 数据存储。有效的 Cookie 可复用，桌宠 WebView 和另外打开的浏览器各自管理会话。
 
 认证完成后切换到同源的独立轻量连接页，维持桌宠通信，不持续加载完整 React WebUI。服务端需要同步更新，提供 `/api/host/desktop-pet/session`；该页面复用现有宿主会话校验，未经认证返回 401，不绕过宿主登录或 Nginx 等反向代理认证。
 
-若 Nginx 等反向代理启用 HTTP Basic Auth，原生 WebView 的认证对话框可能另行要求代理账号密码。凭据缓存受 WebView 和代理控制，缓存失效或重新启动后可能需要再次认证，不保证永久免输。托盘菜单提供「打开 WebUI 登录」及「更换连接 / 屏幕授权」。
+若 Nginx 等反向代理启用 HTTP Basic Auth，Windows 上缺少凭据或凭据被拒绝时会返回桌宠连接页，并展开「登录凭据」。可只填写 Nginx 凭据，随后在 WebUI 页面登录。托盘菜单提供「打开 WebUI 登录」及「更换连接 / 屏幕授权」。
 
 从源码运行时，安装 Node.js 22 或更高版本、npm、Rust stable（当前依赖至少需要 1.90），以及系统编译工具。Windows 需要 Visual Studio Build Tools 的 C++ 桌面开发和 Windows SDK；macOS 需要 Xcode Command Line Tools；Linux 需要 WebKitGTK/GTK、托盘、XCB/XRandR、D-Bus、PipeWire、Clang 等开发依赖。详见 [Tauri 前置依赖](https://v2.tauri.app/start/prerequisites/)、[xcap Linux 依赖](https://github.com/nashaofu/xcap#linux-system-requirements) 和[客户端说明](../pet-clients/desktop/README.md)。在仓库根目录执行：
 
@@ -244,9 +244,13 @@ async def on_desktop_pet_panel_action(self, button_id, action_id):
 
 截图或投递失败会停止持续阅读并显示原因，修复后手动重新开始。关闭读取权限、关闭桌宠或主程序退出会停止；重启后不会自动恢复。隐藏桌宠窗口不停止阅读。已有模型任务不因点击停止而撤回，但不会继续采集和投递新的画面。
 
+### 绑定聊天会话
+
+在 WebUI「桌宠 → 聊天会话」中搜索会话名称或账号，在列表中选择并确认。选择按 Bot 保存，切换为「主人私聊」可恢复默认。绑定后桌宠显示该会话的历史和实时消息，桌宠输入以桌宠身份进入同一条真实会话，不替 QQ 联系人发消息；Bot 的回复仍按原会话规则发送，可能对群成员或联系人可见。绑定会话需要更新主程序、WebUI 与桌面客户端；不支持绑定的旧客户端不会代替你向所选会话发送消息。
+
 ## 皮肤包
 
-「桌宠 → 当前皮肤」可选择皮肤、试播预览、导入 ZIP；保存配置后热切换。`desktop_pet.skin_id` 默认 `builtin`。预览不会打断桌宠；切换先校验并解码所有资源，失败保留原形象并报告错误。原有聊天、待办和默认 SVG 形象仍可使用。
+「桌宠 → 当前皮肤」可选择皮肤、试播预览、导入 ZIP；保存配置后热切换。`desktop_pet.skin_id` 默认 `builtin`。预览不会打断桌宠。支持按需取图的桌面客户端从本机缓存或服务器取首帧，等待时显示「加载皮肤…」并保留旧形象，首帧解码后切换，剩余图片在后台预加载。独立桌面客户端重连时先显示上次成功加载的皮肤，再同步服务器设置。兼容旧服务端下发的整包皮肤，也会落盘；但旧服务端仍会重发整包，且不会提前通知客户端开始加载。原有聊天、待办和默认 SVG 形象仍可使用。
 
 皮肤从程序自带的 `src/desktop_pet/presets/<目录>/skin.json`、实例的 `data/desktop_pet/skins/<目录>/skin.json` 和 `plugins/<插件目录>/skins/<目录>/skin.json` 发现。程序预设随源码和安装包分发，各 Bot 实例均可选择，无需复制到实例目录。插件可以携带静态皮肤，是否执行插件代码与皮肤选择独立；插件不能自动切换用户的皮肤。以上来源之间 ID 重复会明确报错，导入不覆盖已有皮肤。
 

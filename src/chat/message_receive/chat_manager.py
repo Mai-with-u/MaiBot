@@ -291,6 +291,15 @@ class ChatManager:
         if session is not None and self._update_session_identity(session, message):
             self._save_session(session)
 
+    def register_bound_message(self, session: BotChatSession, message: "SessionMessage") -> None:
+        """记录宿主投递到现有会话的消息，不用投递者的身份覆盖平台联系人。"""
+        if self.sessions.get(session.session_id) is not session:
+            raise ValueError("所选聊天会话已失效")
+        message.session_id = session.session_id
+        self.last_messages[session.session_id] = message
+        session.set_context(message)
+        session.update_active_time()
+
     @staticmethod
     def _normalize_identity_text(value: Optional[str]) -> Optional[str]:
         normalized_value = str(value or "").strip()

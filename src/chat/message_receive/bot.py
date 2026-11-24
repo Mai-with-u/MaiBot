@@ -41,7 +41,7 @@ from src.maisaka.context.clear_context import (
     mark_clear_context_command,
 )
 
-from .chat_manager import chat_manager
+from .chat_manager import BotChatSession, chat_manager
 from .image_receive_compressor import process_received_images_in_message
 from .message import SessionMessage, get_command_text
 
@@ -821,7 +821,9 @@ class ChatBot:
             f"收到回送消息 ID，但未找到可回填的本地消息: {normalized_mmc_message_id} -> {normalized_actual_message_id}"
         )
 
-    async def message_process(self, message_data: Dict[str, Any]) -> None:
+    async def message_process(
+        self, message_data: Dict[str, Any], *, bound_session: Optional[BotChatSession] = None,
+    ) -> None:
         """处理统一格式的入站消息字典。
 
         Args:
@@ -850,32 +852,45 @@ class ChatBot:
             message = SessionMessage.from_maim_message(
                 maim_raw_message, route_key=route_key, received_at=received_at
             )
-            await self.receive_message(message)
+            if bound_session is None:
+                await self.receive_message(message)
+            else:
+                await run_on_main_loop(self._receive_with_migration_gate(message, bound_session))
 
         except Exception as e:
+            if bound_session is not None:
+                raise
             logger.error(f"预处理消息失败: {e}")
             traceback.print_exc()
 
     async def receive_message(self, message: SessionMessage) -> None:
         await run_on_main_loop(self._receive_with_migration_gate(message))
 
-    async def _receive_with_migration_gate(self, message: SessionMessage) -> None:
+    async def _receive_with_migration_gate(
+        self, message: SessionMessage, bound_session: Optional[BotChatSession] = None,
+    ) -> None:
         """迁移期间等待该聊天流恢复，消息仍由原入站协程持有。"""
         from src.services.chat_migration_gate import chat_migration_gate
         from src.person_info.identity import normalize_message_identity
 
-        await to_thread(normalize_message_identity, message)
-        route = RouteKeyFactory.from_session_message(message)
-        group = message.message_info.group_info
-        session_id = SessionUtils.calculate_session_id(
-            message.platform, user_id=message.message_info.user_info.user_id,
-            group_id=group.group_id if group else None,
-            account_id=route.account_id, scope=route.scope,
-        )
+        if bound_session is None:
+            await to_thread(normalize_message_identity, message)
+            route = RouteKeyFactory.from_session_message(message)
+            group = message.message_info.group_info
+            session_id = SessionUtils.calculate_session_id(
+                message.platform, user_id=message.message_info.user_info.user_id,
+                group_id=group.group_id if group else None,
+                account_id=route.account_id, scope=route.scope,
+            )
+        else:
+            session_id = bound_session.session_id
         async with chat_migration_gate.activity(session_id):
-            await self._receive_message(message)
+            if bound_session is None:
+                await self._receive_message(message)
+            else:
+                await self._receive_message(message, bound_session)
 
-    async def _receive_message(self, message: SessionMessage) -> None:
+    async def _receive_message(self, message: SessionMessage, bound_session: Optional[BotChatSession] = None) -> None:
         """处理单条入站会话消息。
 
         Args:
@@ -890,7 +905,7 @@ class ChatBot:
             route_key = RouteKeyFactory.from_session_message(message)
             account_id, scope = route_key.account_id, route_key.scope
 
-            session_id = SessionUtils.calculate_session_id(
+            session_id = bound_session.session_id if bound_session is not None else SessionUtils.calculate_session_id(
                 message.platform,
                 user_id=message.message_info.user_info.user_id,
                 group_id=group_info.group_id if group_info else None,
@@ -950,6 +965,10 @@ class ChatBot:
                 logger.info(f"消息 {message.message_id} 在预处理后中止：{HookAbortedError(after_process_result)}")
                 return
 
+            if bound_session is not None:
+                # 绑定来自宿主的可信参数，Hook 改写的 session_id 不得改投其他会话。
+                message.session_id = bound_session.session_id
+
             group_info = message.message_info.group_info
             user_info = message.message_info.user_info
 
@@ -961,13 +980,14 @@ class ChatBot:
             # 已注册命令优先进入命令链；普通消息仍需先通过聊天过滤。
             text = message.processed_plain_text or ""
             pm_command = (
-                await match_pm_command(get_command_text(message)) if is_command_target_allowed(message) else None
+                await match_pm_command(get_command_text(message))
+                if bound_session is None and is_command_target_allowed(message) else None
             )
             if pm_command and message.session_id:
                 disabled_commands = global_announcement_manager.get_disabled_chat_commands(message.session_id)
                 if PM_COMMAND_ID.rsplit(".", 1)[1] in disabled_commands:
                     pm_command = None
-            if not pm_command and not self._is_command_candidate(message):
+            if not pm_command and (bound_session is not None or not self._is_command_candidate(message)):
                 is_banned, word = MessageUtils.check_ban_words(text)
                 if is_banned:
                     chat_name = group_info.group_name if group_info else "私聊"
@@ -981,7 +1001,10 @@ class ChatBot:
                     logger.info(f"[正则表达式过滤]消息匹配到{pattern}，filtered")
                     return
 
-            chat_manager.register_message(message)
+            if bound_session is None:
+                chat_manager.register_message(message)
+            else:
+                chat_manager.register_bound_message(bound_session, message)
 
             platform = message.platform
             user_id = user_info.user_id
@@ -990,17 +1013,16 @@ class ChatBot:
             from src.desktop_pet.service import desktop_pet_service
 
             desktop_pet_service.notify_user_message(platform, user_id, is_group=group_info is not None)
-            _ = await chat_manager.get_or_create_session(
-                platform,
-                user_id,
-                group_id,
-                account_id=account_id,
-                scope=scope,
-            )  # 确保会话存在
+            if bound_session is None:
+                await chat_manager.get_or_create_session(platform, user_id, group_id, account_id=account_id, scope=scope)
 
             from src.files.service import get_file_service
 
             await get_file_service().ingest(message)
+
+            if bound_session is not None:
+                await self.heartflow_message_receiver.process_message(message)
+                return
 
             # message.update_chat_stream(chat)
 
@@ -1035,8 +1057,12 @@ class ChatBot:
                     await self.heartflow_message_receiver.process_message(message)
 
             await preprocess()
+            if desktop_pet_service.is_bound_conversation(message.session_id):
+                desktop_pet_service.notify_conversation_message(serialize_session_message(message))
 
         except Exception as e:
+            if bound_session is not None:
+                raise
             logger.error(f"预处理消息失败: {e}")
             traceback.print_exc()
 

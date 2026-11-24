@@ -5,7 +5,7 @@
   if (!bridge) return;
   window.pywebview = { api: bridge.api };
   const received = new Set([
-    'history', 'reply', 'notice', 'thinking_caption', 'thinking', 'idle', 'failed', 'accepted',
+    'history', 'conversation', 'conversation_message', 'reply', 'notice', 'thinking_caption', 'thinking', 'idle', 'failed', 'accepted',
     'buttons', 'button_result', 'screen_state', 'exploration_state', 'exploration_result', 'exploration_tasks', 'connection',
   ]);
   const sounds = {wood: 'wooden-pop.wav', bubbles: 'soft-bubbles.wav', bell: 'warm-bell.wav', water: 'water-drop.wav'};
@@ -24,14 +24,18 @@
   bridge.onCommand(async ({ id, command }) => {
     try {
       let result = {};
-      if (command.type === 'skin') {
+      if (command.type === 'skin_loading') {
+        window.petSkin.setLoading(command.active);
+      } else if (command.type === 'skin') {
         let timer;
         try {
           result = await Promise.race([
-            window.petSkin.install(command.skin),
+            window.petSkin.install(command.skin,
+              command.skin_assets ? digest => bridge.api.skin_asset(digest, false, Boolean(command.cache_only)) : undefined,
+              command.skin_assets && !command.cache_only ? digest => bridge.api.skin_asset(digest, true) : undefined),
             new Promise((_, reject) => { timer = setTimeout(() => {
-              window.petSkin.cancelInstall(); reject(new Error('皮肤资源解码超时'));
-            }, 10000); }),
+              window.petSkin.cancelInstall(); reject(new Error('皮肤资源加载超时'));
+            }, command.skin_assets ? 22000 : 10000); }),
           ]);
         } finally { clearTimeout(timer); }
       } else if (command.type === 'animation') {

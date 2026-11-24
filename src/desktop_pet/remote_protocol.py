@@ -8,11 +8,13 @@ import base64
 import hashlib
 
 from .screen import DesktopScreenshot
+from .skins import SkinAssets
 
 
 class RemotePeer(Protocol):
     client_id: str
     capabilities: Dict[str, bool]
+    skin_assets: SkinAssets
 
     async def send(self, command: Dict[str, Any]) -> None: ...
 

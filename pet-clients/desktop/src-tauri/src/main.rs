@@ -1,10 +1,15 @@
 #![cfg_attr(not(debug_assertions), windows_subsystem = "windows")]
 
+#[cfg(windows)]
+mod credentials;
 mod native;
+mod skin_cache;
 mod windows;
 
 use serde_json::{json, Value};
 use sha2::{Digest, Sha256};
+#[cfg(windows)]
+use std::collections::HashSet;
 use std::{
     collections::HashMap,
     path::PathBuf,
@@ -27,6 +32,27 @@ struct Auth {
     nonce: String,
     bots: Vec<Value>,
     connected: bool,
+    #[cfg(windows)]
+    credentials: Option<Arc<LoginCredentials>>,
+}
+
+#[cfg(windows)]
+struct LoginCredentials {
+    store: Option<credentials::Store>,
+    basic: Mutex<BasicAttempt>,
+    webui: Mutex<TokenAttempt>,
+}
+#[cfg(windows)]
+struct BasicAttempt {
+    value: Option<credentials::BasicLogin>,
+    attempted: HashSet<String>,
+    rejected: bool,
+}
+#[cfg(windows)]
+struct TokenAttempt {
+    value: Option<String>,
+    tried: bool,
+    verified: bool,
 }
 
 #[derive(Clone)]
@@ -64,26 +90,84 @@ impl Drop for ConnectionChange {
 }
 
 #[cfg(windows)]
-async fn show_proxy_challenges(window: &WebviewWindow) -> Result<(), String> {
+async fn handle_proxy_challenges(
+    window: &WebviewWindow,
+    base: tauri::Url,
+    login: Option<Arc<LoginCredentials>>,
+) -> Result<(), String> {
     use webview2_com::{
-        BasicAuthenticationRequestedEventHandler, Microsoft::Web::WebView2::Win32::ICoreWebView2_10,
+        take_pwstr, BasicAuthenticationRequestedEventHandler,
+        Microsoft::Web::WebView2::Win32::ICoreWebView2_10,
     };
-    use windows_core::Interface;
-    let show = window.clone();
+    use windows_core::{Interface, HSTRING, PWSTR};
+    let app = window.app_handle().clone();
+    let label = window.label().to_owned();
     let (sender, receiver) = oneshot::channel();
     window
         .with_webview(move |webview| {
-            // Only reveal the browser's own challenge dialog; credentials never enter Rust.
             let result = (|| -> windows_core::Result<()> {
                 unsafe {
                     let core: ICoreWebView2_10 = webview.controller().CoreWebView2()?.cast()?;
-                    let handler =
-                        BasicAuthenticationRequestedEventHandler::create(Box::new(move |_, _| {
-                            if let Err(e) = show.show() {
-                                report(e);
+                    let handler = BasicAuthenticationRequestedEventHandler::create(Box::new(
+                        move |_, args| {
+                            let Some(args) = args else {
+                                return Ok(());
+                            };
+                            let mut uri = PWSTR::null();
+                            args.Uri(&mut uri)?;
+                            let Ok(mut uri) = tauri::Url::parse(&take_pwstr(uri)) else {
+                                return args.SetCancel(true);
+                            };
+                            let root = base.path().trim_end_matches('/');
+                            if uri.origin() != base.origin()
+                                || !(uri.path() == root
+                                    || uri.path().starts_with(&format!("{root}/")))
+                            {
+                                return args.SetCancel(true);
+                            }
+                            let mut challenge = PWSTR::null();
+                            args.Challenge(&mut challenge)?;
+                            let challenge = take_pwstr(challenge);
+                            if !challenge
+                                .get(..6)
+                                .is_some_and(|v| v.eq_ignore_ascii_case("basic "))
+                            {
+                                return Ok(());
+                            }
+                            uri.set_fragment(None);
+                            let mut failure = "NGINX_AUTH_REQUIRED";
+                            if let Some(login) = &login {
+                                let mut candidate = login.basic.lock().unwrap();
+                                let can_try = !candidate.rejected
+                                    && candidate.attempted.len() < 32
+                                    && !candidate.attempted.contains(uri.as_str());
+                                if let Some(value) = &mut candidate.value {
+                                    if can_try
+                                        && (value.challenge.is_empty()
+                                            || value.challenge == challenge)
+                                    {
+                                        let response = args.Response()?;
+                                        response.SetUserName(&HSTRING::from(&value.username))?;
+                                        response.SetPassword(&HSTRING::from(&value.password))?;
+                                        value.challenge = challenge;
+                                        candidate.attempted.insert(uri.into());
+                                        return Ok(());
+                                    }
+                                    candidate.rejected = true;
+                                    failure = "NGINX_AUTH_REJECTED";
+                                }
+                            }
+                            args.SetCancel(true)?;
+                            let state = app.state::<Shared>();
+                            let mut state = state.lock().unwrap();
+                            if state.auth.as_ref().is_some_and(|auth| auth.label == label) {
+                                if let Some(sender) = state.discovery.take() {
+                                    let _ = sender.send(Err(failure.into()));
+                                }
                             }
                             Ok(())
-                        }));
+                        },
+                    ));
                     let mut token = 0;
                     core.add_BasicAuthenticationRequested(&handler, &mut token)?;
                 }
@@ -94,6 +178,74 @@ async fn show_proxy_challenges(window: &WebviewWindow) -> Result<(), String> {
         })
         .map_err(error)?;
     receiver.await.map_err(error)?
+}
+
+#[cfg(windows)]
+fn credential_store(app: &tauri::AppHandle, server: &str) -> credentials::Store {
+    let directory = app
+        .state::<Shared>()
+        .lock()
+        .unwrap()
+        .directory
+        .join("saved-logins")
+        .join(format!("{:x}", Sha256::digest(server.as_bytes())));
+    credentials::Store::new(directory, server)
+}
+
+#[cfg(windows)]
+async fn load_credentials(
+    app: &tauri::AppHandle,
+    server: &str,
+    input: &Value,
+) -> Result<Option<Arc<LoginCredentials>>, String> {
+    let username = input["basicUser"].as_str().unwrap_or_default();
+    let password = input["basicPassword"].as_str().unwrap_or_default();
+    let token = input["webuiToken"].as_str().unwrap_or_default().trim();
+    if [username, password, token]
+        .iter()
+        .any(|value| value.len() > 4096 || value.contains('\0'))
+        || username.contains(':')
+        || username.is_empty() != password.is_empty()
+    {
+        return Err("请检查 Nginx 用户名和密码是否均已填写，以及密码长度是否有效".into());
+    }
+    let secure = credentials::can_remember(&tauri::Url::parse(server).map_err(error)?);
+    let store = secure.then(|| credential_store(app, server));
+    let basic = (!username.is_empty()).then(|| credentials::BasicLogin {
+        username: username.into(),
+        password: password.into(),
+        challenge: String::new(),
+    });
+    let webui = (!token.is_empty()).then(|| token.to_owned());
+    tauri::async_runtime::spawn_blocking(move || {
+        let basic = basic.or_else(|| {
+            store.as_ref()?.load("nginx").unwrap_or_else(|e| {
+                report(e);
+                None
+            })
+        });
+        let token = webui.or_else(|| {
+            store.as_ref()?.load("webui").unwrap_or_else(|e| {
+                report(e);
+                None
+            })
+        });
+        Some(Arc::new(LoginCredentials {
+            store,
+            basic: Mutex::new(BasicAttempt {
+                value: basic,
+                attempted: HashSet::new(),
+                rejected: false,
+            }),
+            webui: Mutex::new(TokenAttempt {
+                value: token,
+                tried: false,
+                verified: false,
+            }),
+        }))
+    })
+    .await
+    .map_err(error)
 }
 fn id() -> String {
     uuid::Uuid::new_v4().simple().to_string()
@@ -287,6 +439,11 @@ async fn wait_reply(
 }
 
 async fn page(app: &tauri::AppHandle, role: &str, command: Value) -> Reply {
+    let timeout = if command["type"] == "skin" && command["skin_assets"] == true {
+        24
+    } else {
+        15
+    };
     let window = app.get_webview_window(role).ok_or("桌宠页面已关闭")?;
     let request = id();
     let (sender, receiver) = oneshot::channel();
@@ -309,7 +466,7 @@ async fn page(app: &tauri::AppHandle, role: &str, command: Value) -> Reply {
             .remove(&request);
         return Err(error(e));
     }
-    wait_reply(app, request, receiver, 15).await
+    wait_reply(app, request, receiver, timeout).await
 }
 
 async fn request(app: &tauri::AppHandle, method: &str, path: &str, payload: Value) -> Reply {
@@ -384,8 +541,10 @@ fn authenticated_window(window: &WebviewWindow, nonce: &str) -> Result<Auth, Str
     Ok(auth.clone())
 }
 
-async fn discover(app: &tauri::AppHandle, server: String) -> Reply {
-    let server = normalize_server(&server)?;
+async fn discover(app: &tauri::AppHandle, server: &str, _input: &Value) -> Reply {
+    let server = normalize_server(server)?;
+    #[cfg(windows)]
+    let credentials = load_credentials(app, &server, _input).await?;
     let (sender, receiver) = oneshot::channel();
     let label = format!("auth-{}", id());
     let nonce = id();
@@ -406,6 +565,8 @@ async fn discover(app: &tauri::AppHandle, server: String) -> Reply {
             server: server.clone(),
             bots: vec![],
             connected: false,
+            #[cfg(windows)]
+            credentials: credentials.clone(),
         });
         old
     };
@@ -435,17 +596,33 @@ async fn discover(app: &tauri::AppHandle, server: String) -> Reply {
         .await
         .map_err(error)?
         .map_err(error)?;
-    let script = format!(
-        "window.__petTransportConfig={};\n{TRANSPORT}",
-        json!({"nonce":nonce,"server":server})
-    );
-    let mut builder = WebviewWindowBuilder::new(app, &label, WebviewUrl::External(url))
+    #[allow(unused_mut)]
+    let mut transport_config = json!({"nonce":nonce,"server":server});
+    #[cfg(windows)]
+    if credentials
+        .as_ref()
+        .is_some_and(|login| login.webui.lock().unwrap().value.is_some())
+    {
+        transport_config["tryToken"] = json!(true);
+        transport_config["forceToken"] = json!(_input["webuiToken"]
+            .as_str()
+            .is_some_and(|v| !v.trim().is_empty()));
+    }
+    let script = format!("window.__petTransportConfig={transport_config};\n{TRANSPORT}");
+    // On Windows, register the Basic auth handler before the first network request.
+    #[cfg(windows)]
+    let initial_url = tauri::Url::parse("about:blank").map_err(error)?;
+    #[cfg(not(windows))]
+    let initial_url = url;
+    let mut builder = WebviewWindowBuilder::new(app, &label, WebviewUrl::External(initial_url))
         .title("登录 WebUI · MaiBot")
         .inner_size(920.0, 720.0)
         .data_directory(directory)
         .background_throttling(tauri::utils::config::BackgroundThrottlingPolicy::Disabled)
         .initialization_script(&script)
-        .on_navigation(|url| matches!(url.scheme(), "http" | "https"))
+        .on_navigation(|url| {
+            matches!(url.scheme(), "http" | "https") || url.as_str() == "about:blank"
+        })
         .on_new_window(|_, _| tauri::webview::NewWindowResponse::Deny)
         .on_permission_request(|_, _| tauri::webview::PermissionResponse::Deny)
         .on_download(|_, _| false);
@@ -475,7 +652,15 @@ async fn discover(app: &tauri::AppHandle, server: String) -> Reply {
     let handle = app.clone();
     let auth_label = label.clone();
     #[cfg(windows)]
-    show_proxy_challenges(&window).await?;
+    {
+        handle_proxy_challenges(
+            &window,
+            tauri::Url::parse(&server).map_err(error)?,
+            credentials,
+        )
+        .await?;
+        window.navigate(url).map_err(error)?;
+    }
     window.on_window_event(move |event| {
         if let tauri::WindowEvent::CloseRequested { api, .. } = event {
             api.prevent_close();
@@ -491,7 +676,12 @@ async fn discover(app: &tauri::AppHandle, server: String) -> Reply {
     });
     // 用户登录可以慢于网络超时；关闭认证窗口可随时取消。
     match tokio::time::timeout(Duration::from_secs(600), receiver).await {
-        Ok(Ok(result)) => result,
+        Ok(Ok(result)) => {
+            if result.is_err() && app.get_webview_window(&label).is_some() {
+                let _ = window.destroy();
+            }
+            result
+        }
         _ => {
             app.state::<Shared>().lock().unwrap().discovery.take();
             Err("WebUI 登录已超时，请重新连接".into())
@@ -598,11 +788,11 @@ async fn login_call(window: WebviewWindow, method: String, args: Vec<Value>) -> 
             let state = app.state::<Shared>();
             let state = state.lock().unwrap();
             Ok(
-                json!({"server":state.settings["server"],"botId":state.settings["botId"],"botName":state.settings["botName"]}),
+                json!({"server":state.settings["server"],"botId":state.settings["botId"],"botName":state.settings["botName"],"rememberCredentials":cfg!(windows)}),
             )
         }
         "fit" => {
-            let height = number(&args, 0)?.clamp(240.0, 560.0);
+            let height = number(&args, 0)?.clamp(240.0, 680.0);
             let scale = number(&args, 1)?;
             if !(0.1..=16.0).contains(&scale) {
                 return Err("无效窗口缩放比例".into());
@@ -615,7 +805,34 @@ async fn login_call(window: WebviewWindow, method: String, args: Vec<Value>) -> 
                 .map_err(error)?;
             Ok(Value::Null)
         }
-        "discover" => discover(app, string(&args, 0)?.into()).await,
+        "discover" => discover(app, string(&args, 0)?, args.get(1).unwrap_or(&Value::Null)).await,
+        #[cfg(windows)]
+        "credential_status" => {
+            let server = normalize_server(string(&args, 0)?)?;
+            if !credentials::can_remember(&tauri::Url::parse(&server).map_err(error)?) {
+                return Ok(json!({"nginx": false, "webui": false}));
+            }
+            let store = credential_store(app, &server);
+            tauri::async_runtime::spawn_blocking(move || {
+                let nginx = matches!(store.load::<credentials::BasicLogin>("nginx"), Ok(Some(_)));
+                let webui = matches!(store.load::<String>("webui"), Ok(Some(_)));
+                json!({"nginx": nginx, "webui": webui})
+            })
+            .await
+            .map_err(error)
+        }
+        #[cfg(windows)]
+        "forget_credentials" => {
+            let server = normalize_server(string(&args, 0)?)?;
+            let store = credential_store(app, &server);
+            tauri::async_runtime::spawn_blocking(move || {
+                store.forget("nginx")?;
+                store.forget("webui")
+            })
+            .await
+            .map_err(error)??;
+            Ok(Value::Null)
+        }
         "connect" => connect(app, args.first().ok_or("缺少连接信息")?.clone()).await,
         "cancel" => {
             if let Some(sender) = app.state::<Shared>().lock().unwrap().discovery.take() {
@@ -706,6 +923,27 @@ async fn pet_call(window: WebviewWindow, method: String, args: Vec<Value>) -> Re
     };
     match method.as_str() {
         "ready" => {
+            let handle = app.clone();
+            let scope = session.key.clone();
+            let cached = tauri::async_runtime::spawn_blocking(move || {
+                handle.state::<skin_cache::SkinCache>().last_skin(&scope)
+            })
+            .await
+            .map_err(error)?;
+            if let Some(skin) = cached {
+                let result = page(
+                    app,
+                    "pet",
+                    json!({"type":"skin", "skin":skin,
+                    "skin_assets":true, "cache_only":true}),
+                )
+                .await;
+                if result.is_err() {
+                    let _ = page(app, "pet", json!({"type":"skin_loading","active":true})).await;
+                }
+            } else {
+                let _ = page(app, "pet", json!({"type":"skin_loading","active":true})).await;
+            }
             let auth = {
                 let state = app.state::<Shared>();
                 let mut state = state.lock().unwrap();
@@ -729,7 +967,7 @@ async fn pet_call(window: WebviewWindow, method: String, args: Vec<Value>) -> Re
                 app,
                 "POST",
                 &format!("/chat/{request_id}"),
-                json!({"text":args.get(1),"images":args.get(2)}),
+                json!({"text":args.get(1),"images":args.get(2),"conversation_id":args.get(3)}),
             )
             .await?;
             let _ = page(
@@ -771,6 +1009,54 @@ async fn pet_call(window: WebviewWindow, method: String, args: Vec<Value>) -> Re
                     ["data_url"]
                     .clone(),
             )
+        }
+        "skin_asset" => {
+            local(&window, "pet")?;
+            let digest = string(&args, 0)?;
+            if !hex(digest, 64) {
+                return Err("无效皮肤资源 ID".into());
+            }
+            let prefetch = args.get(1).and_then(Value::as_bool).unwrap_or(false);
+            let cache_only = args.get(2).and_then(Value::as_bool).unwrap_or(false);
+            let scope = session.key.clone();
+            let digest = digest.to_owned();
+            let handle = app.clone();
+            let hit_scope = scope.clone();
+            let hit_digest = digest.clone();
+            let hit = tauri::async_runtime::spawn_blocking(move || {
+                handle
+                    .state::<skin_cache::SkinCache>()
+                    .read(&hit_scope, &hit_digest, prefetch)
+            })
+            .await
+            .map_err(error)?;
+            if let Some(hit) = hit {
+                return Ok(if prefetch { Value::Null } else { json!(hit) });
+            }
+            if cache_only {
+                return Err("本机没有该皮肤图片".into());
+            }
+            let data = request(app, "GET", &format!("/skins/assets/{digest}"), Value::Null).await?;
+            if !app
+                .state::<Shared>()
+                .lock()
+                .unwrap()
+                .session
+                .as_ref()
+                .is_some_and(|current| current.generation == session.generation)
+            {
+                return Err("桌宠连接已切换".into());
+            }
+            let handle = app.clone();
+            tauri::async_runtime::spawn_blocking(move || {
+                let url = data["data_url"].as_str().ok_or("无效皮肤资源响应")?;
+                handle
+                    .state::<skin_cache::SkinCache>()
+                    .save(&scope, &digest, url)?;
+                Ok(if prefetch { Value::Null } else { json!(url) })
+            })
+            .await
+            .map_err(error)?
         }
         "add_todo" => Ok(todo(
             app,
@@ -909,6 +1195,48 @@ async fn execute(app: &tauri::AppHandle, session: Session, nonce: &str, command:
         }
     }
     match command["type"].as_str().ok_or("缺少指令类型")? {
+        "skin" => {
+            let mut command = command;
+            let scope = session.key.clone();
+            if command["skin_assets"] != true && command["skin"]["id"] != "builtin" {
+                let _ = page(app, "pet", json!({"type":"skin_loading","active":true})).await;
+                let handle = app.clone();
+                let key = scope.clone();
+                command = tauri::async_runtime::spawn_blocking(move || {
+                    match handle
+                        .state::<skin_cache::SkinCache>()
+                        .import_inline(&key, &command["skin"])
+                    {
+                        Ok(resources) => {
+                            command["skin"]["resources"] = resources;
+                            command["skin_assets"] = json!(true);
+                            command["cache_only"] = json!(true);
+                        }
+                        Err(err) => report(format!("无法缓存整套皮肤：{err}")),
+                    }
+                    command
+                })
+                .await
+                .map_err(error)?;
+            }
+            let keep = command["skin_assets"] == true || command["skin"]["id"] == "builtin";
+            let manifest = keep.then(|| command["skin"].clone());
+            let result = page(app, "pet", command).await?;
+            if let Some(manifest) = manifest {
+                let handle = app.clone();
+                tauri::async_runtime::spawn_blocking(move || {
+                    if let Err(err) = handle
+                        .state::<skin_cache::SkinCache>()
+                        .remember(&scope, &manifest)
+                    {
+                        report(format!("无法保存当前皮肤：{err}"));
+                    }
+                })
+                .await
+                .map_err(error)?;
+            }
+            Ok(result)
+        }
         "capture_screen" | "sample_screen" | "applications" => {
             session.native.execute(&command).await
         }
@@ -958,11 +1286,25 @@ async fn execute(app: &tauri::AppHandle, session: Session, nonce: &str, command:
                 Ok(json!({}))
             }
         }
-        "history" | "skin" | "animation" | "reply" | "notice" | "thinking_caption" | "thinking" | "idle"
-        | "failed" | "accepted" | "buttons" | "button_result" | "screen_state"
-        | "exploration_state" | "exploration_result" | "exploration_tasks" | "todo_refresh" => {
-            page(app, "pet", command).await
-        }
+        "history"
+        | "conversation"
+        | "conversation_message"
+        | "skin_loading"
+        | "animation"
+        | "reply"
+        | "notice"
+        | "thinking_caption"
+        | "thinking"
+        | "idle"
+        | "failed"
+        | "accepted"
+        | "buttons"
+        | "button_result"
+        | "screen_state"
+        | "exploration_state"
+        | "exploration_result"
+        | "exploration_tasks"
+        | "todo_refresh" => page(app, "pet", command).await,
         _ => Err("不支持的服务器指令".into()),
     }
 }
@@ -979,6 +1321,46 @@ async fn transport_message(
     }
     let app = window.app_handle();
     match payload["type"].as_str().ok_or("消息缺少类型")? {
+        #[cfg(windows)]
+        "token_required" => {
+            let auth_page = tauri::Url::parse(&(auth.server.clone() + "/auth")).map_err(error)?;
+            if window.url().map_err(error)?.path() != auth_page.path() {
+                return Err("仅 WebUI 登录页可验证凭据".into());
+            }
+            if let Some(credentials) = &auth.credentials {
+                let token = {
+                    let mut attempt = credentials.webui.lock().unwrap();
+                    if attempt.tried {
+                        None
+                    } else {
+                        attempt.tried = true;
+                        attempt.value.clone()
+                    }
+                };
+                if let Some(token) = token {
+                    transport_for(app, &auth, "verifyToken", json!([token]))?;
+                }
+            }
+        }
+        #[cfg(windows)]
+        "token_verified" => {
+            if let Some(credentials) = &auth.credentials {
+                let mut attempt = credentials.webui.lock().unwrap();
+                attempt.verified = attempt.tried;
+            }
+        }
+        #[cfg(windows)]
+        "token_invalid" => {
+            let sender = {
+                let state = app.state::<Shared>();
+                let mut state = state.lock().unwrap();
+                state.discovery.take()
+            };
+            if let Some(sender) = sender {
+                let _ = window.destroy();
+                let _ = sender.send(Err("WebUI 密码无效或已更改，请在连接页重新填写".into()));
+            }
+        }
         "ready" => {
             app.state::<Shared>()
                 .lock()
@@ -997,6 +1379,62 @@ async fn transport_message(
                 })
             {
                 return Err("机器人列表无效".into());
+            }
+            #[cfg(windows)]
+            if let Some(credentials) = auth.credentials.clone() {
+                let basic = {
+                    let mut attempt = credentials.basic.lock().unwrap();
+                    if !attempt.attempted.is_empty() && !attempt.rejected {
+                        attempt.value.take()
+                    } else {
+                        None
+                    }
+                };
+                let token = {
+                    let mut attempt = credentials.webui.lock().unwrap();
+                    if attempt.verified {
+                        attempt.value.take()
+                    } else {
+                        None
+                    }
+                };
+                if basic.is_some() || token.is_some() {
+                    let saved = tauri::async_runtime::spawn_blocking(move || {
+                        let Some(store) = &credentials.store else {
+                            return Ok(());
+                        };
+                        if let Some(basic) = basic {
+                            store.save("nginx", &basic)?;
+                        }
+                        if let Some(token) = token {
+                            store.save("webui", &token)?;
+                        }
+                        Ok::<(), String>(())
+                    })
+                    .await
+                    .map_err(error)
+                    .and_then(|result| result);
+                    if let Err(e) = saved {
+                        let sender = {
+                            let state = app.state::<Shared>();
+                            let mut state = state.lock().unwrap();
+                            if state
+                                .auth
+                                .as_ref()
+                                .is_some_and(|current| current.label == auth.label)
+                            {
+                                state.discovery.take()
+                            } else {
+                                None
+                            }
+                        };
+                        if let Some(sender) = sender {
+                            let _ = window.destroy();
+                            let _ = sender.send(Err(format!("登录成功，但无法加密保存凭据：{e}")));
+                        }
+                        return Err(e);
+                    }
+                }
             }
             let session_page =
                 tauri::Url::parse(&(auth.server.clone() + "/api/host/desktop-pet/session"))
@@ -1191,6 +1629,7 @@ fn main() {
                 None => app.path().app_data_dir()?,
             };
             std::fs::create_dir_all(&directory)?;
+            app.manage(skin_cache::SkinCache::new(directory.join("skin-cache")));
             let settings = match std::fs::read(directory.join("settings.json")) {
                 Ok(bytes) => {
                     let data: Value = serde_json::from_slice(&bytes)?;
