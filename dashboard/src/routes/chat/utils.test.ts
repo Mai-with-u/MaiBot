@@ -2,7 +2,9 @@ import { beforeEach, describe, expect, it, vi } from 'vitest'
 
 import { VIRTUAL_TABS_STORAGE_KEY } from './types'
 import type { ChatTab, SavedVirtualTab } from './types'
+import type { BotNicknameState } from '@/lib/bot-nickname'
 import {
+  getChatBotDisplayName,
   getChatTabDisplayName,
   getSavedVirtualTabs,
   getStoredUserAvatarVersion,
@@ -143,23 +145,49 @@ describe('虚拟标签页持久化', () => {
 })
 
 describe('getChatTabDisplayName', () => {
+  const loadedNickname: BotNicknameState = { nickname: '麦麦', isConfigLoaded: true }
+  const unavailableNickname: BotNicknameState = { nickname: null, isConfigLoaded: false }
+
   it('虚拟标签页直接返回其 label', () => {
     const tab = makeVirtualTab('虚拟群聊')
-    expect(getChatTabDisplayName(tab, '麦麦')).toBe('虚拟群聊')
+    expect(getChatTabDisplayName(tab, loadedNickname, '默认名')).toBe('虚拟群聊')
   })
 
-  it('webui 标签页返回去除首尾空白后的 bot_name', () => {
-    const tab = makeWebuiTab({ bot_name: '  麦麦  ' })
-    expect(getChatTabDisplayName(tab, '默认名')).toBe('麦麦')
+  it('webui 标签页使用当前配置昵称，而不是连接时缓存的昵称', () => {
+    const tab = makeWebuiTab({ bot_name: '旧昵称' })
+    expect(getChatTabDisplayName(tab, { nickname: '小满', isConfigLoaded: true }, '默认名')).toBe('小满')
   })
 
-  it('bot_name 为纯空白时回退到 botNameFallback', () => {
+  it('配置不可用时使用已知连接昵称', () => {
+    const tab = makeWebuiTab({ bot_name: '  小满  ' })
+    expect(getChatTabDisplayName(tab, unavailableNickname, '默认名')).toBe('小满')
+  })
+
+  it('配置成功但昵称已清空时不再使用旧连接昵称', () => {
+    const tab = makeWebuiTab({ bot_name: '小满' })
+    expect(
+      getChatTabDisplayName(tab, { nickname: null, isConfigLoaded: true }, '默认名')
+    ).toBe('默认名')
+  })
+
+  it('连接昵称为空时使用默认昵称', () => {
     const tab = makeWebuiTab({ bot_name: '   ' })
-    expect(getChatTabDisplayName(tab, '默认名')).toBe('默认名')
+    expect(getChatTabDisplayName(tab, unavailableNickname, '默认名')).toBe('默认名')
   })
 
-  it('bot_name 缺失时回退到 botNameFallback', () => {
+  it('连接昵称缺失时使用默认昵称', () => {
     const tab = makeWebuiTab({})
-    expect(getChatTabDisplayName(tab, '默认名')).toBe('默认名')
+    expect(getChatTabDisplayName(tab, unavailableNickname, '默认名')).toBe('默认名')
+  })
+})
+
+describe('getChatBotDisplayName', () => {
+  it('uses the server nickname for virtual chat sessions when config is unavailable', () => {
+    const tab = makeVirtualTab('虚拟会话')
+    tab.sessionInfo.bot_name = '小满'
+
+    expect(
+      getChatBotDisplayName(tab, { nickname: null, isConfigLoaded: false }, '默认名')
+    ).toBe('小满')
   })
 })

@@ -9,7 +9,9 @@ import { DataPanel, PageFrame } from '@/components/ui/surface'
 import { Input } from '@/components/ui/input'
 import { ScrollArea } from '@/components/ui/scroll-area'
 import { Tooltip, TooltipContent, TooltipTrigger } from '@/components/ui/tooltip'
+import { useBotNickname } from '@/hooks/use-bot-nickname'
 import { useResolvedAvatarUrl } from '@/lib/avatar-url'
+import { getBotDisplayName } from '@/lib/bot-nickname'
 import { cn } from '@/lib/utils'
 import type { SessionInfo, StageStatusInfo } from '@/routes/monitor/use-maisaka-monitor'
 import { StageStatusLabel } from '@/routes/monitor/StageStatusLabel'
@@ -47,11 +49,13 @@ function getMessagePreview(message: ChatMessage | undefined, fallback: string) {
 
 const ConversationItem = memo(function ConversationItem({
   tab,
+  displayName,
   active,
   onSwitch,
   onClose,
 }: {
   tab: ChatTab
+  displayName: string
   active: boolean
   onSwitch: (id: string) => void
   onClose: (id: string, e?: React.MouseEvent | React.KeyboardEvent) => void
@@ -60,7 +64,6 @@ const ConversationItem = memo(function ConversationItem({
   const isVirtual = tab.type === 'virtual'
   const lastMessage = tab.messages[tab.messages.length - 1]
   const preview = getMessagePreview(lastMessage, t('chat.sidebar.emptyPreview'))
-  const displayName = getChatTabDisplayName(tab, t('chat.botNameFallback'))
   const avatarUrl = useChatTabAvatarUrl(tab)
   return (
     <ConversationListItem
@@ -209,6 +212,14 @@ export function ChatWorkspaceSidebar({
   onClose,
 }: ChatWorkspaceSidebarProps) {
   const { t } = useTranslation()
+  const botNickname = useBotNickname()
+  const botNameFallback = t('chat.botNameFallback')
+  const knownBotName = tabs.find(
+    (tab) => tab.type === 'webui' && tab.sessionInfo.bot_name?.trim()
+  )?.sessionInfo.bot_name
+  const sectionBotName = getBotDisplayName(botNickname, knownBotName, botNameFallback)
+  const myChatsTitle = t('chat.sidebar.myChatsForBot', { name: sectionBotName })
+  const observedChatsTitle = t('chat.sidebar.observedChatsForBot', { name: sectionBotName })
   const [searchQuery, setSearchQuery] = useState('')
   const sortedObservedSessions = useMemo(
     () => Array.from(observedSessions.values()).filter((session) => session.platform !== 'internal').sort((a, b) => b.lastActivity - a.lastActivity),
@@ -217,13 +228,6 @@ export function ChatWorkspaceSidebar({
 
   // 顶部搜索框：按显示名过滤本地会话与观察聊天流
   const normalizedQuery = searchQuery.trim().toLowerCase()
-  const filteredTabs = normalizedQuery
-    ? tabs.filter((tab) =>
-        getChatTabDisplayName(tab, t('chat.botNameFallback'))
-          .toLowerCase()
-          .includes(normalizedQuery)
-      )
-    : tabs
   const filteredObservedSessions = useMemo(
     () => normalizedQuery
       ? sortedObservedSessions.filter((session) =>
@@ -232,6 +236,13 @@ export function ChatWorkspaceSidebar({
       : sortedObservedSessions,
     [normalizedQuery, sortedObservedSessions]
   )
+  const filteredTabs = normalizedQuery
+    ? tabs.filter((tab) =>
+        getChatTabDisplayName(tab, botNickname, botNameFallback)
+          .toLowerCase()
+          .includes(normalizedQuery)
+      )
+    : tabs
   const observedSections = [
     { title: 'Focus 共享流', sessions: filteredObservedSessions.filter((session) => isFocusFlowId(session.sessionId)) },
     { title: '聊天会话', sessions: filteredObservedSessions.filter((session) => !isFocusFlowId(session.sessionId)) },
@@ -280,7 +291,7 @@ export function ChatWorkspaceSidebar({
                 id="chat-sidebar-local-heading"
                 className="text-muted-foreground px-2.5 pt-0.5 pb-1 text-[11px] font-medium tracking-wide"
               >
-                {t('chat.sidebar.myChats')}
+                {myChatsTitle}
               </h2>
               <DataPanel padding="none">
                 {filteredTabs.map((tab) => (
@@ -288,6 +299,7 @@ export function ChatWorkspaceSidebar({
                     key={tab.id}
                     active={!agentActive && activeObservedSessionId === null && activeTabId === tab.id}
                     tab={tab}
+                    displayName={getChatTabDisplayName(tab, botNickname, botNameFallback)}
                     onSwitch={onSwitch}
                     onClose={onClose}
                   />
@@ -318,7 +330,7 @@ export function ChatWorkspaceSidebar({
                 id="chat-sidebar-observed-heading"
                 className="text-muted-foreground px-2.5 pt-0.5 pb-1 text-[11px] font-medium tracking-wide"
               >
-                {t('chat.sidebar.observedChats')}
+                {observedChatsTitle}
                 <span>{filteredObservedSessions.length}</span>
               </h2>
               <DataPanel padding="none" className="flex min-h-0 flex-1 flex-col">

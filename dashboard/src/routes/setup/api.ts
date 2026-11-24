@@ -246,10 +246,7 @@ export async function loadModelSetupConfig(): Promise<ModelSetupConfig> {
 
 // 保存Bot基础配置
 export async function saveBotBasicConfig(config: BotBasicConfig) {
-  return backendApi.post('/api/webui/config/bot/section/bot', {
-    body: config,
-    errorMessage: i18n.t('setupPage.errors.saveBot'),
-  })
+  return updateBotConfigSection('bot', config, i18n.t('setupPage.errors.saveBot'))
 }
 
 // 保存人格配置

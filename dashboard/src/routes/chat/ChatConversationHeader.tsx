@@ -4,6 +4,7 @@ import { useTranslation } from 'react-i18next'
 import { Button } from '@/components/ui/button'
 import { ConversationAvatar, ConversationHeader } from '@/components/ui/conversation'
 import { StatusIndicator } from '@/components/ui/data-browser'
+import type { BotNicknameState } from '@/lib/bot-nickname'
 import { Popover, PopoverContent, PopoverTrigger } from '@/components/ui/popover'
 import { useChatTabAvatarUrl } from './local-bot-avatar'
 import { LocalBotAvatarSettings } from './LocalBotAvatarSettings'
@@ -12,9 +13,21 @@ import type { ChatTab } from './types'
 import { getChatTabDisplayName } from './utils'
 
 /** 本地与虚拟会话共用标题栏；清空仅作用于当前显示的消息。 */
-export function ChatConversationHeader({ tab, onClear, onObserve }: { tab: ChatTab; onClear: () => void; onObserve?: () => void }) {
+export function ChatConversationHeader({
+  tab,
+  botNickname,
+  botNameFallback,
+  onClear,
+  onObserve,
+}: {
+  tab: ChatTab
+  botNickname: BotNicknameState
+  botNameFallback: string
+  onClear: () => void
+  onObserve?: () => void
+}) {
   const { t } = useTranslation()
-  const name = getChatTabDisplayName(tab, t('chat.botNameFallback'))
+  const name = getChatTabDisplayName(tab, botNickname, botNameFallback)
   const virtual = tab.type === 'virtual'
   const avatar = useChatTabAvatarUrl(tab)
   const connection = t(tab.isConnected ? 'chat.sidebar.online' : 'chat.sidebar.offline')
