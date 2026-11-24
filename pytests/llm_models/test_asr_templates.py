@@ -74,6 +74,37 @@ async def test_asr_multipart(
         assert result.content == "你好"
 
 
+@pytest.mark.asyncio
+async def test_custom_transcription_path(monkeypatch: pytest.MonkeyPatch) -> None:
+    wav = make_wav()
+
+    def receive(request: httpx.Request) -> httpx.Response:
+        assert request.method == "POST" and str(request.url) == "https://api.minimax.cn/v1/speech_to_text?lang=zh"
+        assert request.headers["Authorization"] == "Bearer test-key"
+        assert request.headers["Content-Type"].startswith("multipart/form-data; boundary=")
+        message = BytesParser(policy=default).parsebytes(
+            f"Content-Type: {request.headers['Content-Type']}\r\n\r\n".encode() + request.content
+        )
+        fields = {
+            part.get_param("name", header="content-disposition"): part.get_payload(decode=True)
+            for part in message.iter_parts()
+        }
+        assert fields == {"file": wav, "model": b"asr-1.0", "hotword": b"rain"}
+        return httpx.Response(200, json={"text": "大家好", "duration": 1.0})
+
+    async with httpx.AsyncClient(transport=httpx.MockTransport(receive)) as http_client:
+        monkeypatch.setattr(
+            "src.llm_models.model_client.openai_client.DefaultAsyncHttpxClient", lambda **kw: http_client
+        )
+        client = OpenaiClient(APIProvider(name="test", api_key="test-key", base_url="https://api.minimax.cn/v1"))
+        model = ModelInfo(name="test-asr", api_provider="test", model_type="asr", model_identifier="asr-1.0")
+        extra_params = {"audio_transcription_path": "/speech_to_text", "query": {"lang": "zh"}, "hotword": "rain"}
+        request = AudioTranscriptionRequest(model, base64.b64encode(wav).decode(), extra_params=extra_params)
+        result = await client.get_audio_transcriptions(request)
+        assert result.content == "大家好"
+        assert "audio_transcription_path" in extra_params
+
+
 def test_deepseek_converts_pcm_and_rejects_long_recordings() -> None:
     name, converted, mime = prepare_deepseek_audio(make_wav(sample_width=1))
     assert (name, mime) == ("audio.wav", "audio/wav")
