@@ -312,7 +312,7 @@ async function launch(temporary, pageErrors) {
 const localPage = (app, pathname) => app.pages().find(page => {
   try { const url = new URL(page.url()); return url.hostname === 'tauri.localhost' && url.pathname === pathname; } catch { return false; }
 });
-async function connectClient(app, fixture, firstLogin) {
+async function connectClient(app, fixture, firstLogin, expectSaveWarning = false) {
   const login = await until(() => localPage(app, '/login/login.html'), 'local login window');
   await login.waitForFunction(() => window.desktopPetBridge && document.querySelector('#server')?.value);
   const credentialStatus = login.locator('#credential-status');
@@ -345,6 +345,12 @@ async function connectClient(app, fixture, firstLogin) {
     const auth = await until(() => app.pages().find(page => page.url() === fixture.url + '/auth'), 'remote WebUI login');
     await auth.locator('#webui-password').fill(PASSWORD);
     await auth.locator('#webui-login button').click();
+  }
+  if (expectSaveWarning) {
+    await login.getByText('登录成功，但未能加密保存 WebUI 凭据。').waitFor({timeout: 8000});
+    await credentialStatus.filter({hasText: /^已加密保存：Nginx$/}).waitFor();
+    assert.equal(await login.locator('#bot').inputValue(), BOT_ID);
+    await login.getByRole('button', {name: '启动桌宠'}).click();
   }
   const pet = await until(() => localPage(app, '/pet/index.html'), 'pet window', 25_000);
   await pet.locator('#remote-indicator[data-connected="true"]').waitFor();
@@ -545,6 +551,17 @@ async function run() {
       }
     }
     await isolation(app, auth, pet, fixture); assert.deepEqual(fixture.failures.map(error => error.message), []); assert.deepEqual(pageErrors, []);
+    if (SAVED_LOGIN) {
+      await app.close(); app = null;
+      const blocked = path.join(temporary, 'credential-write-failure');
+      const profile = createHash('sha256').update(fixture.url).digest('hex');
+      // The destination is a directory, so saving WebUI must fail after Nginx was saved.
+      await fs.mkdir(path.join(blocked, 'settings', 'saved-logins', profile, 'webui'), {recursive: true});
+      app = await launch(blocked, pageErrors);
+      await connectClient(app, fixture, true, true);
+      assert.deepEqual(fixture.failures.map(error => error.message), []); assert.deepEqual(pageErrors, []);
+      console.log('A WebUI credential write failure was reported without blocking the connection.');
+    }
     passed = true;
     console.log('Tauri smoke passed: BasicAuth HTTP/WS, restart login, skin assets, chat, todos, records, consent, IPC isolation, reconnect.');
   } catch (error) {

@@ -1,7 +1,7 @@
 use base64::{engine::general_purpose::STANDARD, Engine};
 use serde_json::{Map, Value};
 use sha2::{Digest, Sha256};
-use std::{fs, io::Read, path::PathBuf, sync::Mutex, time::SystemTime};
+use std::{collections::HashSet, fs, io::Read, path::PathBuf, sync::Mutex, time::SystemTime};
 
 const MAX_ASSET_BYTES: u64 = 32 * 1024 * 1024;
 const MAX_CACHE_BYTES: u64 = 256 * 1024 * 1024;
@@ -35,18 +35,49 @@ impl SkinCache {
     }
 
     pub fn remember(&self, scope: &str, skin: &Value) -> Result<(), String> {
+        self.remember_with_limit(scope, skin, MAX_CACHE_BYTES)
+    }
+
+    fn remember_with_limit(
+        &self,
+        scope: &str,
+        skin: &Value,
+        cache_limit: u64,
+    ) -> Result<(), String> {
         let bytes = serde_json::to_vec(skin).map_err(super::error)?;
         if bytes.len() as u64 > MAX_MANIFEST_BYTES {
             return Err("皮肤清单过大".into());
         }
         let _guard = self.disk.lock().map_err(|_| "皮肤缓存锁不可用")?;
-        self.write_file(&format!("{scope}.json"), &bytes)
+        let name = format!("{scope}.json");
+        self.write_file(&name, &bytes).map_err(super::error)?;
+        let path = self.directory.join(name);
+        let protected = skin["resources"]
+            .as_object()
+            .into_iter()
+            .flat_map(|resources| resources.values())
+            .filter_map(Value::as_str)
+            .filter(|digest| super::hex(digest, 64))
+            .map(|digest| self.directory.join(format!("{scope}-{digest}")))
+            .collect();
+        self.enforce_limit(cache_limit, &protected, Some(&path))
             .map_err(super::error)
     }
 
     pub fn import_inline(&self, scope: &str, skin: &Value) -> Result<Value, String> {
+        self.import_inline_with_limit(scope, skin, MAX_CACHE_BYTES)
+    }
+
+    fn import_inline_with_limit(
+        &self,
+        scope: &str,
+        skin: &Value,
+        cache_limit: u64,
+    ) -> Result<Value, String> {
         let mut clean = Map::new();
         let mut total = 0;
+        let mut assets = Vec::new();
+        let mut protected = HashSet::new();
         let _guard = self.disk.lock().map_err(|_| "皮肤缓存锁不可用")?;
         for (name, data) in skin["resources"].as_object().ok_or("皮肤资源清单无效")? {
             let url = data.as_str().ok_or("皮肤资源无效")?;
@@ -59,13 +90,18 @@ impl SkinCache {
             if Self::mime(&bytes).is_none_or(|mime| format != format!("data:{mime};base64")) {
                 return Err("皮肤资源格式与内容不一致".into());
             }
+            protected.insert(self.directory.join(format!("{scope}-{digest}")));
+            assets.push((name.clone(), digest, bytes));
+        }
+        for (name, digest, bytes) in assets {
             let path = self.directory.join(format!("{scope}-{digest}"));
             if !fs::metadata(&path).is_ok_and(|meta| meta.len() == bytes.len() as u64)
                 || !fs::read(&path).is_ok_and(|cached| cached == bytes)
             {
-                self.write(scope, &digest, &bytes).map_err(super::error)?;
+                self.write_with_limit(scope, &digest, &bytes, cache_limit, &protected)
+                    .map_err(super::error)?;
             }
-            clean.insert(name.clone(), Value::String(digest));
+            clean.insert(name, Value::String(digest));
         }
         Ok(Value::Object(clean))
     }
@@ -139,23 +175,42 @@ impl SkinCache {
     }
 
     fn write(&self, scope: &str, digest: &str, bytes: &[u8]) -> std::io::Result<()> {
+        self.write_with_limit(scope, digest, bytes, MAX_CACHE_BYTES, &HashSet::new())
+    }
+
+    fn write_with_limit(
+        &self,
+        scope: &str,
+        digest: &str,
+        bytes: &[u8],
+        cache_limit: u64,
+        protected: &HashSet<PathBuf>,
+    ) -> std::io::Result<()> {
         let name = format!("{scope}-{digest}");
         self.write_file(&name, bytes)?;
+        let path = self.directory.join(name);
+        self.enforce_limit(cache_limit, protected, Some(&path))
+    }
 
-        let mut total = bytes.len() as u64;
+    fn enforce_limit(
+        &self,
+        cache_limit: u64,
+        protected: &HashSet<PathBuf>,
+        keep: Option<&PathBuf>,
+    ) -> std::io::Result<()> {
+        let mut total = 0;
         let mut older = Vec::new();
         for entry in fs::read_dir(&self.directory)?.filter_map(Result::ok) {
             let filename = entry.file_name();
             let Some(key) = filename.to_str() else {
                 continue;
             };
-            if key == name
-                || !(key
-                    .strip_suffix(".json")
-                    .is_some_and(|scope| super::hex(scope, 64))
-                    || key.split_once('-').is_some_and(|(scope, digest)| {
-                        super::hex(scope, 64) && super::hex(digest, 64)
-                    }))
+            if !(key
+                .strip_suffix(".json")
+                .is_some_and(|scope| super::hex(scope, 64))
+                || key
+                    .split_once('-')
+                    .is_some_and(|(scope, digest)| super::hex(scope, 64) && super::hex(digest, 64)))
             {
                 continue;
             }
@@ -164,23 +219,32 @@ impl SkinCache {
             };
             if meta.is_file() {
                 total += meta.len();
-                older.push((
-                    meta.modified().unwrap_or(SystemTime::UNIX_EPOCH),
-                    meta.len(),
-                    entry.path(),
-                ));
+                let path = entry.path();
+                if keep != Some(&path) && !protected.contains(&path) {
+                    older.push((
+                        meta.modified().unwrap_or(SystemTime::UNIX_EPOCH),
+                        meta.len(),
+                        path,
+                    ));
+                }
             }
         }
-        if total > MAX_CACHE_BYTES {
+        if total > cache_limit {
             older.sort_unstable();
             for (_, len, path) in older {
                 if fs::remove_file(path).is_ok() {
                     total -= len;
                 }
-                if total <= MAX_CACHE_BYTES {
+                if total <= cache_limit {
                     break;
                 }
             }
+        }
+        if total > cache_limit {
+            return Err(std::io::Error::new(
+                std::io::ErrorKind::Other,
+                "skin cache exceeds its size limit",
+            ));
         }
         Ok(())
     }
@@ -210,5 +274,91 @@ mod tests {
         assert_eq!(cache.read(&scope, &digest, false), None);
         fs::remove_file(file).unwrap();
         fs::remove_dir(directory).unwrap();
+    }
+
+    #[test]
+    fn inline_import_keeps_every_asset_referenced_by_the_skin() {
+        let directory = std::env::temp_dir().join(super::super::id());
+        let scope = "a".repeat(64);
+        let first = b"\x89PNG\r\n\x1a\n1";
+        let second = b"\x89PNG\r\n\x1a\n2";
+        let first_digest = format!("{:x}", Sha256::digest(first));
+        let second_digest = format!("{:x}", Sha256::digest(second));
+        fs::create_dir_all(&directory).unwrap();
+        let first_path = directory.join(format!("{scope}-{first_digest}"));
+        fs::write(&first_path, first).unwrap();
+        fs::OpenOptions::new()
+            .write(true)
+            .open(&first_path)
+            .unwrap()
+            .set_modified(SystemTime::UNIX_EPOCH)
+            .unwrap();
+        fs::write(directory.join(format!("{scope}-{}", "b".repeat(64))), b"x").unwrap();
+
+        let skin = serde_json::json!({
+            "resources": {
+                "first": format!("data:image/png;base64,{}", STANDARD.encode(first)),
+                "second": format!("data:image/png;base64,{}", STANDARD.encode(second)),
+            }
+        });
+        let cache = SkinCache::new(directory.clone());
+        let resources = cache.import_inline_with_limit(&scope, &skin, 18).unwrap();
+
+        assert_eq!(resources["first"], first_digest);
+        assert_eq!(resources["second"], second_digest);
+        assert!(directory.join(format!("{scope}-{first_digest}")).exists());
+        assert!(directory.join(format!("{scope}-{second_digest}")).exists());
+        fs::remove_dir_all(directory).unwrap();
+    }
+
+    #[test]
+    fn remember_enforces_the_cache_limit_including_the_manifest() {
+        let directory = std::env::temp_dir().join(super::super::id());
+        let scope = "a".repeat(64);
+        let old_asset = directory.join(format!("{scope}-{}", "b".repeat(64)));
+        let first_digest = "c".repeat(64);
+        let first_asset = directory.join(format!("{scope}-{first_digest}"));
+        let manifest = serde_json::json!({"id": "skin", "resources": {"first": first_digest}});
+        let cache_limit = serde_json::to_vec(&manifest).unwrap().len() as u64 + 1;
+        fs::create_dir_all(&directory).unwrap();
+        fs::write(&first_asset, b"x").unwrap();
+        fs::OpenOptions::new()
+            .write(true)
+            .open(&first_asset)
+            .unwrap()
+            .set_modified(SystemTime::UNIX_EPOCH)
+            .unwrap();
+        fs::write(&old_asset, b"12345").unwrap();
+
+        let cache = SkinCache::new(directory.clone());
+        cache
+            .remember_with_limit(&scope, &manifest, cache_limit)
+            .unwrap();
+
+        assert!(!old_asset.exists());
+        assert!(first_asset.exists());
+        assert_eq!(cache.last_skin(&scope), Some(manifest));
+        fs::remove_dir_all(directory).unwrap();
+    }
+
+    #[test]
+    fn inline_import_failure_leaves_inline_resources_available() {
+        let directory = std::env::temp_dir().join(super::super::id());
+        fs::write(&directory, b"not a directory").unwrap();
+        let scope = "a".repeat(64);
+        let skin = serde_json::json!({
+            "resources": {
+                "image": format!("data:image/png;base64,{}", STANDARD.encode(b"\x89PNG\r\n\x1a\n")),
+            }
+        });
+
+        assert!(SkinCache::new(directory.clone())
+            .import_inline_with_limit(&scope, &skin, MAX_CACHE_BYTES)
+            .is_err());
+        assert!(skin["resources"]["image"]
+            .as_str()
+            .unwrap()
+            .starts_with("data:image/png;base64,"));
+        fs::remove_file(directory).unwrap();
     }
 }

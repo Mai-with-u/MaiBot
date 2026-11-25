@@ -61,13 +61,16 @@ function showCredentialStatus(saved) {
   credentialStatus.hidden = !names.length;
 }
 
-async function refreshCredentialStatus() {
+async function refreshCredentialStatus(saveFailures = []) {
   if (credentials.hidden) return;
   const revision = ++credentialLookup;
   const address = server.value.trim();
   if (!address || !server.validity.valid) { showCredentialStatus(null); return; }
   const saved = await login.credential_status(address).catch(() => null);
-  if (revision === credentialLookup) showCredentialStatus(saved);
+  if (revision === credentialLookup) showCredentialStatus({
+    nginx: saved?.nginx && !saveFailures.includes('Nginx'),
+    webui: saved?.webui && !saveFailures.includes('WebUI'),
+  });
 }
 
 server.addEventListener('input', () => {
@@ -103,18 +106,24 @@ document.querySelector('#connection').addEventListener('submit', async event => 
   message();
   try {
     if (!choices) {
-      const items = await login.discover(server.value, {
+      const {bots: items, credentialSaveFailures} = await login.discover(server.value, {
         basicUser: basicUser.value, basicPassword: basicPassword.value, webuiToken: webuiToken.value,
       });
       clearCredentials();
-      await refreshCredentialStatus();
-      if (!items.length) { message('还没有机器人，请先在宿主中创建。'); return; }
+      await refreshCredentialStatus(credentialSaveFailures);
+      const warning = credentialSaveFailures.length
+        ? `登录成功，但未能加密保存 ${credentialSaveFailures.join('、')} 凭据。` : '';
+      if (!items.length) { message(warning + '还没有机器人，请先在宿主中创建。', Boolean(warning)); return; }
       choices = items;
       bots.replaceChildren(new Option('请选择机器人', ''), ...items.map(bot => new Option(bot.name, bot.bot_id)));
       if (items.some(bot => bot.bot_id === savedBot)) bots.value = savedBot;
-      // 只有多个机器人时才增加选择步骤；一个机器人直接连接。
-      if (items.length > 1) { botField.hidden = false; return; }
-      bots.value = items[0].bot_id;
+      if (items.length === 1) bots.value = items[0].bot_id;
+      // 一个机器人通常直接连接。保存失败时留在此页显示提示，仍可启动桌宠。
+      if (items.length > 1 || warning) {
+        botField.hidden = false;
+        if (warning) message(warning, true);
+        return;
+      }
     }
     const bot = choices.find(item => item.bot_id === bots.value);
     if (!bot) { bots.focus(); return; }

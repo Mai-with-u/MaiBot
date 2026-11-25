@@ -235,3 +235,52 @@ async def test_spawn_failure_is_observable_and_does_not_crash_host(monkeypatch):
     await service._run()
     assert service.status()["error"] == "cannot spawn"
     assert not service.status()["running"] and not service.status()["ready"]
+
+
+@pytest.mark.asyncio
+async def test_binding_change_cancels_old_caption_before_accepting_new_stage(monkeypatch):
+    service = DesktopPetService()
+    service._ready = True
+    service._closing = False
+    config = pet_module.global_config.desktop_pet
+    monkeypatch.setattr(config, "conversation_session_id", "session-a")
+    monkeypatch.setattr(pet_module, "caption_enabled", lambda: True)
+    monkeypatch.setattr(service, "_can_stream_conversation", lambda: False)
+    await service._publish_conversation()
+
+    old_summary_started = asyncio.Event()
+    new_summary_started = asyncio.Event()
+    clear_started = asyncio.Event()
+    release_clear = asyncio.Event()
+
+    async def summarize(data):
+        if data["session_id"] == "session-a":
+            old_summary_started.set()
+            await asyncio.Event().wait()
+        new_summary_started.set()
+        return "新摘要"
+
+    async def send(command):
+        if command["text"] == "":
+            clear_started.set()
+            await release_clear.wait()
+
+    monkeypatch.setattr(service._thinking_caption, "_summarize", summarize)
+    monkeypatch.setattr(service._thinking_caption, "_send", send)
+    service.observe_stage({"session_id": "session-a", "stage": "生成"})
+    await asyncio.wait_for(old_summary_started.wait(), timeout=1)
+    old_task = service._thinking_caption._task
+
+    config.conversation_session_id = "session-b"
+    publish = asyncio.create_task(service._publish_conversation())
+    try:
+        await asyncio.wait_for(clear_started.wait(), timeout=1)
+        service.observe_stage({"session_id": "session-b", "stage": "生成"})
+        assert not new_summary_started.is_set()
+    finally:
+        release_clear.set()
+        await publish
+    assert old_task.cancelled()
+
+    service.observe_stage({"session_id": "session-b", "stage": "生成"})
+    await asyncio.wait_for(new_summary_started.wait(), timeout=1)

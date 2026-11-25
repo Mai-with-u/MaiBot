@@ -60,10 +60,12 @@
   async function install(next, fetchAsset, prefetchAsset) {
     const revision = ++switching;
     const firstAnimation = next.states?.[state()];
-    const loaded = Object.create(null), pending = new Map();
+    const loaded = Object.create(null), pending = new Map(), retries = new Map();
     const requested = new Set();
     let prefetching;
     const load = name => {
+      const retry = retries.get(name);
+      if (retry && performance.now() < retry.nextAttemptAt) return Promise.resolve();
       if (!pending.has(name)) pending.set(name, (async () => {
         const src = next.resources[name];
         requested.add(src);
@@ -72,7 +74,14 @@
         image.src = fetchAsset ? await fetchAsset(src) : src;
         await image.decode();
         loaded[name] = image;
-      })());
+        retries.delete(name);
+      })().catch(error => {
+        const attempts = (retries.get(name)?.attempts || 0) + 1;
+        const delay = Math.min(30_000, 500 * 2 ** (attempts - 1));
+        retries.set(name, {attempts, nextAttemptAt: performance.now() + delay});
+        pending.delete(name);
+        throw error;
+      }));
       return pending.get(name);
     };
     setLoading(next.id !== 'builtin');

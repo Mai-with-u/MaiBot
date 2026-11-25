@@ -50,6 +50,45 @@ test('after the first frame is displayed, the rest of the skin is prefetched onc
   await new Promise(resolve => setImmediate(resolve));
   assert.deepEqual(calls, [['display', first], ['prefetch', secondary]]);
 });
+test('a temporarily failed lazy asset retries after backoff and stays deduplicated after success', async () => {
+  const {api, skin, elements, tick} = setup();
+  const first = 'a'.repeat(64), secondary = 'b'.repeat(64);
+  skin.resources = {image: first, action: secondary};
+  skin.animations.wave.duration_ms = 5000;
+  skin.animations.wave.sequence = [{...skin.animations.idle.sequence[0], file: 'action'}];
+  const calls = [];
+  let resolveRetry;
+  await api.install(skin, async digest => {
+    calls.push(digest);
+    if (digest === secondary) {
+      const attempts = calls.filter(item => item === secondary).length;
+      if (attempts === 1) throw new Error('temporary network failure');
+      if (attempts === 2) return new Promise(resolve => { resolveRetry = resolve; });
+    }
+    return 'data:image/png;base64,' + digest;
+  });
+
+  api.command('play_animation', {name: 'wave', repeat: 1}, 'test');
+  tick(0);
+  await new Promise(resolve => setImmediate(resolve));
+  assert.deepEqual(calls, [first, secondary]);
+
+  tick(100);
+  await new Promise(resolve => setImmediate(resolve));
+  assert.deepEqual(calls, [first, secondary]);
+
+  tick(1000);
+  tick(1001);
+  assert.deepEqual(calls, [first, secondary, secondary]);
+  resolveRetry('data:image/png;base64,' + secondary);
+  await new Promise(resolve => setImmediate(resolve));
+  tick(1002);
+  assert.equal(elements['skin-canvas'].draws.length > 0, true);
+
+  tick(1100);
+  await new Promise(resolve => setImmediate(resolve));
+  assert.deepEqual(calls, [first, secondary, secondary]);
+});
 test('a failed download hides the spinner and preserves the previous skin', async () => {
   const {api, skin, elements} = setup();
   await api.install(skin);

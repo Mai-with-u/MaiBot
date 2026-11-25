@@ -65,6 +65,7 @@ class MsgIDMapping:
 class SessionMessage(MaiMessage):
     # 仅由 Host 入站链路写入，不接受消息字典或 Hook 序列化恢复。
     file_source: Optional[Dict[str, Any]] = None
+    is_bound_relay: bool = False
 
     # 仅供当前 Maisaka 引用计数器使用，不序列化、不写入数据库。
     _quote_counter_position: Optional[Tuple[object, int]] = None

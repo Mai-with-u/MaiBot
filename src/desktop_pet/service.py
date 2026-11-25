@@ -61,6 +61,8 @@ class DesktopPetService:
         self._screen_error = ""
         self._screen_last_capture = ""
         self._thinking_caption = ThinkingCaption(self._command)
+        self._caption_conversation_id: Optional[str] = None
+        self._conversation_publish_lock = asyncio.Lock()
         # 供 WebUI 首页卡片展示：窗口当前是否在思考、最近一次显示的气泡文字
         self._thinking = False
         self._bubble = ""
@@ -68,9 +70,10 @@ class DesktopPetService:
     def observe_stage(self, data: Dict[str, Any]) -> None:
         from .chat_tools import is_owner_chat
 
-        if (self._ready and not self._closing
+        session_id = global_config.desktop_pet.conversation_session_id
+        if (self._ready and not self._closing and self._caption_conversation_id == session_id
                 and (self.is_bound_conversation(data["session_id"]) or
-                     (not global_config.desktop_pet.conversation_session_id and is_owner_chat(data["session_id"])))):
+                     (not session_id and is_owner_chat(data["session_id"])))):
             self._thinking_caption.update(data if caption_enabled() else {"session_id": data["session_id"]})
 
     def status(self) -> Dict[str, Any]:
@@ -257,18 +260,25 @@ class DesktopPetService:
         return bool(session_id and session_id == global_config.desktop_pet.conversation_session_id)
 
     async def _publish_conversation(self) -> None:
-        if not self._can_stream_conversation():
-            return
-        session_id = global_config.desktop_pet.conversation_session_id
-        command = {"type": "conversation", "conversation_id": session_id, "name": "主人私聊"}
-        if session_id:
-            try:
-                session = await asyncio.to_thread(resolve_conversation, session_id)
-                command.update(describe_conversation(session))
-            except ValueError:
-                command["name"] = "所选会话不可用"
-        if session_id == global_config.desktop_pet.conversation_session_id:
-            await self._command(command)
+        async with self._conversation_publish_lock:
+            session_id = global_config.desktop_pet.conversation_session_id
+            if self._caption_conversation_id is not None and self._caption_conversation_id != session_id:
+                self._caption_conversation_id = None
+                await self._thinking_caption.clear()
+                if session_id != global_config.desktop_pet.conversation_session_id:
+                    return
+            self._caption_conversation_id = session_id
+            if not self._can_stream_conversation():
+                return
+            command = {"type": "conversation", "conversation_id": session_id, "name": "主人私聊"}
+            if session_id:
+                try:
+                    session = await asyncio.to_thread(resolve_conversation, session_id)
+                    command.update(describe_conversation(session))
+                except ValueError:
+                    command["name"] = "所选会话不可用"
+            if session_id == global_config.desktop_pet.conversation_session_id:
+                await self._command(command)
 
     async def remote_todo(self, peer: RemotePeer, action: str, payload: Dict[str, Any]) -> Dict[str, Any]:
         self._require_remote(peer)
@@ -1022,7 +1032,7 @@ class DesktopPetService:
         return self._ready and not self._closing and (self._remote is None or self._remote.capabilities.get("chat_binding", False))
 
     def notify_conversation_message(self, message: Dict[str, Any]) -> None:
-        if self._can_stream_conversation():
+        if self.is_bound_conversation(message["session_id"]) and self._can_stream_conversation():
             self._observe(self._render_conversation_message(message))
 
     async def _render_conversation_message(self, message: Dict[str, Any]) -> None:

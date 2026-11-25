@@ -286,6 +286,7 @@ class ChatManager:
             scope=scope,
         )
         message.session_id = session_id  # 确保消息的session_id正确设置
+        message.is_bound_relay = False
         self.last_messages[session_id] = message
         session = self.sessions.get(session_id)
         if session is not None and self._update_session_identity(session, message):
@@ -296,6 +297,7 @@ class ChatManager:
         if self.sessions.get(session.session_id) is not session:
             raise ValueError("所选聊天会话已失效")
         message.session_id = session.session_id
+        message.is_bound_relay = True
         self.last_messages[session.session_id] = message
         session.set_context(message)
         session.update_active_time()
@@ -307,6 +309,8 @@ class ChatManager:
 
     def _update_session_identity(self, session: BotChatSession, message: "SessionMessage") -> bool:
         """用真实入站消息补齐聊天流展示身份，群聊不保存最近发言人的用户信息。"""
+        if message.is_bound_relay:
+            return False
 
         changed = False
         group_info = message.message_info.group_info

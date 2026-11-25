@@ -1004,6 +1004,12 @@ class ChatBot:
             if bound_session is None:
                 chat_manager.register_message(message)
             else:
+                from src.desktop_pet.conversation import require_current_conversation
+
+                require_current_conversation(
+                    global_config.desktop_pet.conversation_session_id,
+                    bound_session.session_id,
+                )
                 chat_manager.register_bound_message(bound_session, message)
 
             platform = message.platform
