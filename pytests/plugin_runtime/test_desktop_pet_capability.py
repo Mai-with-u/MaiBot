@@ -276,7 +276,7 @@ async def test_binding_change_cancels_old_caption_before_accepting_new_stage(mon
     try:
         await asyncio.wait_for(clear_started.wait(), timeout=1)
         service.observe_stage({"session_id": "session-b", "stage": "生成"})
-        assert not new_summary_started.is_set()
+        assert service._thinking_caption._task is None
     finally:
         release_clear.set()
         await publish

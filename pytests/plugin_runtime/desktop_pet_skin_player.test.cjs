@@ -83,7 +83,8 @@ test('a temporarily failed lazy asset retries after backoff and stays deduplicat
   resolveRetry('data:image/png;base64,' + secondary);
   await new Promise(resolve => setImmediate(resolve));
   tick(1002);
-  assert.equal(elements['skin-canvas'].draws.length > 0, true);
+  const lastDraw = elements['skin-canvas'].draws.at(-1);
+  assert.equal(lastDraw?.args[0].src, 'data:image/png;base64,' + secondary);
 
   tick(1100);
   await new Promise(resolve => setImmediate(resolve));
