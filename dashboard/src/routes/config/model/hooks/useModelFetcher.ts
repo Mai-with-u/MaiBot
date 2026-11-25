@@ -68,7 +68,9 @@ export function useModelFetcher(options: UseModelFetcherOptions): UseModelFetche
       }
 
       // 检查缓存
-      const cacheKey = `${providerName}:${config.base_url}`
+      const cacheKey = config.client_type === 'chatgpt'
+        ? JSON.stringify([providerName, config.base_url, 'chatgpt', config.chatgpt_account ?? 'default'])
+        : `${providerName}:${config.base_url}`
       const cached = modelListCache.get(cacheKey)
       if (!forceRefresh && cached && Date.now() - cached.timestamp < CACHE_TTL) {
         setAvailableModels(cached.models)
@@ -92,6 +94,11 @@ export function useModelFetcher(options: UseModelFetcherOptions): UseModelFetche
       } catch (error) {
         console.error('获取模型列表失败:', error)
         const errorMessage = (error as Error).message || '获取模型列表失败'
+        if (config.client_type === 'chatgpt') {
+          setAvailableModels([])
+          setModelFetchError(errorMessage)
+          return
+        }
         // 根据错误类型提供更友好的提示
         if (
           errorMessage.includes('无效') ||

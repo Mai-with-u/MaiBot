@@ -68,7 +68,10 @@ class APIProvider(ConfigBase):
             "x-widget": "select",
         },
     )
-    """客户端类型。内置支持 openai、openai_responses 和 gemini，也可由插件扩展。"""
+    """客户端类型。内置支持 openai、openai_responses、chatgpt 和 gemini，也可由插件扩展。"""
+
+    chatgpt_account: str = Field(default="default", pattern=r"^[A-Za-z0-9_-]{1,64}$")
+    """chatgpt 客户端使用的本机账号注册标签；令牌由 maibot chatgpt login 单独管理。"""
 
     auth_type: str = Field(
         default=OpenAICompatibleAuthType.BEARER.value,
@@ -187,10 +190,29 @@ class APIProvider(ConfigBase):
     )
     """重试间隔 (如果API调用失败, 重试的间隔时间, 单位: 秒)"""
 
+    def model_post_init(self, context: Any = None) -> None:
+        """在加载时保持 ChatGPT 独立授权边界，普通供应商由请求入口校验。"""
+        if self.client_type == "chatgpt":
+            validate_provider_for_request(self)
+        super().model_post_init(context)
+
 
 def provider_configuration_errors(provider: APIProvider) -> List[str]:
     """收集调用所需的供应商配置问题，供启动诊断、WebUI 和请求入口共用。"""
     errors: List[str] = []
+    if provider.client_type == "chatgpt":
+        if provider.base_url.rstrip("/") != "https://api.openai.com/v1":
+            errors.append("ChatGPT SIWC 仅允许 https://api.openai.com/v1")
+        if (
+            provider.api_key
+            or provider.auth_type != "bearer"
+            or provider.default_headers
+            or provider.default_query
+            or provider.organization
+            or provider.project
+            or provider.model_list_endpoint != "/models"
+        ):
+            errors.append("ChatGPT SIWC 使用独立本机授权；不要填写 API Key、自定义鉴权或请求头。")
     if not provider.base_url.strip() and provider.client_type != "gemini":
         errors.append(t("config.api_base_url_empty"))
     if not provider.name.strip():
