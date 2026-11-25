@@ -2083,9 +2083,11 @@ class OpenaiClient(AdapterClient[AsyncStream[ChatCompletionChunk], ChatCompletio
         """
         model_info = request.model_info
         audio_base64 = request.audio_base64
-        extra_params = request.extra_params
+        extra_params = dict(request.extra_params)
+        # 路径不同但请求形状与 OpenAI 一致的厂商（如 MiniMax 的 /speech_to_text）可在 extra_params 中声明转录路径。
+        custom_path: str | None = extra_params.pop("audio_transcription_path", None)
         deepseek = model_info.model_type == "asr" and model_info.model_identifier == "deepseek-asr"
-        endpoint = "/audio/transcriptions"
+        endpoint = custom_path or "/audio/transcriptions"
         if deepseek:
             endpoint = "/tools/asr" if self.client.base_url.path.rstrip("/").endswith("/v1") else "/v1/tools/asr"
         operation = "deepseek.tools.asr" if deepseek else "audio.transcriptions.create"
@@ -2127,14 +2129,27 @@ class OpenaiClient(AdapterClient[AsyncStream[ChatCompletionChunk], ChatCompletio
             else:
                 file_name = transcription_filename(audio_bytes) if model_info.model_type == "asr" else "audio.wav"
                 snapshot_kwargs.update(file_name=file_name, model=model_info.model_identifier)
-                raw_response = await self.client.audio.transcriptions.create(
-                    model=model_info.model_identifier,
-                    file=(file_name, audio_bytes),
-                    extra_headers=request_headers,
-                    extra_query=request_overrides.extra_query or None,
-                    extra_body=request_overrides.extra_body or None,
-                )
-                transcription_text = raw_response if isinstance(raw_response, str) else raw_response.text
+                if custom_path:
+                    raw_response = await self.client.post(
+                        endpoint,
+                        cast_to=object,
+                        files={"file": (file_name, audio_bytes)},
+                        body={**request_overrides.extra_body, "model": model_info.model_identifier},
+                        options={
+                            "headers": {**(request_headers or {}), "Content-Type": "multipart/form-data"},
+                            "params": request_overrides.extra_query,
+                        },
+                    )
+                    transcription_text = raw_response.get("text") if isinstance(raw_response, dict) else None
+                else:
+                    raw_response = await self.client.audio.transcriptions.create(
+                        model=model_info.model_identifier,
+                        file=(file_name, audio_bytes),
+                        extra_headers=request_headers,
+                        extra_query=request_overrides.extra_query or None,
+                        extra_body=request_overrides.extra_body or None,
+                    )
+                    transcription_text = raw_response if isinstance(raw_response, str) else raw_response.text
         except APIConnectionError as exc:
             snapshot_path = await asyncio.to_thread(
                 save_failed_request_snapshot,
