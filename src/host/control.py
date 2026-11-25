@@ -96,11 +96,11 @@ class HostControl:
             self.maintenance.queue_plugin_dependencies()
 
 
-async def run_host(workspace: Workspace, *, upgrade_confirmed: set[str]) -> bool:
+async def run_host(workspace: Workspace, *, upgrade_confirmed: set[str], host_only: bool = False) -> bool:
     """持有宿主租约运行，直到收到 Ctrl+C、SIGTERM 或控制通道的 shutdown。"""
     descriptor_path = _descriptor_path(workspace)
     with ProcessLease(workspace.host_directory / "run.lock"):
-        supervisor = BotSupervisor(workspace, public_base_url=workspace.config.advertised_base_url())
+        supervisor = BotSupervisor(workspace, public_base_url=workspace.config.advertised_base_url(), host_only=host_only)
         supervisor.upgrade_confirmed |= upgrade_confirmed
         control = HostControl(supervisor)
         webui = await asyncio.to_thread(HostWebUI, supervisor, control.maintenance, control.stopping)
@@ -127,17 +127,22 @@ async def run_host(workspace: Workspace, *, upgrade_confirmed: set[str]) -> bool
                 if webui.credentials.token_source == "temporary":
                     print(f"WebUI 临时登录密码：{webui.credentials.token}", flush=True)
             print("可用 maibot host status/start/stop/restart 管理 Bot；Ctrl+C 关闭宿主。", flush=True)
-            starter = asyncio.create_task(supervisor.start_desired())
-            console_task = asyncio.create_task(HostConsole(supervisor, control.stopping).run())
+            starter = None if host_only else asyncio.create_task(supervisor.start_desired())
+            if not host_only or (sys.stdin.isatty() and sys.stdout.isatty()):
+                console_task = asyncio.create_task(HostConsole(supervisor, control.stopping).run())
             stop_task = asyncio.create_task(control.stopping.wait())
             assert webui.task is not None
-            pending = {stop_task, webui.task, starter, console_task}
+            pending = {stop_task, webui.task}
+            if console_task is not None:
+                pending.add(console_task)
+            if starter is not None:
+                pending.add(starter)
             while True:
                 done, pending = await asyncio.wait(pending, return_when=asyncio.FIRST_COMPLETED)
-                if starter in done:
+                if starter is not None and starter in done:
                     for failure in starter.result():
                         print(f"Bot 启动失败 {failure}", file=sys.stderr, flush=True)
-                if console_task in done:
+                if console_task is not None and console_task in done:
                     # EOF / exit() 只关闭终端；异常不能成为无人读取的后台任务错误。
                     await console_task
                 if stop_task in done or webui.task in done:

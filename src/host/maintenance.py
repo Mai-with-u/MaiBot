@@ -80,7 +80,7 @@ class HostMaintenance:
         finally:
             bot = await asyncio.to_thread(self.supervisor.workspace.registry.get_bot, bot_id)
             journal = bot.directory / "temp" / "data-import" / "transaction.json"
-            if bot.desired_state == "running" and not await asyncio.to_thread(journal.exists) and not self.supervisor._start_blocker():
+            if self.supervisor.should_resume(bot) and not await asyncio.to_thread(journal.exists) and not self.supervisor._start_blocker():
                 await self.supervisor.start(bot_id)
 
     async def prepare_update(self, target: str) -> Dict[str, Any]:

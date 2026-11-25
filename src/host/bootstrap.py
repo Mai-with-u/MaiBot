@@ -3,6 +3,7 @@
 from pathlib import Path
 from typing import TYPE_CHECKING, Set
 
+import argparse
 import asyncio
 import os
 import sys
@@ -54,7 +55,7 @@ def confirm_upgrades(workspace: "Workspace") -> Set[str]:
     return confirmed
 
 
-def main(root: Path) -> int:
+def main(root: Path, *, host_only: bool = False) -> int:
     os.environ[INSTANCE_DIRECTORY_ENV] = str(root.resolve())
     # 仅宿主入口提供此标记，Bot 不得自行升级共享环境。
     os.environ["MAIBOT_PACKAGE_RUNNER"] = "1"
@@ -65,14 +66,14 @@ def main(root: Path) -> int:
 
     workspace = open_workspace(root)
     os.environ[SHARED_MODELS_ENV] = str(workspace.host_directory / CATALOG_FILENAME)
-    confirmed = confirm_upgrades(workspace)
+    confirmed = set() if host_only else confirm_upgrades(workspace)
     from .update_locks import register_host_instance
     from .control import run_host
     from .supervisor import BotShutdownError
 
     with register_host_instance(workspace.root):
         try:
-            update_requested = asyncio.run(run_host(workspace, upgrade_confirmed=confirmed))
+            update_requested = asyncio.run(run_host(workspace, upgrade_confirmed=confirmed, host_only=host_only))
         except BotShutdownError as exc:
             print(f"MaiBot 宿主关闭未完成。{exc}", file=sys.stderr)
             return 1
@@ -82,7 +83,11 @@ def main(root: Path) -> int:
 
 if __name__ == "__main__":
     try:
-        code = main(Path(sys.argv[1]))
+        parser = argparse.ArgumentParser()
+        parser.add_argument("directory", type=Path)
+        parser.add_argument("--host-only", action="store_true")
+        args = parser.parse_args()
+        code = main(args.directory, host_only=args.host_only)
     except (RuntimeError, ValueError) as exc:
         print(f"宿主启动失败：{exc}", file=sys.stderr)
         code = 2

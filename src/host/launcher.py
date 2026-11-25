@@ -22,7 +22,7 @@ def _command(stage: str, root: Path) -> List[str]:
     return [sys.executable, *flags, "-m", f"src.host.{stage}", str(root)]
 
 
-def main(root: Path) -> int:
+def main(root: Path, *, host_only: bool = False) -> int:
     root = root.expanduser().resolve()
     # 每个新解释器在加载入口模块前就拥有本次工作区目录，包括更新后的重新启动。
     environment = os.environ.copy()
@@ -46,8 +46,11 @@ def main(root: Path) -> int:
         while True:
             # 继承终端与标准流；外部管理器只在整个运行周期结束后收到退出。
             # 源码入口可以从仓库外启动；程序目录用于模块查找，实例目录仍单独传入。
+            command = _command(stage, root)
+            if stage == "bootstrap" and host_only:
+                command.append("--host-only")
             child = subprocess.Popen(
-                _command(stage, root),
+                command,
                 cwd=None if PACKAGED_INSTALL else SOURCE_ROOT,
                 env=environment,
             )
