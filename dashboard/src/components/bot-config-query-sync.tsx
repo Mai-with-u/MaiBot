@@ -1,6 +1,8 @@
 import { useEffect } from 'react'
 import { useQueryClient } from '@tanstack/react-query'
 
+import { getHostRuntime } from '@/host/state'
+import { localChatInfoQueryKey } from '@/lib/bot-nickname'
 import {
   BOT_CONFIG_QUERY_KEY,
   BOT_CONFIG_UPDATED_EVENT,
@@ -11,15 +13,16 @@ export function BotConfigQuerySync() {
   const queryClient = useQueryClient()
 
   useEffect(() => {
-    const refreshBotConfig = async () => {
-      await queryClient.cancelQueries({ queryKey: BOT_CONFIG_QUERY_KEY, exact: true })
-      await queryClient.invalidateQueries({ queryKey: BOT_CONFIG_QUERY_KEY, exact: true })
+    const refreshBotConfigAndChatInfo = async () => {
+      const queryKeys = [BOT_CONFIG_QUERY_KEY, localChatInfoQueryKey(getHostRuntime().selected_bot_id)]
+      await Promise.all(queryKeys.map((queryKey) => queryClient.cancelQueries({ queryKey, exact: true })))
+      await Promise.all(queryKeys.map((queryKey) => queryClient.invalidateQueries({ queryKey, exact: true })))
     }
-    window.addEventListener(BOT_CONFIG_UPDATED_EVENT, refreshBotConfig)
+    window.addEventListener(BOT_CONFIG_UPDATED_EVENT, refreshBotConfigAndChatInfo)
     const unsubscribe = subscribeToBotConfigUpdatesFromOtherTabs()
     return () => {
       unsubscribe()
-      window.removeEventListener(BOT_CONFIG_UPDATED_EVENT, refreshBotConfig)
+      window.removeEventListener(BOT_CONFIG_UPDATED_EVENT, refreshBotConfigAndChatInfo)
     }
   }, [queryClient])
 

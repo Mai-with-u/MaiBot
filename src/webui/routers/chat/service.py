@@ -19,7 +19,7 @@ from src.common.database.database import get_db_session
 from src.common.database.database_model import Messages, PersonInfo
 from src.common.logger import get_logger
 from src.common.message_repository import find_messages
-from src.config.config import global_config
+from src.config.config import config_manager, global_config
 from src.core.internal_chat import INTERNAL_CHAT_BOT_ID, INTERNAL_CHAT_PLATFORM, INTERNAL_CHAT_USER_ID
 from src.core.local_operator import PLUGIN_RELAY_CONFIG_KEY
 from src.services.internal_chat_profile import get_internal_chat_user_name, set_internal_chat_user_name
@@ -709,10 +709,11 @@ def resolve_initial_virtual_identity(
         return None
 
 
-def get_chat_bot_qq() -> Optional[str]:
-    """聊天室默认头像使用配置的 QQ 账号，0 或留空表示未配置。"""
-    account = int(global_config.bot.qq_account or 0)
-    return str(account) if account > 0 else None
+def get_chat_bot_identity() -> Tuple[str, Optional[str], Optional[str]]:
+    """从同一份运行时配置快照读取昵称、版本和默认头像账号。"""
+    bot, nickname_version = config_manager.get_bot_config_with_nickname_version()
+    account = int(bot.qq_account or 0)
+    return bot.nickname, nickname_version, str(account) if account > 0 else None
 
 
 def build_session_info_message(
@@ -736,13 +737,14 @@ def build_session_info_message(
     """
     normalized_client_info = normalize_chat_client_info(client_info)
     # bot_qq 用于前端通过 WebUI 头像缓存接口加载机器人头像（qq_account == 0 表示未配置，不推送）。
-    bot_qq_account = get_chat_bot_qq()
+    bot_name, nickname_version, bot_qq_account = get_chat_bot_identity()
     session_info_data: Dict[str, Any] = {
         "type": "session_info",
         "session_id": session_id,
         "user_id": user_id,
         "user_name": user_name,
-        "bot_name": global_config.bot.nickname,
+        "bot_name": bot_name,
+        "bot_nickname_version": nickname_version,
         "platform": (
             virtual_config.platform
             if is_virtual_mode_enabled(virtual_config) and virtual_config

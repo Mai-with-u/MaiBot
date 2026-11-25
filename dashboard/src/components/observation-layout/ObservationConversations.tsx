@@ -13,11 +13,9 @@ import { Popover, PopoverContent, PopoverTrigger } from '@/components/ui/popover
 import { ScrollArea } from '@/components/ui/scroll-area'
 import { Tooltip, TooltipContent, TooltipTrigger } from '@/components/ui/tooltip'
 import { VirtualList } from '@/components/ui/virtual-list'
-import { useBotNickname } from '@/hooks/use-bot-nickname'
+import { useBotNickname, useLocalChatInfo } from '@/hooks/use-bot-nickname'
 import { useFeatureFlags } from '@/hooks/use-feature-flags'
 import { useHostRuntime } from '@/host/state'
-import { getBotDisplayName } from '@/lib/bot-nickname'
-import { backendApi } from '@/lib/http'
 import { useResolvedAvatarUrl } from '@/lib/avatar-url'
 import { getAllChatStreams } from '@/lib/chat-management-api'
 import { useLocalBotAvatarUrl } from '@/routes/chat/local-bot-avatar'
@@ -130,17 +128,9 @@ export function ObservationConversations({ collapsed }: { collapsed: boolean }) 
   const { t } = useTranslation()
   const { selected_bot_id } = useHostRuntime()
   const queryClient = useQueryClient()
-  const botNickname = useBotNickname()
-  const { data: chatInfo } = useQuery({
-    queryKey: ['local-chat-info', selected_bot_id],
-    queryFn: () => backendApi.get<{ bot_name: string | null; bot_qq: string | null }>('/api/chat/info'),
-    staleTime: 30_000,
-  })
-  const botName = getBotDisplayName(
-    botNickname,
-    chatInfo?.bot_name,
-    t('chat.botNameFallback')
-  )
+  const { data: chatInfo } = useLocalChatInfo(selected_bot_id)
+  const { nickname } = useBotNickname()
+  const botName = nickname ?? t('chat.botNameFallback')
   const observedChatsTitle = t('chat.sidebar.observedChatsForBot', { name: botName })
   const localBotAvatarUrl = useLocalBotAvatarUrl(chatInfo?.bot_qq ?? undefined)
   const navigate = useNavigate()

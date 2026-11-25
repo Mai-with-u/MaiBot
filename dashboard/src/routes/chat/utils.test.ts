@@ -145,28 +145,28 @@ describe('虚拟标签页持久化', () => {
 })
 
 describe('getChatTabDisplayName', () => {
-  const loadedNickname: BotNicknameState = { nickname: '麦麦', isConfigLoaded: true }
-  const unavailableNickname: BotNicknameState = { nickname: null, isConfigLoaded: false }
+  const loadedNickname: BotNicknameState = { nickname: '麦麦', isResolved: true }
+  const unavailableNickname: BotNicknameState = { nickname: null, isResolved: false }
 
   it('虚拟标签页直接返回其 label', () => {
     const tab = makeVirtualTab('虚拟群聊')
     expect(getChatTabDisplayName(tab, loadedNickname, '默认名')).toBe('虚拟群聊')
   })
 
-  it('webui 标签页使用当前配置昵称，而不是连接时缓存的昵称', () => {
+  it('webui 标签页使用共享的 Bot 昵称', () => {
     const tab = makeWebuiTab({ bot_name: '旧昵称' })
-    expect(getChatTabDisplayName(tab, { nickname: '小满', isConfigLoaded: true }, '默认名')).toBe('小满')
+    expect(getChatTabDisplayName(tab, { nickname: '小满', isResolved: true }, '默认名')).toBe('小满')
   })
 
-  it('配置不可用时使用已知连接昵称', () => {
+  it('共享昵称尚不可用时，本地标题使用默认昵称', () => {
     const tab = makeWebuiTab({ bot_name: '  小满  ' })
-    expect(getChatTabDisplayName(tab, unavailableNickname, '默认名')).toBe('小满')
+    expect(getChatTabDisplayName(tab, unavailableNickname, '默认名')).toBe('默认名')
   })
 
   it('配置成功但昵称已清空时不再使用旧连接昵称', () => {
     const tab = makeWebuiTab({ bot_name: '小满' })
     expect(
-      getChatTabDisplayName(tab, { nickname: null, isConfigLoaded: true }, '默认名')
+      getChatTabDisplayName(tab, { nickname: null, isResolved: true }, '默认名')
     ).toBe('默认名')
   })
 
@@ -187,7 +187,7 @@ describe('getChatBotDisplayName', () => {
     tab.sessionInfo.bot_name = '小满'
 
     expect(
-      getChatBotDisplayName(tab, { nickname: null, isConfigLoaded: false }, '默认名')
+      getChatBotDisplayName(tab, { nickname: null, isResolved: false }, '默认名')
     ).toBe('小满')
   })
 })

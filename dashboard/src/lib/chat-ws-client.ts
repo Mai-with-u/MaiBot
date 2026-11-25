@@ -1,3 +1,4 @@
+import { startBotNicknameRequest, type BotNicknameRequest } from './bot-nickname'
 import { unifiedWsClient, type ConnectionStatus } from './unified-ws'
 
 const SESSION_RELEASE_DELAY_MS = 5 * 60 * 1000
@@ -28,7 +29,7 @@ interface ChatSendOptions {
   emojis?: ChatImagePayload[]
 }
 
-type ChatSessionListener = (message: Record<string, unknown>) => void
+type ChatSessionListener = (message: Record<string, unknown>, openRequest?: BotNicknameRequest) => void
 
 /** 浅层比较两个 session.open 负载是否完全一致。 */
 function arePayloadsEqual(left: ChatSessionOpenPayload, right: ChatSessionOpenPayload): boolean {
@@ -58,6 +59,7 @@ class ChatWsClient {
   private openedSessions: Set<string> = new Set()
   // 记录正在进行中的打开请求，使同一会话的重复调用复用同一个 Promise。
   private pendingOpens: Map<string, Promise<void>> = new Map()
+  private acknowledgedOpens = new Map<string, BotNicknameRequest>()
   // 页面切换时暂时保留逻辑会话，避免路由卸载立即触发关闭和重建。
   private pendingReleases: Map<string, ReturnType<typeof setTimeout>> = new Map()
 
@@ -82,6 +84,8 @@ class ChatWsClient {
         return
       }
 
+      const openRequest = message.event === 'session_info' ? this.acknowledgedOpens.get(message.session) : undefined
+      if (openRequest) this.acknowledgedOpens.delete(message.session)
       const sessionListeners = this.listeners.get(message.session)
       if (!sessionListeners) {
         return
@@ -89,7 +93,7 @@ class ChatWsClient {
 
       sessionListeners.forEach((listener) => {
         try {
-          listener(message.data)
+          listener(message.data, openRequest)
         } catch (error) {
           console.error('聊天会话监听器执行失败:', error)
         }
@@ -100,6 +104,7 @@ class ChatWsClient {
       // 重连后需要重新订阅，清空本地“已打开”标记。
       this.openedSessions.clear()
       this.pendingOpens.clear()
+      this.acknowledgedOpens.clear()
       void this.reopenSessions()
     })
 
@@ -108,26 +113,32 @@ class ChatWsClient {
         // 连接断开后，下次重新连上需要重新发送 session.open。
         this.openedSessions.clear()
         this.pendingOpens.clear()
+        this.acknowledgedOpens.clear()
       }
     })
 
     this.initialized = true
   }
 
+  private async requestSessionOpen(sessionId: string, payload: ChatSessionOpenPayload & { restore?: boolean }): Promise<void> {
+    let openRequest: BotNicknameRequest | undefined
+    await unifiedWsClient.call({
+      domain: 'chat',
+      method: 'session.open',
+      session: sessionId,
+      data: payload as Record<string, unknown>,
+      onSend: () => { openRequest = startBotNicknameRequest() },
+    })
+    // 服务端确认 session.open 后发送对应的 session_info，两个帧按顺序到达。
+    if (openRequest) this.acknowledgedOpens.set(sessionId, openRequest)
+    this.openedSessions.add(sessionId)
+  }
+
   private async reopenSessions(): Promise<void> {
     const reopenTargets = Array.from(this.sessionPayloads.entries())
     for (const [sessionId, payload] of reopenTargets) {
       try {
-        await unifiedWsClient.call({
-          domain: 'chat',
-          method: 'session.open',
-          session: sessionId,
-          data: {
-            ...payload,
-            restore: true,
-          } as Record<string, unknown>,
-        })
-        this.openedSessions.add(sessionId)
+        await this.requestSessionOpen(sessionId, { ...payload, restore: true })
       } catch (error) {
         console.error(`恢复聊天会话失败 (${sessionId}):`, error)
       }
@@ -160,16 +171,7 @@ class ChatWsClient {
     }
 
     const requestPayload = isResuming ? { ...payload, restore: true } : payload
-    const openPromise = unifiedWsClient
-      .call({
-        domain: 'chat',
-        method: 'session.open',
-        session: sessionId,
-        data: requestPayload as Record<string, unknown>,
-      })
-      .then(() => {
-        this.openedSessions.add(sessionId)
-      })
+    const openPromise = this.requestSessionOpen(sessionId, requestPayload)
 
     this.pendingOpens.set(sessionId, openPromise)
     try {
@@ -201,6 +203,7 @@ class ChatWsClient {
     this.sessionPayloads.delete(sessionId)
     this.openedSessions.delete(sessionId)
     this.pendingOpens.delete(sessionId)
+    this.acknowledgedOpens.delete(sessionId)
     if (unifiedWsClient.getStatus() !== 'connected') {
       return
     }

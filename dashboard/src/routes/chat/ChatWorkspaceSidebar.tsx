@@ -11,7 +11,6 @@ import { ScrollArea } from '@/components/ui/scroll-area'
 import { Tooltip, TooltipContent, TooltipTrigger } from '@/components/ui/tooltip'
 import { useBotNickname } from '@/hooks/use-bot-nickname'
 import { useResolvedAvatarUrl } from '@/lib/avatar-url'
-import { getBotDisplayName } from '@/lib/bot-nickname'
 import { cn } from '@/lib/utils'
 import type { SessionInfo, StageStatusInfo } from '@/routes/monitor/use-maisaka-monitor'
 import { StageStatusLabel } from '@/routes/monitor/StageStatusLabel'
@@ -214,10 +213,7 @@ export function ChatWorkspaceSidebar({
   const { t } = useTranslation()
   const botNickname = useBotNickname()
   const botNameFallback = t('chat.botNameFallback')
-  const knownBotName = tabs.find(
-    (tab) => tab.type === 'webui' && tab.sessionInfo.bot_name?.trim()
-  )?.sessionInfo.bot_name
-  const sectionBotName = getBotDisplayName(botNickname, knownBotName, botNameFallback)
+  const sectionBotName = botNickname.nickname ?? botNameFallback
   const myChatsTitle = t('chat.sidebar.myChatsForBot', { name: sectionBotName })
   const observedChatsTitle = t('chat.sidebar.observedChatsForBot', { name: sectionBotName })
   const [searchQuery, setSearchQuery] = useState('')

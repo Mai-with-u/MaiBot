@@ -16,6 +16,7 @@ import {
 } from '@/components/chat-stream-settings-dialog'
 import { MOBILE_GLASS_CLASS } from '@/components/layout/mobile-glass'
 import { useHideMobileTabBar } from '@/components/layout/mobile-nav-context'
+import { useHostRuntime } from '@/host/state'
 import { useMediaQuery } from '@/hooks/use-media-query'
 import { useBotNickname } from '@/hooks/use-bot-nickname'
 import { useFeatureFlags } from '@/hooks/use-feature-flags'
@@ -23,7 +24,13 @@ import { takeQuickChatMessage } from '@/lib/quick-chat'
 import { useToast } from '@/hooks/use-toast'
 import { Button } from '@/components/ui/button'
 import { uploadWebuiUserAvatar } from '@/lib/avatar-url'
-import { LOCAL_CHAT_BOT_NICKNAME_QUERY_KEY } from '@/lib/bot-nickname'
+import {
+  isNewerBotNicknameSample,
+  localChatBotNicknameQueryKey,
+  readBotNicknameVersion,
+  type BotNicknameRequest,
+  type BotNicknameSample,
+} from '@/lib/bot-nickname'
 import { chatWsClient } from '@/lib/chat-ws-client'
 import { uploadFile, type StoredFile } from '@/lib/files-api'
 import { getAllChatStreams } from '@/lib/chat-management-api'
@@ -300,6 +307,7 @@ export function ChatPage() {
   useEffect(() => clearTrialTimeout, [clearTrialTimeout])
   const canOpenMessagePlatform = typeof window.maibotDesktopHost?.openMessagePlatform === 'function'
   const { t, i18n } = useTranslation()
+  const { selected_bot_id } = useHostRuntime()
   const botNickname = useBotNickname()
   const botNameFallback = t('chat.botNameFallback')
   const { startTour } = useTour()
@@ -492,7 +500,7 @@ export function ChatPage() {
   }, [])
 
   const handleSessionMessage = useCallback(
-    (tabId: string, tabType: 'webui' | 'virtual', data: WsMessage) => {
+    (tabId: string, tabType: 'webui' | 'virtual', data: WsMessage, openRequest?: BotNicknameRequest) => {
       switch (data.type) {
         case 'session_info':
           if (tabType === 'webui') {
@@ -500,8 +508,15 @@ export function ChatPage() {
               setUserName(data.user_name)
               saveUserName(data.user_name)
             }
-            if (typeof data.bot_name === 'string') {
-              queryClient.setQueryData(LOCAL_CHAT_BOT_NICKNAME_QUERY_KEY, data.bot_name.trim() || null)
+            if (typeof data.bot_name === 'string' && openRequest) {
+              const sample = {
+                nickname: data.bot_name.trim() || null,
+                request: openRequest,
+                version: readBotNicknameVersion(data.bot_nickname_version),
+              }
+              queryClient.setQueryData<BotNicknameSample>(localChatBotNicknameQueryKey(selected_bot_id), (current) =>
+                isNewerBotNicknameSample(sample, current) ? sample : current
+              )
             }
           }
           setTabs((prev) =>
@@ -746,7 +761,7 @@ export function ChatPage() {
           break
       }
     },
-    [addMessageToTab, clearTrialTimeout, queryClient, startTrialTimeout, t, toast, updateTab]
+    [addMessageToTab, clearTrialTimeout, queryClient, selected_bot_id, startTrialTimeout, t, toast, updateTab]
   )
 
   const ensureSessionListener = useCallback(
@@ -755,8 +770,8 @@ export function ChatPage() {
         return
       }
 
-      const unsubscribe = chatWsClient.onSessionMessage(tabId, (message) => {
-        handleSessionMessage(tabId, tabType, message as unknown as WsMessage)
+      const unsubscribe = chatWsClient.onSessionMessage(tabId, (message, openRequest) => {
+        handleSessionMessage(tabId, tabType, message as unknown as WsMessage, openRequest)
       })
       sessionUnsubscribeMapRef.current.set(tabId, unsubscribe)
     },

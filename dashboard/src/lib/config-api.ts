@@ -7,6 +7,7 @@
  */
 
 import { getHostRuntime } from '@/host/state'
+import { readBotNicknameVersion } from '@/lib/bot-nickname'
 import { backendApi } from '@/lib/http'
 import type { ConfigSchema } from '@/types/config-schema'
 
@@ -16,7 +17,7 @@ export const BOT_CONFIG_QUERY_KEY = ['bot-config'] as const
 const schemaRequestCache = new Map<string, Promise<ConfigSchema>>()
 const configDataCache = new Map<
   string,
-  { timestamp: number; request: Promise<Record<string, unknown>> }
+  { timestamp: number; request: Promise<unknown> }
 >()
 const CONFIG_DATA_CACHE_TTL = 30_000
 
@@ -58,7 +59,7 @@ function getCachedSchema(key: string, url: string): Promise<ConfigSchema> {
   return request
 }
 
-function getCachedConfigData(key: string, url: string): Promise<Record<string, unknown>> {
+function getCachedConfigResponse(key: string, url: string): Promise<unknown> {
   const cachedRequest = configDataCache.get(key)
   if (cachedRequest && Date.now() - cachedRequest.timestamp < CONFIG_DATA_CACHE_TTL) {
     return cachedRequest.request
@@ -66,7 +67,6 @@ function getCachedConfigData(key: string, url: string): Promise<Record<string, u
 
   const request = backendApi
     .get<unknown>(url, { cache: 'no-store', errorMessage: '获取配置失败' })
-    .then((data) => unwrapConfigResponse(data))
     .catch((error: unknown) => {
       // 失败后释放缓存，但不能清除过期或失效后已经启动的新请求。
       if (configDataCache.get(key)?.request === request) {
@@ -164,7 +164,15 @@ export async function getBotConfig(): Promise<Record<string, unknown>> {
 
 /** Cached config data for lightweight status summaries. */
 export async function getBotConfigCached(): Promise<Record<string, unknown>> {
-  return getCachedConfigData('bot', `${API_BASE}/bot`)
+  return unwrapConfigResponse(await getCachedConfigResponse('bot', `${API_BASE}/bot`))
+}
+
+export async function getBotConfigSnapshotCached() {
+  const data = await getCachedConfigResponse('bot', `${API_BASE}/bot`)
+  const nicknameVersion = data && typeof data === 'object' && 'bot_nickname_version' in data
+    ? readBotNicknameVersion(data.bot_nickname_version)
+    : undefined
+  return { config: unwrapConfigResponse(data), nicknameVersion }
 }
 
 /**
@@ -180,7 +188,7 @@ export async function getModelConfig(): Promise<Record<string, unknown>> {
 
 /** Cached model config data for lightweight status summaries. */
 export async function getModelConfigCached(): Promise<Record<string, unknown>> {
-  return getCachedConfigData('model', `${API_BASE}/model`)
+  return unwrapConfigResponse(await getCachedConfigResponse('model', `${API_BASE}/model`))
 }
 
 /**

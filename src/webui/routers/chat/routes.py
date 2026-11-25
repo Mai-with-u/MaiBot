@@ -56,7 +56,7 @@ from .service import (
     INTERNAL_CHAT_PLATFORM,
     chat_history,
     chat_manager,
-    get_chat_bot_qq,
+    get_chat_bot_identity,
 )
 
 logger = get_logger("webui.chat")
@@ -1817,9 +1817,11 @@ async def clear_chat_history(
 @router.get("/info")
 def get_chat_info() -> Dict[str, object]:
     """获取聊天室信息。"""
+    bot_name, nickname_version, bot_qq = get_chat_bot_identity()
     return {
-        "bot_name": global_config.bot.nickname,
-        "bot_qq": get_chat_bot_qq(),
+        "bot_name": bot_name,
+        "bot_nickname_version": nickname_version,
+        "bot_qq": bot_qq,
         "platform": INTERNAL_CHAT_PLATFORM,
         "active_sessions": len(chat_manager.active_connections),
     }

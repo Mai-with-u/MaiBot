@@ -112,6 +112,29 @@ describe('config-api', () => {
   })
 
   describe('配置数据缓存与失效', () => {
+    it('普通配置与带版本的快照共享一次 GET，并在保存后一起刷新', async () => {
+      const initial = { bot: { nickname: '小满' } }
+      const updated = { bot: { nickname: '春分' } }
+      httpMocks.backendApi.get
+        .mockResolvedValueOnce({ config: initial, bot_nickname_version: '1795500000000000000' })
+        .mockResolvedValueOnce({ config: updated, bot_nickname_version: '1795500000000000100' })
+      httpMocks.backendApi.post.mockResolvedValue({ success: true })
+      const api = await loadConfigApi()
+
+      const [config, snapshot] = await Promise.all([api.getBotConfigCached(), api.getBotConfigSnapshotCached()])
+      expect(config).toEqual(initial)
+      expect(snapshot).toEqual({ config: initial, nicknameVersion: '1795500000000000000' })
+      expect(httpMocks.backendApi.get).toHaveBeenCalledTimes(1)
+
+      await api.updateBotConfig(updated)
+      await expect(api.getBotConfigSnapshotCached()).resolves.toEqual({
+        config: updated,
+        nicknameVersion: '1795500000000000100',
+      })
+      await expect(api.getBotConfigCached()).resolves.toEqual(updated)
+      expect(httpMocks.backendApi.get).toHaveBeenCalledTimes(2)
+    })
+
     it('配置数据的 HTTP 失败也会释放缓存，允许立即重试', async () => {
       httpMocks.backendApi.get
         .mockRejectedValueOnce(new httpMocks.ApiError('服务暂不可用', { status: 503 }))

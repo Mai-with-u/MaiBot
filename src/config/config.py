@@ -1,6 +1,7 @@
 from datetime import datetime
 from pathlib import Path
-from typing import Any, Callable, Mapping, Sequence, TypeVar, cast
+from threading import Lock
+from typing import Any, Callable, Dict, Mapping, Sequence, Tuple, TypeVar, cast
 
 import asyncio
 import copy
@@ -8,6 +9,11 @@ import hashlib
 import inspect
 import os
 import shutil
+import time
+
+from pydantic import PrivateAttr
+from tomlkit import TOMLDocument
+
 import tomlkit
 
 from src.agent.config import AgentConfig
@@ -100,6 +106,8 @@ class _ReloadCallbackRegistration:
 
 class Config(ConfigBase):
     """总配置类"""
+
+    _file_snapshot_version: str | None = PrivateAttr(default=None)
 
     agent: AgentConfig = Field(default_factory=AgentConfig)
     """统一独立 Agent 配置"""
@@ -275,9 +283,14 @@ class ConfigManager:
         return config
 
     def get_global_config(self) -> Config:
-        if self.global_config is None:
+        config = self.global_config
+        if config is None:
             raise RuntimeError(t("config.global_not_initialized"))
-        return self.global_config
+        return config
+
+    def get_bot_config_with_nickname_version(self) -> Tuple[BotConfig, str | None]:
+        config = self.get_global_config()
+        return config.bot, config._file_snapshot_version
 
     def get_model_config(self) -> ModelConfig:
         if self.model_config is None:
@@ -729,6 +742,35 @@ def remove_legacy_env_file(env_path: Path) -> None:
         logger.warning(f"检测到旧版环境变量绑定配置迁移成功，已删除旧版 .env 文件: {env_path}")
 
 
+_bot_config_snapshot_lock = Lock()
+_bot_config_snapshots: Dict[Path, Tuple[str, int]] = {}
+
+
+def _record_bot_config_snapshot(path: Path, content: str) -> str:
+    """调用方持有快照锁，为解析后的配置路径记录所读到或提交的内容版本。"""
+    fingerprint = hashlib.sha256(content.encode("utf-8")).hexdigest()
+    previous = _bot_config_snapshots.get(path)
+    if previous is not None and previous[0] == fingerprint:
+        return str(previous[1])
+    version = max(time.time_ns(), previous[1] + 1 if previous is not None else 1)
+    _bot_config_snapshots[path] = (fingerprint, version)
+    return str(version)
+
+
+def read_bot_config_snapshot(config_path: Path) -> Tuple[TOMLDocument, str]:
+    """先按文件读取顺序记录版本，再解析对应的 TOML 内容。"""
+    with _bot_config_snapshot_lock:
+        snapshot_path = config_path.resolve()
+        with snapshot_path.open("r", encoding="utf-8") as stream:
+            before = os.fstat(stream.fileno())
+            content = stream.read()
+            after = os.fstat(stream.fileno())
+        if before.st_mtime_ns != after.st_mtime_ns or before.st_size != after.st_size:
+            raise OSError(f"配置文件在读取期间发生变化：{config_path}")
+        version = _record_bot_config_snapshot(snapshot_path, content)
+    return tomlkit.parse(content), version
+
+
 def load_config_from_file(
     config_class: type[T], config_path: Path, new_ver: str, override_repr: bool = False
 ) -> tuple[T, bool]:
@@ -736,11 +778,15 @@ def load_config_from_file(
     if not config_path.exists():
         logger.warning(f"配置文件缺失，正在生成默认配置: {config_path}")
         generate_new_config_file(config_class, config_path, new_ver, override_repr)
-    with open(config_path, "r", encoding="utf-8") as f:
-        try:
-            config_data = tomlkit.load(f)
-        except (UnicodeError, tomlkit.exceptions.ParseError) as exc:
-            raise ValueError(f"配置文件无法解析：{config_path}") from exc
+    snapshot_version: str | None = None
+    try:
+        if config_class is Config:
+            config_data, snapshot_version = read_bot_config_snapshot(config_path)
+        else:
+            with config_path.open("r", encoding="utf-8") as stream:
+                config_data = tomlkit.load(stream)
+    except (UnicodeError, tomlkit.exceptions.ParseError) as exc:
+        raise ValueError(f"配置文件无法解析：{config_path}") from exc
     inner_table = config_data.get("inner")
     if not isinstance(inner_table, Mapping):
         raise TypeError(t("config.missing_inner_version"))
@@ -824,7 +870,7 @@ def load_config_from_file(
                 local_providers = {item["name"] for item in original_data.get("api_providers", [])}
                 output_config.models = [item for item in output_config.models if item.name in local_models]
                 output_config.api_providers = [item for item in output_config.api_providers if item.name in local_providers]
-            write_config_to_file(output_config, config_path, new_ver, override_repr)
+            snapshot_version = write_config_to_file(output_config, config_path, new_ver, override_repr)
             if env_migration_applied:
                 remove_legacy_env_file(LEGACY_ENV_PATH)
             updated = True
@@ -833,6 +879,8 @@ def load_config_from_file(
                 migrated=env_migration_applied or legacy_config_migration_applied,
                 reason=",".join(reason for reason in legacy_config_migration_reasons if reason),
             )
+        if isinstance(target_config, Config):
+            target_config._file_snapshot_version = snapshot_version
         return target_config, updated
     except Exception as e:
         logger.critical(t("config.parse_failed", file_name=config_path.name))
@@ -841,8 +889,8 @@ def load_config_from_file(
 
 def write_config_to_file(
     config: ConfigBase, config_path: Path, inner_config_version: str, override_repr: bool = False
-) -> None:
-    """将配置写入文件
+) -> str | None:
+    """将配置写入文件，主配置返回实际提交的快照版本。
 
     :param config: 配置对象
     :param config_path: 配置文件路径
@@ -901,8 +949,12 @@ def write_config_to_file(
         backup_path = backup_root / f"{config_path.stem}_{timestamp}.toml"
         shutil.copy2(config_path, backup_path)
 
-    # 写入文件
+    if isinstance(config, Config):
+        with _bot_config_snapshot_lock:
+            write_private(config_path, content)
+            return _record_bot_config_snapshot(config_path.resolve(), content)
     write_private(config_path, content)
+    return None
 
 
 class _ConfigProxy:

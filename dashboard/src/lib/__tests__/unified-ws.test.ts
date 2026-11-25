@@ -203,6 +203,26 @@ describe('unifiedWsClient', () => {
     await expect(callPromise).resolves.toEqual({ echoed: true })
   })
 
+  it('calls onSend just before writing the frame after the handshake', async () => {
+    const client = await loadClient()
+    const onSend = vi.fn(() => FakeWebSocket.instances[0].sent.length)
+    const callPromise = client.call({ domain: 'chat', method: 'session.open', session: 'local', onSend })
+    await flushMicrotasks()
+
+    const socket = FakeWebSocket.instances[0]
+    expect(onSend).not.toHaveBeenCalled()
+    expect(socket.sent).toHaveLength(0)
+
+    socket.serverOpen()
+    await flushMicrotasks()
+    const payload = socket.lastSent()
+    expect(payload).toMatchObject({ op: 'call', method: 'session.open', session: 'local' })
+    socket.serverMessage({ op: 'response', id: payload.id, ok: true })
+    await expect(callPromise).resolves.toEqual({})
+    expect(onSend).toHaveBeenCalledTimes(1)
+    expect(onSend).toHaveReturnedWith(0)
+  })
+
   it('响应 ok=false 时用后端错误信息拒绝请求', async () => {
     const { client, socket } = await connectAndOpen()
 

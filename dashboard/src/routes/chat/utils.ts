@@ -67,7 +67,7 @@ export function getChatTabDisplayName(
   if (tab.type === 'virtual') {
     return tab.label
   }
-  return getBotDisplayName(botNickname, tab.sessionInfo.bot_name, fallback)
+  return botNickname.nickname ?? fallback
 }
 
 export function getChatBotDisplayName(
@@ -75,5 +75,5 @@ export function getChatBotDisplayName(
   botNickname: BotNicknameState,
   fallback: string
 ): string {
-  return getBotDisplayName(botNickname, tab?.sessionInfo.bot_name, fallback)
+  return getBotDisplayName(botNickname, tab?.type === 'virtual' ? tab.sessionInfo.bot_name : undefined, fallback)
 }

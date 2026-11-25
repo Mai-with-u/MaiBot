@@ -31,7 +31,15 @@ from src.common.prompt_i18n import (
 )
 from src.common.paths import resource_path
 from src.common.runtime_loop import run_on_main_loop
-from src.config.config import CONFIG_DIR, MODEL_CONFIG_VERSION, Config, ModelConfig, PROJECT_ROOT, config_manager
+from src.config.config import (
+    CONFIG_DIR,
+    MODEL_CONFIG_VERSION,
+    PROJECT_ROOT,
+    Config,
+    ModelConfig,
+    config_manager,
+    read_bot_config_snapshot,
+)
 from src.config.config_base import AttributeData, ConfigBase
 from src.config.shared_settings import shared_settings_path, strip_shared_settings
 from src.config.shared_models import (
@@ -1374,14 +1382,12 @@ def get_config_section_schema(section_name: str):
 def get_bot_config():
     """获取麦麦主程序配置"""
     try:
-        config_path = os.path.join(CONFIG_DIR, "bot_config.toml")
-        if not os.path.exists(config_path):
+        config_path = Path(CONFIG_DIR) / "bot_config.toml"
+        if not config_path.exists():
             raise HTTPException(status_code=404, detail="配置文件不存在")
 
-        with open(config_path, "r", encoding="utf-8") as f:
-            config_data = tomlkit.load(f)
-
-        return {"success": True, "config": config_data}
+        config_data, nickname_version = read_bot_config_snapshot(config_path)
+        return {"success": True, "config": config_data, "bot_nickname_version": nickname_version}
     except HTTPException:
         raise
     except Exception as e:
