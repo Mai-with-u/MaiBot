@@ -485,7 +485,7 @@ class JargonLearningRecord(SQLModel, table=True):
     scope_id: str
     evidence: Optional[str] = None
     excerpt: str = ""
-    recorded_at: Optional[datetime] = None
+    recorded_at: Optional[datetime] = Field(default=None, sa_type=DateTime)
 
 
 class JargonDeferredLearning(SQLModel, table=True):

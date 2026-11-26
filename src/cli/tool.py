@@ -19,6 +19,8 @@ def main(argv: Optional[Sequence[str]] = None) -> int:
     for command, description in (("run", "运行宿主及工作区内的全部 Bot"), ("init", "在目录中生成 Bot 配置（保留已有配置）")):
         subparser = commands.add_parser(command, help=description)
         subparser.add_argument("--directory", "-d", type=Path, default=Path.cwd(), help="工作区或 Bot 目录，默认当前目录")
+        if command == "run":
+            subparser.add_argument("--host-only", action="store_true", help="启动宿主与 WebUI，跳过 Bot 自动启动")
     # run 的父进程只加载标准库，避免更新期间持有被替换的扩展模块。
     if argv and argv[0] == "host":
         from src.host.cli import add_host_command, run_host_command
@@ -48,7 +50,7 @@ def main(argv: Optional[Sequence[str]] = None) -> int:
         from src.host.launcher import main as run_host
 
         try:
-            return run_host(directory)
+            return run_host(directory, host_only=args.host_only)
         except (RuntimeError, ValueError) as exc:
             parser.error(str(exc))
         return 0

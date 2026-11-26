@@ -107,6 +107,7 @@ class BotSupervisor:
         self, workspace: Workspace, *, public_base_url: str,
         command_factory: Callable[[BotRecord], List[str]] = worker_command,
         stop_timeout: float = STOP_TIMEOUT,
+        host_only: bool = False,
     ) -> None:
         self.workspace = workspace
         self.public_base_url = public_base_url
@@ -114,6 +115,7 @@ class BotSupervisor:
         self._command_factory = command_factory
         self._stop_timeout = stop_timeout
         self._runtimes: Dict[str, _Runtime] = {}
+        self._manual_bots: Optional[Set[str]] = set() if host_only else None
         self._closing = False
         self._maintenance = False
         self._resume_task: Optional["asyncio.Task[List[str]]"] = None
@@ -127,6 +129,10 @@ class BotSupervisor:
         if self._maintenance:
             return "宿主正在维护，完成后会按期望状态恢复 Bot"
         return None
+
+    def should_resume(self, bot: BotRecord) -> bool:
+        """仅宿主模式下只恢复本次会话中明确启动过的 Bot。"""
+        return bot.desired_state == "running" and (self._manual_bots is None or bot.bot_id in self._manual_bots)
 
     async def _runtime(self, bot_id: str) -> _Runtime:
         bot = await asyncio.to_thread(self.workspace.registry.get_bot, bot_id)
@@ -330,12 +336,14 @@ class BotSupervisor:
                 runtime.bot = await asyncio.to_thread(self.workspace.registry.set_desired_state, bot_id, "stopped")
                 result = await asyncio.to_thread(archive_bot, self.workspace, runtime.bot)
                 self._runtimes.pop(bot_id, None)
+                if self._manual_bots is not None:
+                    self._manual_bots.discard(bot_id)
                 return result
             try:
                 bot = await asyncio.to_thread(clone_bot, self.workspace, runtime.bot, name)
                 return {"bot_id": bot.bot_id, "name": bot.name, "status": "stopped"}
             finally:
-                if runtime.bot.desired_state == "running" and self._start_blocker() is None:
+                if self.should_resume(runtime.bot) and self._start_blocker() is None:
                     await self._spawn_reported(runtime)
 
     async def run_file_operation(self, bot_id: str, operation: Any, *args: Any) -> None:
@@ -368,6 +376,8 @@ class BotSupervisor:
             if blocker := self._start_blocker():
                 raise RuntimeError(blocker)
             runtime.bot = await asyncio.to_thread(self.workspace.registry.set_desired_state, bot_id, "running")
+            if self._manual_bots is not None:
+                self._manual_bots.add(bot_id)
             runtime.crashes.clear()
             self._cancel_retry(runtime)
             if runtime.process is None:
@@ -378,6 +388,8 @@ class BotSupervisor:
         runtime = await self._runtime(bot_id)
         async with runtime.lock:
             runtime.bot = await asyncio.to_thread(self.workspace.registry.set_desired_state, bot_id, "stopped")
+            if self._manual_bots is not None:
+                self._manual_bots.discard(bot_id)
             await self._stop_locked(runtime)
             return runtime.snapshot()
 
@@ -391,6 +403,8 @@ class BotSupervisor:
             if blocker := self._start_blocker():
                 raise RuntimeError(blocker)
             runtime.bot = await asyncio.to_thread(self.workspace.registry.set_desired_state, bot_id, "running")
+            if self._manual_bots is not None:
+                self._manual_bots.add(bot_id)
             if not await self._stop_locked(runtime):
                 raise RuntimeError(f"停止过程异常，未启动新的 Bot: {runtime.error}")
             runtime.crashes.clear()
@@ -402,7 +416,7 @@ class BotSupervisor:
         if self._start_blocker():
             return []
         bots = await asyncio.to_thread(self.workspace.registry.list_bots)
-        if not any(bot.desired_state == "running" and bot.initialization == "initialized" for bot in bots):
+        if not any(self.should_resume(bot) and bot.initialization == "initialized" for bot in bots):
             print("没有待自动启动的 Bot，宿主正在等待启动操作。请在 WebUI 机器人管理页启动 Bot。", flush=True)
             for bot in bots:
                 print(
@@ -417,7 +431,7 @@ class BotSupervisor:
                 await self.prepare_dependencies()
             except Exception as exc:
                 for bot in await asyncio.to_thread(self.workspace.registry.list_bots):
-                    if bot.desired_state != "running":
+                    if not self.should_resume(bot):
                         continue
                     runtime = await self._runtime(bot.bot_id)
                     async with runtime.lock:
@@ -429,7 +443,7 @@ class BotSupervisor:
         for bot in await asyncio.to_thread(self.workspace.registry.list_bots):
             if self._start_blocker():
                 break
-            if bot.desired_state != "running" or bot.initialization != "initialized":
+            if not self.should_resume(bot) or bot.initialization != "initialized":
                 continue
             runtime = await self._runtime(bot.bot_id)
             async with runtime.lock:

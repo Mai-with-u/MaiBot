@@ -75,8 +75,9 @@ def test_packaged_entry_prepares_directory_before_business_import(tmp_path: Path
 
 
 @pytest.mark.parametrize("previous_directory", [None, "another-workspace"])
+@pytest.mark.parametrize("host_only", [False, True])
 def test_launcher_supplies_directory_to_start_update_and_restart(
-    tmp_path: Path, monkeypatch: pytest.MonkeyPatch, previous_directory: str | None
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch, previous_directory: str | None, host_only: bool
 ) -> None:
     from src.host import launcher
 
@@ -94,11 +95,12 @@ def test_launcher_supplies_directory_to_start_update_and_restart(
             "import os, sys; "
             "from pathlib import Path; "
             "assert Path(os.environ['MAIBOT_INSTANCE_DIR']) == Path(sys.argv[1]); "
+            f"assert ('--host-only' in sys.argv) is {host_only and stage == 'bootstrap'}; "
             f"sys.exit({code})"
         )
         return [sys.executable, "-I", "-c", script, str(root)]
 
     monkeypatch.setattr(launcher, "_command", command)
-    assert launcher.main(tmp_path) == 0
+    assert launcher.main(tmp_path, host_only=host_only) == 0
     assert stages == ["bootstrap", "updater", "bootstrap"]
     assert os.environ.get("MAIBOT_INSTANCE_DIR") == previous_directory
