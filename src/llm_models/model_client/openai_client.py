@@ -5,6 +5,7 @@ from uuid import uuid4
 
 from httpx import Response
 
+import array
 import asyncio
 import base64
 import binascii
@@ -2037,7 +2038,26 @@ class OpenaiClient(AdapterClient[AsyncStream[ChatCompletionChunk], ChatCompletio
             attach_request_snapshot(exc, snapshot_path)
             raise exc
         if raw_response.data:
-            response.embedding = raw_response.data[0].embedding
+            embedding_value = raw_response.data[0].embedding
+            if isinstance(embedding_value, str):
+                try:
+                    embedding_value = array.array("f", base64.b64decode(embedding_value)).tolist()
+                except (binascii.Error, ValueError) as decode_error:
+                    exc = RespParseException(raw_response, "嵌入响应解析失败，base64 解码失败。")
+                    snapshot_path = await asyncio.to_thread(
+                        save_failed_request_snapshot,
+                        api_provider=self.api_provider,
+                        client_type="openai",
+                        error=exc,
+                        internal_request=serialize_embedding_request_snapshot(request),
+                        model_info=model_info,
+                        operation="embeddings.create",
+                        provider_request=snapshot_provider_request,
+                        trace_context=request.trace_context,
+                    )
+                    attach_request_snapshot(exc, snapshot_path)
+                    raise exc from decode_error
+            response.embedding = embedding_value
         else:
             raise RespParseException(raw_response, "响应解析失败，缺失嵌入数据。")
 
