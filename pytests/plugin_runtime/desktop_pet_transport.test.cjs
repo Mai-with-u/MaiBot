@@ -14,7 +14,7 @@ const botId = 'a'.repeat(32);
 const assetPath = '/skins/assets/' + 'b'.repeat(64);
 const requestId = 'c'.repeat(32);
 
-function setup({ fetch, forceToken = false }) {
+function setup({ fetch, forceToken = false, authStatus = () => ({ authenticated: true }) }) {
   const messages = [], timers = new Map();
   const location = new URL(server + '/auth');
   let socket;
@@ -42,7 +42,7 @@ function setup({ fetch, forceToken = false }) {
     window, location, URL, TextEncoder, TextDecoder, AbortController, AbortSignal: {}, Blob, FileReader, WebSocket,
     fetch(url, options) {
       const path = new URL(url).pathname;
-      if (path === '/api/webui/auth/check') return Response.json({ authenticated: true });
+      if (path === '/api/webui/auth/check') return Response.json(authStatus());
       if (path === '/api/host/bots') return Response.json({ bots: [] });
       return fetch(path, options);
     },
@@ -139,6 +139,31 @@ test('explicit WebUI password is verified before the connection accepts the sess
   await flush();
   assert.deepEqual(ctx.messages.filter(({ type }) => type.startsWith('token_') || type === 'authenticated')
     .map(({ type }) => type), ['token_required', 'token_verified', 'authenticated']);
+  ctx.api.stop();
+});
+
+test('first setup notifies native verification but waits for a custom password', async () => {
+  let setupPending = true;
+  const ctx = setup({
+    forceToken: true,
+    fetch: () => Response.json({ valid: true, requires_custom_token: true }),
+    authStatus: () => ({ authenticated: true, requires_custom_token: setupPending }),
+  });
+  await flush();
+  assert.equal(ctx.fireTimer(0), true);
+  await flush();
+  await ctx.api.verifyToken('test-temporary-password');
+  const verified = ctx.messages.find(({ type }) => type === 'token_verified');
+  assert.equal(verified?.requires_custom_token, true);
+  assert.equal(ctx.fireTimer(0), true);
+  await flush();
+  assert.ok(ctx.messages.some(({ type }) => type === 'auth_required'));
+  assert.ok(!ctx.messages.some(({ type }) => type === 'authenticated'));
+
+  setupPending = false;
+  assert.equal(ctx.fireTimer(2000), true);
+  await flush();
+  assert.ok(ctx.messages.some(({ type }) => type === 'authenticated'));
   ctx.api.stop();
 });
 

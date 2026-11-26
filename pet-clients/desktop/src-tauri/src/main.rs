@@ -83,8 +83,13 @@ impl TokenAttempt {
         Some(token)
     }
 
-    fn record_verified(&mut self, nonce: &str) {
-        self.verified |= self.requested_by.as_deref() == Some(nonce);
+    fn record_verified(&mut self, nonce: &str, requires_custom_token: bool) {
+        if self.requested_by.as_deref() == Some(nonce) {
+            self.verified = true;
+            if requires_custom_token {
+                self.value = None;
+            }
+        }
     }
 
     fn allows_authenticated(&self) -> bool {
@@ -1544,7 +1549,12 @@ async fn transport_message(
         #[cfg(windows)]
         "token_verified" => {
             if let Some(credentials) = &auth.credentials {
-                credentials.webui.lock().unwrap().record_verified(&nonce);
+                let requires_custom_token = payload["requires_custom_token"].as_bool() == Some(true);
+                credentials
+                    .webui
+                    .lock()
+                    .unwrap()
+                    .record_verified(&nonce, requires_custom_token);
             }
         }
         #[cfg(windows)]
@@ -1977,25 +1987,31 @@ mod tests {
     #[test]
     #[cfg(windows)]
     fn explicit_webui_password_requires_verification_from_its_document() {
-        let mut attempt = TokenAttempt {
-            value: Some("test-password".into()),
-            explicit: true,
-            requested_by: None,
-            verified: false,
-        };
-        assert!(!attempt.allows_authenticated());
-        attempt.record_verified("login-document");
-        assert!(!attempt.allows_authenticated());
+        for requires_custom_token in [false, true] {
+            let mut attempt = TokenAttempt {
+                value: Some("test-password".into()),
+                explicit: true,
+                requested_by: None,
+                verified: false,
+            };
+            assert!(!attempt.allows_authenticated());
+            attempt.record_verified("login-document", requires_custom_token);
+            assert!(!attempt.allows_authenticated());
 
-        assert!(attempt.begin_verification("login-document").is_some());
-        attempt.record_verified("redirected-document");
-        assert!(!attempt.allows_authenticated());
-        attempt.record_verified("login-document");
-        assert!(attempt.allows_authenticated());
+            assert!(attempt.begin_verification("login-document").is_some());
+            attempt.record_verified("redirected-document", requires_custom_token);
+            assert!(!attempt.allows_authenticated());
+            assert_eq!(attempt.value.as_deref(), Some("test-password"));
+            attempt.record_verified("login-document", requires_custom_token);
+            assert!(attempt.allows_authenticated());
 
-        let _ = attempt.value.take();
-        attempt.record_verified("reconnected-document");
-        assert!(attempt.allows_authenticated());
+            assert_eq!(
+                attempt.value.take().as_deref(),
+                (!requires_custom_token).then_some("test-password")
+            );
+            attempt.record_verified("reconnected-document", requires_custom_token);
+            assert!(attempt.allows_authenticated());
+        }
     }
 
     #[test]

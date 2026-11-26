@@ -223,12 +223,11 @@
       if (stopped) return;
       if (result.valid !== true) {
         await rejectToken();
-      } else if (result.requires_custom_token === true) {
-        forceTokenPending = false;
-        authRequired('请先在 WebUI 完成首次设置');
       } else {
-        await notify({type: 'token_verified'});
+        const requiresCustomToken = result.requires_custom_token === true;
+        await notify({type: 'token_verified', requires_custom_token: requiresCustomToken});
         forceTokenPending = false;
+        if (requiresCustomToken) authRequired('请先在 WebUI 完成首次设置');
       }
     } catch (error) {
       if (!stopped) {
