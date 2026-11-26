@@ -1,3 +1,4 @@
+from contextlib import asynccontextmanager
 from datetime import datetime
 from io import BytesIO
 from types import SimpleNamespace
@@ -87,6 +88,73 @@ async def test_empty_caption_does_not_wake_planner(screen, monkeypatch):
     with pytest.raises(RuntimeError, match="未返回画面描述"):
         await service._deliver_screen(SHOT)
     runtime.enqueue_desktop_screen.assert_not_called()
+
+
+@pytest.mark.asyncio
+@pytest.mark.parametrize("configured_seconds", [None, 37])
+async def test_screen_caption_uses_configured_timeout(screen, monkeypatch, configured_seconds):
+    from src.chat.image_system import image_manager as image_module
+    from src.desktop_pet.config import DesktopPetConfig
+
+    service, runtime = screen
+    settings = pet_module.global_config.desktop_pet
+    if configured_seconds is not None:
+        monkeypatch.setattr(pet_module, "global_config", SimpleNamespace(
+            desktop_pet=settings.model_copy(update={"screen_description_timeout_seconds": configured_seconds}),
+            visual=pet_module.global_config.visual,
+        ))
+    actual_timeouts = []
+
+    @asynccontextmanager
+    async def timeout(seconds):
+        actual_timeouts.append(seconds)
+        yield
+
+    monkeypatch.setattr(pet_module, "resolve_enable_visual_planner", lambda: False)
+    monkeypatch.setattr(pet_module.asyncio, "timeout", timeout)
+    monkeypatch.setattr(image_module.image_manager, "describe_image", AsyncMock(return_value=MARKER))
+    await service._deliver_screen(SHOT)
+
+    assert actual_timeouts == [45 if configured_seconds is None else configured_seconds]
+    assert DesktopPetConfig().screen_description_timeout_seconds == 45
+    runtime.enqueue_desktop_screen.assert_called_once()
+
+
+@pytest.mark.asyncio
+@pytest.mark.parametrize("first_result", [TimeoutError(), "", OSError()])
+async def test_failed_caption_drops_only_one_batch(screen, monkeypatch, first_result):
+    from src.chat.image_system import image_manager as image_module
+
+    service, runtime = screen
+    settings = pet_module.global_config.desktop_pet
+    monkeypatch.setattr(pet_module, "global_config", SimpleNamespace(
+        desktop_pet=settings.model_copy(update={"screen_read_interval_seconds": 0}),
+        visual=pet_module.global_config.visual,
+    ))
+    monkeypatch.setattr(pet_module, "resolve_enable_visual_planner", lambda: False)
+    monkeypatch.setattr(service, "capture_screen", AsyncMock(return_value=SHOT))
+    monkeypatch.setattr(pet_module, "compose_screen_timeline", lambda frames: frames[-1])
+    timeline = SimpleNamespace(changed=True, frames=[SHOT], add=Mock(), delivered=Mock())
+    timeline.delivered.side_effect = lambda: setattr(timeline, "changed", timeline.delivered.call_count < 2)
+    monkeypatch.setattr(pet_module, "ScreenTimeline", lambda: timeline)
+    warning = Mock()
+    monkeypatch.setattr(pet_module.logger, "warning", warning)
+    describe = AsyncMock(side_effect=[first_result, MARKER])
+    monkeypatch.setattr(image_module.image_manager, "describe_image", describe)
+    delivered = asyncio.Event()
+    runtime.enqueue_desktop_screen.side_effect = lambda *_: delivered.set()
+
+    await service._screen_action("start")
+    try:
+        await asyncio.wait_for(delivered.wait(), timeout=1)
+        assert service._screen_reading()
+        assert not service._screen_error
+        warning.assert_called_once()
+        assert describe.await_count == 2
+        runtime.enqueue_desktop_screen.assert_called_once()
+        assert MARKER in runtime.enqueue_desktop_screen.call_args.args[0]
+    finally:
+        await service._stop_screen_reader()
 
 
 @pytest.mark.asyncio
