@@ -703,10 +703,16 @@ async def emit_planner_snapshot(
     active_tool_call_id: str = "",
     focus_scope_id: str = "",
     focus_session_ids: Optional[List[str]] = None,
+    private_screen_tool_names: Optional[List[str]] = None,
 ) -> None:
     """广播 Planner 过程或结束时的快照。"""
 
+    if private_screen_tool_names is not None:
+        planner_request_messages = planner_content = planner_reasoning = planner_prompt_html_uri = None
+        planner_tool_calls = planner_native_tool_calls = tools = None
+        active_tool_call_id = end_detail = ""
     await _broadcast(event_type, {
+        **({"private_screen_tool_names": list(private_screen_tool_names)} if private_screen_tool_names is not None else {}),
         **({"focus_scope_id": focus_scope_id, "focus_session_ids": list(focus_session_ids or [])}
            if focus_scope_id else {}),
         "session_id": session_id,

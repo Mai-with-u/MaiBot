@@ -2,7 +2,7 @@
 
 from contextlib import nullcontext
 from copy import deepcopy
-from dataclasses import dataclass
+from dataclasses import dataclass, field
 from datetime import datetime
 from typing import Any, Callable, Dict, List, Optional, Sequence
 
@@ -128,6 +128,7 @@ class ChatResponse:
     prompt_cache_miss_tokens: int = 0
     context_sections: tuple[ContextSectionUsage, ...] = ()
     private_screen: bool = False
+    private_reply_snapshot: PlannerRequestSnapshot | None = field(default=None, repr=False)
 
     @property
     def content(self) -> Optional[str]:
@@ -1186,6 +1187,7 @@ class MaisakaChatLoopService:
         tail_user_messages: Sequence[str] | None = None,
         logical_turn_id: str | None = None,
         screen_observations: Callable[[], Sequence[InternalContextMessage]] | None = None,
+        on_private_screen: Callable[[], None] | None = None,
     ) -> ChatResponse:
         """执行一轮 Maisaka 规划器请求。
 
@@ -1373,6 +1375,8 @@ class MaisakaChatLoopService:
             )
         else:
             llm_chat = self._get_llm_chat_client(request_kind)
+            if private_screen_items and on_private_screen is not None:
+                on_private_screen()
             with suppress_request_snapshots() if private_screen_items else nullcontext():
                 generation_result = await llm_chat.generate_response_with_context(
                     context_factory=context_factory,
@@ -1385,6 +1389,15 @@ class MaisakaChatLoopService:
                         ),
                     ),
                 )
+        private_reply_snapshot = None
+        if private_screen_items and generation_result.request_snapshot is not None:
+            screen_ids = {item.meta.item_id for item in private_screen_items}
+            snapshot = generation_result.request_snapshot
+            # 保留实际请求的模型设置，但补充器只能看到普通聊天内容。
+            clean_request = snapshot.copy_with(context_items=[
+                item for item in snapshot.context_items if item.meta.item_id not in screen_ids
+            ])
+            private_reply_snapshot = PlannerRequestSnapshot(clean_request, tuple(selected_history))
         if request_kind == "planner":
             self.planner_request_snapshot = (
                 PlannerRequestSnapshot(external_snapshot, tuple(selected_history)) if external_planner else
@@ -1519,6 +1532,7 @@ class MaisakaChatLoopService:
             prompt_cache_miss_tokens=prompt_cache_miss_tokens,
             context_sections=tuple(context_sections),
             private_screen=bool(private_screen_items),
+            private_reply_snapshot=private_reply_snapshot,
         )
 
     @staticmethod

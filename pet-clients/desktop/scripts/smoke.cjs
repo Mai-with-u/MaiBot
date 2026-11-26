@@ -438,7 +438,19 @@ async function run() {
     const cached = await fixture.command('skin', skinPayload({...skin(), id: 'smoke.cached'}));
     assert.equal(cached.result?.id, 'smoke.cached');
     assert.equal(fixture.skinDownloads, LEGACY_SKIN ? 0 : 1, 'switching to an already downloaded image must use the local cache');
-    if (!LEGACY_SKIN) await until(() => fixture.skinPrefetches > 0, 'background skin asset prefetch');
+    if (!LEGACY_SKIN) {
+      await until(async () => {
+        try {
+          const asset = await pet.evaluate(digest => window.desktopPetBridge.api.skin_asset(digest, false, true), EXTRA_SKIN_DIGEST);
+          assert.ok(asset.startsWith('data:image/webp;base64,'));
+          return true;
+        } catch (error) {
+          if (!error.message.includes('本机没有该皮肤图片')) throw error;
+          return false;
+        }
+      }, 'background skin asset written to local cache');
+      assert.equal(fixture.skinPrefetches, 1);
+    }
     const info = await fixture.command('animation', { action: 'get_skin', args: {}, owner: 'smoke' }); assert.equal(info.result.id, 'smoke.cached');
     const geometry = await pet.evaluate(() => ({ width: innerWidth, height: innerHeight, outerWidth, outerHeight, devicePixelRatio,
       visualScale: visualViewport.scale, screen: { width: screen.width, height: screen.height, availWidth: screen.availWidth, availHeight: screen.availHeight } }));
@@ -509,7 +521,7 @@ async function run() {
     const restored = await fixture.command('skin', skinPayload());
     assert.equal(restored.result?.id, 'smoke.skin');
     assert.equal(fixture.skinDownloads, LEGACY_SKIN ? 0 : 1, 'restarting the process must not download the same skin again');
-    const prefetched = await pet.evaluate(digest => window.desktopPetBridge.api.skin_asset(digest), EXTRA_SKIN_DIGEST);
+    const prefetched = await pet.evaluate(digest => window.desktopPetBridge.api.skin_asset(digest, false, true), EXTRA_SKIN_DIGEST);
     assert.ok(prefetched.startsWith('data:image/webp;base64,'));
     assert.equal(fixture.skinPrefetches, LEGACY_SKIN ? 0 : 1, 'prefetched actions must also be reusable after restart');
     assert.equal(fixture.verifyCount, SAVED_LOGIN ? 2 : 1, 'restart must authenticate without asking for credentials');

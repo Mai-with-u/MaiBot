@@ -37,6 +37,21 @@ struct Auth {
     credentials: Option<Arc<LoginCredentials>>,
 }
 
+impl Auth {
+    fn matches_nonce(&self, nonce: &str) -> bool {
+        #[cfg(windows)]
+        {
+            nonce
+                .split_once(':')
+                .is_some_and(|(base, document)| base == self.nonce && hex(document, 32))
+        }
+        #[cfg(not(windows))]
+        {
+            nonce == self.nonce
+        }
+    }
+}
+
 #[cfg(windows)]
 struct LoginCredentials {
     store: Option<credentials::Store>,
@@ -52,8 +67,29 @@ struct BasicAttempt {
 #[cfg(windows)]
 struct TokenAttempt {
     value: Option<String>,
-    tried: bool,
+    explicit: bool,
+    requested_by: Option<String>,
     verified: bool,
+}
+
+#[cfg(windows)]
+impl TokenAttempt {
+    fn begin_verification(&mut self, nonce: &str) -> Option<String> {
+        if self.requested_by.is_some() {
+            return None;
+        }
+        let token = self.value.clone()?;
+        self.requested_by = Some(nonce.to_owned());
+        Some(token)
+    }
+
+    fn record_verified(&mut self, nonce: &str) {
+        self.verified |= self.requested_by.as_deref() == Some(nonce);
+    }
+
+    fn allows_authenticated(&self) -> bool {
+        !self.explicit || self.verified
+    }
 }
 
 #[derive(Clone)]
@@ -80,6 +116,49 @@ struct State {
     pet: Option<Arc<PetWindowController>>,
     records: Option<Arc<RecordsWindowController>>,
     pending: HashMap<String, Pending>,
+}
+
+impl State {
+    #[cfg(windows)]
+    fn take_discovery_for(&mut self, label: &str) -> Option<Sender> {
+        if self.auth.as_ref().is_some_and(|auth| auth.label == label) {
+            self.discovery.take()
+        } else {
+            None
+        }
+    }
+
+    fn register_request(
+        &mut self,
+        generation: Option<&str>,
+        request: String,
+        sender: Sender,
+    ) -> Result<Auth, String> {
+        if generation.is_some_and(|expected| {
+            !self
+                .session
+                .as_ref()
+                .is_some_and(|session| session.generation == expected)
+        }) {
+            return Err("桌宠连接已切换".into());
+        }
+        let auth = self
+            .auth
+            .as_ref()
+            .filter(|auth| auth.connected)
+            .ok_or("桌宠未连接，请等待连接恢复")?;
+        if self.pending.len() >= 128 {
+            return Err("桌宠请求过多".into());
+        }
+        self.pending.insert(
+            request,
+            Pending {
+                target: auth.label.clone(),
+                sender,
+            },
+        );
+        Ok(auth.clone())
+    }
 }
 
 type Shared = Mutex<State>;
@@ -161,10 +240,8 @@ async fn handle_proxy_challenges(
                             args.SetCancel(true)?;
                             let state = app.state::<Shared>();
                             let mut state = state.lock().unwrap();
-                            if state.auth.as_ref().is_some_and(|auth| auth.label == label) {
-                                if let Some(sender) = state.discovery.take() {
-                                    let _ = sender.send(Err(failure.into()));
-                                }
+                            if let Some(sender) = state.take_discovery_for(&label) {
+                                let _ = sender.send(Err(failure.into()));
                             }
                             Ok(())
                         },
@@ -218,6 +295,7 @@ async fn load_credentials(
         challenge: String::new(),
     });
     let webui = (!token.is_empty()).then(|| token.to_owned());
+    let explicit = webui.is_some();
     tauri::async_runtime::spawn_blocking(move || {
         let basic = basic.or_else(|| {
             store.as_ref()?.load("nginx").unwrap_or_else(|e| {
@@ -240,7 +318,8 @@ async fn load_credentials(
             }),
             webui: Mutex::new(TokenAttempt {
                 value: token,
-                tried: false,
+                explicit,
+                requested_by: None,
                 verified: false,
             }),
         }))
@@ -412,12 +491,39 @@ fn transport_for(
     let window = app
         .get_webview_window(&auth.label)
         .ok_or("认证窗口已关闭")?;
+    #[cfg(windows)]
+    let guard = format!(
+        "window.__petTransportDocumentNonce?.startsWith({}) && \
+         window.__petTransport?.nonce === window.__petTransportDocumentNonce",
+        json!(format!("{}:", auth.nonce))
+    );
+    #[cfg(not(windows))]
+    let guard = format!("window.__petTransport?.nonce === {}", json!(auth.nonce));
     window
         .eval(format!(
-            "if(window.__petTransport?.nonce==={}) window.__petTransport[{method:?}](...{args});",
-            json!(auth.nonce)
+            "if ({guard}) window.__petTransport[{method:?}](...{args});"
         ))
         .map_err(error)
+}
+
+#[cfg(windows)]
+fn token_delivery_script(auth_page: &tauri::Url, nonce: &str, token: &str) -> String {
+    let origin = json!(auth_page.origin().ascii_serialization());
+    let path = json!(auth_page.path());
+    let nonce = json!(nonce);
+    let token = json!(token);
+    // Eval is queued. Check the actual receiving document before calling into it with a token.
+    format!(
+        "(() => {{
+            'use strict';
+            if (window === window.top && window.origin === {origin} &&
+                window.location.origin === {origin} && window.location.pathname === {path} &&
+                window.__petTransportDocumentNonce === {nonce}) {{
+                const transport = window.__petTransport;
+                if (transport?.nonce === {nonce}) transport.verifyToken({token});
+            }}
+        }})();"
+    )
 }
 
 async fn wait_reply(
@@ -483,30 +589,23 @@ async fn page(app: &tauri::AppHandle, generation: &str, role: &str, command: Val
 }
 
 async fn request(app: &tauri::AppHandle, method: &str, path: &str, payload: Value) -> Reply {
+    request_for(app, None, method, path, payload).await
+}
+
+async fn request_for(
+    app: &tauri::AppHandle,
+    generation: Option<&str>,
+    method: &str,
+    path: &str,
+    payload: Value,
+) -> Reply {
     let request = id();
     let (sender, receiver) = oneshot::channel();
-    let auth = {
-        let state = app.state::<Shared>();
-        let mut state = state.lock().unwrap();
-        let auth = state
-            .auth
-            .as_ref()
-            .filter(|auth| auth.connected)
-            .ok_or("桌宠未连接，请等待连接恢复")?
-            .clone();
-        let label = auth.label.clone();
-        if state.pending.len() >= 128 {
-            return Err("桌宠请求过多".into());
-        }
-        state.pending.insert(
-            request.clone(),
-            Pending {
-                target: label,
-                sender,
-            },
-        );
-        auth
-    };
+    let auth = app.state::<Shared>().lock().unwrap().register_request(
+        generation,
+        request.clone(),
+        sender,
+    )?;
     if let Err(e) = transport_for(
         app,
         &auth,
@@ -545,7 +644,7 @@ fn authenticated_window(window: &WebviewWindow, nonce: &str) -> Result<Auth, Str
     let base = tauri::Url::parse(&auth.server).map_err(error)?;
     let root = base.path().trim_end_matches('/');
     if window.label() != auth.label
-        || nonce != auth.nonce
+        || !auth.matches_nonce(nonce)
         || url.origin() != base.origin()
         || !root.is_empty() && url.path() != root && !url.path().starts_with(&format!("{root}/"))
     {
@@ -560,6 +659,19 @@ fn clear_failed_discovery(app: &tauri::AppHandle, label: &str) {
     if state.auth.as_ref().is_some_and(|auth| auth.label == label) {
         state.discovery.take();
         state.auth = None;
+    }
+}
+
+#[cfg(windows)]
+fn fail_token_discovery(window: &WebviewWindow, label: &str, reason: &str) {
+    let sender = window
+        .state::<Shared>()
+        .lock()
+        .unwrap()
+        .take_discovery_for(label);
+    if let Some(sender) = sender {
+        let _ = window.destroy();
+        let _ = sender.send(Err(reason.into()));
     }
 }
 
@@ -622,15 +734,29 @@ async fn discover(app: &tauri::AppHandle, server: &str, _input: &Value) -> Reply
     #[allow(unused_mut)]
     let mut transport_config = json!({"nonce":nonce,"server":server});
     #[cfg(windows)]
-    if credentials
-        .as_ref()
-        .is_some_and(|login| login.webui.lock().unwrap().value.is_some())
-    {
-        transport_config["tryToken"] = json!(true);
-        transport_config["forceToken"] = json!(_input["webuiToken"]
-            .as_str()
-            .is_some_and(|v| !v.trim().is_empty()));
+    if let Some(login) = &credentials {
+        let attempt = login.webui.lock().unwrap();
+        if attempt.value.is_some() {
+            transport_config["tryToken"] = json!(true);
+            transport_config["forceToken"] = json!(attempt.explicit);
+        }
     }
+    #[cfg(windows)]
+    let script = format!(
+        "(() => {{
+            if (window !== window.top) return;
+            const config = {transport_config};
+            // PageFinished can rerun this in the same document, but a reload gets a new nonce.
+            if (window.__petTransportDocumentNonce === undefined) {{
+                const bytes = window.crypto.getRandomValues(new Uint8Array(16));
+                const documentId = Array.from(bytes, byte => byte.toString(16).padStart(2, '0')).join('');
+                Object.defineProperty(window, '__petTransportDocumentNonce', {{value: config.nonce + ':' + documentId}});
+            }}
+            config.nonce = window.__petTransportDocumentNonce;
+            window.__petTransportConfig = config;
+        }})();\n{TRANSPORT}"
+    );
+    #[cfg(not(windows))]
     let script = format!("window.__petTransportConfig={transport_config};\n{TRANSPORT}");
     // On Windows, register the Basic auth handler before the first network request.
     #[cfg(windows)]
@@ -1088,7 +1214,14 @@ async fn pet_call(window: WebviewWindow, method: String, args: Vec<Value>) -> Re
             if cache_only {
                 return Err("本机没有该皮肤图片".into());
             }
-            let data = request(app, "GET", &format!("/skins/assets/{digest}"), Value::Null).await?;
+            let data = request_for(
+                app,
+                Some(&session.generation),
+                "GET",
+                &format!("/skins/assets/{digest}"),
+                Value::Null,
+            )
+            .await?;
             if !app
                 .state::<Shared>()
                 .lock()
@@ -1237,7 +1370,7 @@ async fn execute(app: &tauri::AppHandle, session: Session, nonce: &str, command:
         if !state
             .auth
             .as_ref()
-            .is_some_and(|v| v.nonce == nonce && v.connected)
+            .is_some_and(|v| v.matches_nonce(nonce) && v.connected)
             || !state
                 .session
                 .as_ref()
@@ -1395,42 +1528,32 @@ async fn transport_message(
         #[cfg(windows)]
         "token_required" => {
             let auth_page = tauri::Url::parse(&(auth.server.clone() + "/auth")).map_err(error)?;
-            if window.url().map_err(error)?.path() != auth_page.path() {
+            let current = window.url().map_err(error)?;
+            if current.origin() != auth_page.origin() || current.path() != auth_page.path() {
                 return Err("仅 WebUI 登录页可验证凭据".into());
             }
             if let Some(credentials) = &auth.credentials {
-                let token = {
-                    let mut attempt = credentials.webui.lock().unwrap();
-                    if attempt.tried {
-                        None
-                    } else {
-                        attempt.tried = true;
-                        attempt.value.clone()
-                    }
-                };
+                let token = credentials.webui.lock().unwrap().begin_verification(&nonce);
                 if let Some(token) = token {
-                    transport_for(app, &auth, "verifyToken", json!([token]))?;
+                    window
+                        .eval(token_delivery_script(&auth_page, &nonce, &token))
+                        .map_err(error)?;
                 }
             }
         }
         #[cfg(windows)]
         "token_verified" => {
             if let Some(credentials) = &auth.credentials {
-                let mut attempt = credentials.webui.lock().unwrap();
-                attempt.verified = attempt.tried;
+                credentials.webui.lock().unwrap().record_verified(&nonce);
             }
         }
         #[cfg(windows)]
         "token_invalid" => {
-            let sender = {
-                let state = app.state::<Shared>();
-                let mut state = state.lock().unwrap();
-                state.discovery.take()
-            };
-            if let Some(sender) = sender {
-                let _ = window.destroy();
-                let _ = sender.send(Err("WebUI 密码无效或已更改，请在连接页重新填写".into()));
-            }
+            fail_token_discovery(
+                &window,
+                &auth.label,
+                "WebUI 密码无效或已更改，请在连接页重新填写",
+            );
         }
         "ready" => {
             app.state::<Shared>()
@@ -1442,6 +1565,14 @@ async fn transport_message(
                 .connected = false;
         }
         "authenticated" => {
+            #[cfg(windows)]
+            if auth.credentials.as_ref().is_some_and(|credentials| {
+                !credentials.webui.lock().unwrap().allows_authenticated()
+            }) {
+                const REASON: &str = "输入的 WebUI 密码尚未验证，请在连接页重新填写";
+                fail_token_discovery(&window, &auth.label, REASON);
+                return Err(REASON.into());
+            }
             let bots = payload["bots"].as_array().ok_or("机器人列表无效")?;
             if bots.len() > 1000
                 || bots.iter().any(|bot| {
@@ -1636,7 +1767,7 @@ async fn transport_message(
                     .unwrap()
                     .auth
                     .as_ref()
-                    .is_some_and(|v| v.nonce == nonce);
+                    .is_some_and(|v| v.matches_nonce(&nonce));
                 let session_current = handle
                     .state::<Shared>()
                     .lock()
@@ -1787,4 +1918,142 @@ fn main() {
         })
         .run(tauri::generate_context!())
         .expect("无法启动 MaiBot 桌宠");
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    fn connected_state() -> State {
+        State {
+            busy: false,
+            settings: Value::Null,
+            directory: PathBuf::new(),
+            auth: Some(Auth {
+                label: "auth-current".into(),
+                server: "https://example.test/webui".into(),
+                nonce: "auth-nonce".into(),
+                bots: vec![],
+                connected: true,
+                credential_save_failures: vec![],
+                #[cfg(windows)]
+                credentials: None,
+            }),
+            discovery: None,
+            session: Some(Session {
+                generation: "current-generation".into(),
+                key: "current-key".into(),
+                options: Value::Null,
+                native: Arc::new(native::NativeCapabilities::new(false)),
+                frontend_ready: true,
+            }),
+            pet: None,
+            records: None,
+            pending: HashMap::new(),
+        }
+    }
+
+    #[test]
+    #[cfg(windows)]
+    fn token_rejection_only_takes_its_own_discovery() {
+        let mut state = connected_state();
+        let (sender, mut receiver) = oneshot::channel();
+        state.discovery = Some(sender);
+
+        assert!(state.take_discovery_for("auth-previous").is_none());
+        assert!(matches!(
+            receiver.try_recv(),
+            Err(oneshot::error::TryRecvError::Empty)
+        ));
+        state
+            .take_discovery_for("auth-current")
+            .unwrap()
+            .send(Err("rejected".into()))
+            .unwrap();
+        assert_eq!(receiver.try_recv().unwrap(), Err("rejected".into()));
+        assert!(state.discovery.is_none());
+    }
+
+    #[test]
+    #[cfg(windows)]
+    fn explicit_webui_password_requires_verification_from_its_document() {
+        let mut attempt = TokenAttempt {
+            value: Some("test-password".into()),
+            explicit: true,
+            requested_by: None,
+            verified: false,
+        };
+        assert!(!attempt.allows_authenticated());
+        attempt.record_verified("login-document");
+        assert!(!attempt.allows_authenticated());
+
+        assert!(attempt.begin_verification("login-document").is_some());
+        attempt.record_verified("redirected-document");
+        assert!(!attempt.allows_authenticated());
+        attempt.record_verified("login-document");
+        assert!(attempt.allows_authenticated());
+
+        let _ = attempt.value.take();
+        attempt.record_verified("reconnected-document");
+        assert!(attempt.allows_authenticated());
+    }
+
+    #[test]
+    #[cfg(windows)]
+    fn no_explicit_webui_password_still_allows_cookie_authentication() {
+        for value in [None, Some("remembered-password".into())] {
+            let attempt = TokenAttempt {
+                value,
+                explicit: false,
+                requested_by: None,
+                verified: false,
+            };
+            assert!(attempt.allows_authenticated());
+        }
+    }
+
+    #[test]
+    fn stale_generation_does_not_register_a_remote_request() {
+        let mut state = connected_state();
+        let (stale, _) = oneshot::channel();
+        assert!(state
+            .register_request(Some("previous-generation"), "old".into(), stale)
+            .is_err());
+        assert!(state.pending.is_empty());
+
+        let (current, _) = oneshot::channel();
+        let auth = state
+            .register_request(Some("current-generation"), "new".into(), current)
+            .unwrap();
+        assert_eq!(auth.label, "auth-current");
+        assert_eq!(state.pending["new"].target, auth.label);
+    }
+
+    #[test]
+    #[cfg(windows)]
+    fn token_delivery_is_guarded_by_the_exact_document_and_auth_page() {
+        let mut state = connected_state();
+        let auth = state.auth.take().unwrap();
+        let auth_page = tauri::Url::parse(&format!("{}/auth", auth.server)).unwrap();
+        let nonce = "auth-nonce:0123456789abcdef0123456789abcdef";
+        assert!(auth.matches_nonce(nonce));
+        assert!(!auth.matches_nonce("auth-nonce"));
+        assert!(!auth.matches_nonce("auth-nonce:invalid-document-id"));
+        assert!(!auth.matches_nonce("other-nonce:0123456789abcdef0123456789abcdef"));
+
+        let script = token_delivery_script(&auth_page, nonce, "test-token");
+        let call = script
+            .find(r#"transport.verifyToken("test-token")"#)
+            .unwrap();
+        let guard = &script[..call];
+        assert!(guard.contains("window === window.top"));
+        assert!(guard.contains(r#"window.origin === "https://example.test""#));
+        assert!(guard.contains(r#"window.location.origin === "https://example.test""#));
+        assert!(guard.contains(r#"window.location.pathname === "/webui/auth""#));
+        assert!(guard.contains(&format!(
+            "window.__petTransportDocumentNonce === {}",
+            json!(nonce)
+        )));
+        assert!(guard.contains(&format!("transport?.nonce === {}", json!(nonce))));
+    }
 }

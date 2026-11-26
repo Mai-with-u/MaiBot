@@ -37,6 +37,7 @@
   let options, controller, runner, connection, generation = 0;
   let authTimer, authController, authProbe, authenticated = false, authNotice = false, stopped = false;
   let tokenRequested = false, checkingToken = false;
+  let forceTokenPending = config.forceToken === true && location.pathname === authPath;
 
   class ProtocolError extends Error {}
   class AuthRequired extends Error {}
@@ -93,29 +94,39 @@
   }
 
   async function skinAssetRequest(url, session) {
-    const response = await fetch(url, {
-      credentials: 'include', redirect: 'error',
-      signal: AbortSignal.any([session.controller.signal, AbortSignal.timeout(20_000)]),
-      headers: { 'X-Desktop-Pet-Connection': session.id },
-    });
-    if (!response.ok) {
-      await response.body?.cancel();
-      if (response.status === 401) throw new AuthRequired('登录已失效，请在 WebUI 中重新登录');
-      throw new HTTPError(response.status, `皮肤资源读取失败：HTTP ${response.status}`);
+    const signal = session.controller.signal;
+    const abort = new AbortController();
+    const aborted = () => abort.abort(signal.reason);
+    if (signal.aborted) aborted();
+    else signal.addEventListener('abort', aborted, { once: true });
+    const timer = setTimeout(() => abort.abort(new Error('皮肤资源读取超时')), 20_000);
+    try {
+      const response = await fetch(url, {
+        credentials: 'include', redirect: 'error', signal: abort.signal,
+        headers: { 'X-Desktop-Pet-Connection': session.id },
+      });
+      if (!response.ok) {
+        await response.body?.cancel();
+        if (response.status === 401) throw new AuthRequired('登录已失效，请在 WebUI 中重新登录');
+        throw new HTTPError(response.status, `皮肤资源读取失败：HTTP ${response.status}`);
+      }
+      const mime = response.headers.get('content-type');
+      if (!['image/png', 'image/webp'].includes(mime)) {
+        await response.body?.cancel();
+        throw new ProtocolError('不支持的皮肤图片类型');
+      }
+      const bytes = await readBytes(response, 32 * 1024 * 1024);
+      const data_url = await new Promise((resolve, reject) => {
+        const reader = new FileReader();
+        reader.onload = () => resolve(reader.result);
+        reader.onerror = () => reject(new Error('皮肤图片读取失败'));
+        reader.readAsDataURL(new Blob([bytes], {type: mime}));
+      });
+      return {data_url};
+    } finally {
+      clearTimeout(timer);
+      signal.removeEventListener('abort', aborted);
     }
-    const mime = response.headers.get('content-type');
-    if (!['image/png', 'image/webp'].includes(mime)) {
-      await response.body?.cancel();
-      throw new ProtocolError('不支持的皮肤图片类型');
-    }
-    const bytes = await readBytes(response, 32 * 1024 * 1024);
-    const data_url = await new Promise((resolve, reject) => {
-      const reader = new FileReader();
-      reader.onload = () => resolve(reader.result);
-      reader.onerror = () => reject(new Error('皮肤图片读取失败'));
-      reader.readAsDataURL(new Blob([bytes], {type: mime}));
-    });
-    return {data_url};
   }
 
   async function jsonRequest(url, { method = 'GET', payload, signal, headers = {}, limit = MAX_HTTP_BYTES,
@@ -164,10 +175,19 @@
   }
 
   async function probeAuth(signal) {
+    if (forceTokenPending) {
+      // An explicitly entered password must succeed before we consult an existing cookie.
+      if (location.pathname !== authPath) await rejectToken();
+      else if (!tokenRequested) {
+        tokenRequested = true;
+        try { await notify({type: 'token_required'}); }
+        catch { if (!signal.aborted) await rejectToken(); }
+      }
+      return;
+    }
     const status = await jsonRequest(server + '/api/webui/auth/check', { signal, limit: MAX_AUTH_BYTES, timeout: 15_000 });
     if (typeof status.authenticated !== 'boolean') throw new ProtocolError('服务器返回了无效的认证状态');
-    if (!tokenRequested && config.tryToken && location.pathname === authPath
-      && (!status.authenticated || config.forceToken)) {
+    if (!tokenRequested && config.tryToken && location.pathname === authPath && !status.authenticated) {
       tokenRequested = true;
       await notify({type: 'token_required'});
       return;
@@ -187,6 +207,12 @@
     if (changed) publish({ type: 'authenticated', bots });
   }
 
+  async function rejectToken() {
+    // Native discovery ends and returns control to the connection form.
+    stop();
+    await notify({type: 'token_invalid'}).catch(() => {});
+  }
+
   async function verifyToken(token) {
     if (stopped || checkingToken || !tokenRequested || location.pathname !== authPath) return;
     checkingToken = true;
@@ -195,13 +221,20 @@
         method: 'POST', payload: {token}, limit: MAX_AUTH_BYTES, timeout: 15_000,
       });
       if (stopped) return;
-      if (result.valid === true && result.requires_custom_token === true) {
+      if (result.valid !== true) {
+        await rejectToken();
+      } else if (result.requires_custom_token === true) {
+        forceTokenPending = false;
         authRequired('请先在 WebUI 完成首次设置');
       } else {
-        await notify({type: result.valid === true ? 'token_verified' : 'token_invalid'});
+        await notify({type: 'token_verified'});
+        forceTokenPending = false;
       }
     } catch (error) {
-      if (!stopped) authRequired(messageOf(error));
+      if (!stopped) {
+        if (forceTokenPending) await rejectToken();
+        else authRequired(messageOf(error));
+      }
     } finally {
       checkingToken = false;
       scheduleAuth(0);

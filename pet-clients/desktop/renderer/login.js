@@ -140,6 +140,12 @@ document.querySelector('#connection').addEventListener('submit', async event => 
       message(rejected ? 'Nginx 未接受登录凭据，请核对账号、密码和服务器地址。' : '服务器要求 Nginx 登录。', true);
       setBusy(false);
       (basicUser.value ? basicPassword : basicUser).focus();
+    } else if (detail.includes('WebUI 密码无效或已更改')) {
+      credentials.open = true;
+      webuiToken.value = '';
+      message('未能验证 WebUI 密码，请核对后重新输入，或稍后再试。', true);
+      setBusy(false);
+      webuiToken.focus();
     } else showError(error);
   } finally { setBusy(false); }
 });

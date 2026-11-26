@@ -16,7 +16,7 @@ from src.common.paths import get_instance_root
 from src.common.logger import get_logger
 from src.common.operation_timing import log_operation, timed_operation
 from src.config.model_configs import APIProvider, ModelInfo
-from src.llm_models.request_privacy import request_snapshots_suppressed
+from .request_privacy import request_snapshots_suppressed
 from src.llm_models.model_client.base_client import (
     APIResponse,
     AudioTranscriptionRequest,

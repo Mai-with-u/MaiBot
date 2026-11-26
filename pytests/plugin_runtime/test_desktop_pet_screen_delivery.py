@@ -99,10 +99,14 @@ async def test_screen_caption_uses_configured_timeout(screen, monkeypatch, confi
     service, runtime = screen
     settings = pet_module.global_config.desktop_pet
     if configured_seconds is not None:
-        monkeypatch.setattr(pet_module, "global_config", SimpleNamespace(
-            desktop_pet=settings.model_copy(update={"screen_description_timeout_seconds": configured_seconds}),
-            visual=pet_module.global_config.visual,
-        ))
+        monkeypatch.setattr(
+            pet_module,
+            "global_config",
+            SimpleNamespace(
+                desktop_pet=settings.model_copy(update={"screen_description_timeout_seconds": configured_seconds}),
+                visual=pet_module.global_config.visual,
+            ),
+        )
     actual_timeouts = []
 
     @asynccontextmanager
@@ -127,10 +131,14 @@ async def test_failed_caption_drops_only_one_batch(screen, monkeypatch, first_re
 
     service, runtime = screen
     settings = pet_module.global_config.desktop_pet
-    monkeypatch.setattr(pet_module, "global_config", SimpleNamespace(
-        desktop_pet=settings.model_copy(update={"screen_read_interval_seconds": 0}),
-        visual=pet_module.global_config.visual,
-    ))
+    monkeypatch.setattr(
+        pet_module,
+        "global_config",
+        SimpleNamespace(
+            desktop_pet=settings.model_copy(update={"screen_read_interval_seconds": 0}),
+            visual=pet_module.global_config.visual,
+        ),
+    )
     monkeypatch.setattr(pet_module, "resolve_enable_visual_planner", lambda: False)
     monkeypatch.setattr(service, "capture_screen", AsyncMock(return_value=SHOT))
     monkeypatch.setattr(pet_module, "compose_screen_timeline", lambda frames: frames[-1])
@@ -210,9 +218,13 @@ async def test_private_screen_caption_uses_vlm_without_image_storage_or_failure_
         assert MARKER in await image_module.image_manager.describe_image(SHOT.data, "png")
         result = await asyncio.to_thread(
             request_snapshot.save_failed_request_snapshot,
-            api_provider=None, client_type="test", error=RuntimeError("test"),
-            internal_request={"request_items": [MARKER]}, model_info=None,
-            operation="test", provider_request={},
+            api_provider=None,
+            client_type="test",
+            error=RuntimeError("test"),
+            internal_request={"request_items": [MARKER]},
+            model_info=None,
+            operation="test",
+            provider_request={},
         )
         assert result is None
     assert not request_snapshots_suppressed()
@@ -221,11 +233,19 @@ async def test_private_screen_caption_uses_vlm_without_image_storage_or_failure_
 
 
 @pytest.mark.asyncio
-@pytest.mark.parametrize("observation_has_image, visual, expected", [
-    (False, False, "caption"), (True, True, "image"), (True, False, "none"),
-])
+@pytest.mark.parametrize(
+    "observation_has_image, visual, expected",
+    [
+        (False, False, "caption"),
+        (True, True, "image"),
+        (True, False, "none"),
+    ],
+)
 async def test_planner_consumes_private_observation_without_preview_or_hook_payload(
-    monkeypatch, observation_has_image, visual, expected,
+    monkeypatch,
+    observation_has_image,
+    visual,
+    expected,
 ):
     from src.common.data_models.llm_service_data_models import LLMResponseResult
     from src.common.data_models.message_component_data_model import ImageComponent, MessageSequence, TextComponent
@@ -240,18 +260,25 @@ async def test_planner_consumes_private_observation_without_preview_or_hook_payl
         Image.new("RGB", (16, 16), "red").save(buffer, format="PNG")
         components.append(ImageComponent(binary_hash=SHOT.digest, binary_data=buffer.getvalue()))
     observation = InternalContextMessage(
-        raw_message=MessageSequence(components), visible_text=MARKER, timestamp=datetime.now(),
+        raw_message=MessageSequence(components),
+        visible_text=MARKER,
+        timestamp=datetime.now(),
         source_kind="desktop_pet_screen",
     )
 
+    on_private_screen = Mock()
+
     async def model(context_factory, **kwargs):
-        parts = [part for item in context_factory(None) for part in item.parts]
+        items = context_factory(None)
+        parts = [part for item in items for part in item.parts]
         has_marker = any(isinstance(part, ContextTextPart) and MARKER in part.text for part in parts)
         has_image = any(isinstance(part, ContextImagePart) for part in parts)
         assert has_marker is (expected != "none")
         assert has_image is (expected == "image")
         assert request_snapshots_suppressed() is (expected != "none")
-        return LLMResponseResult()
+        assert on_private_screen.call_count == (0 if expected == "none" else 1)
+        snapshot = SimpleNamespace(copy_with=lambda **changes: SimpleNamespace(**changes), context_items=items)
+        return LLMResponseResult(request_snapshot=snapshot)
 
     async def hook(name, **kwargs):
         assert MARKER not in repr(kwargs)
@@ -260,33 +287,53 @@ async def test_planner_consumes_private_observation_without_preview_or_hook_payl
     service = chat_loop_service.MaisakaChatLoopService(session_id="owner-test", is_group_chat=False)
     monkeypatch.setattr(service, "_resolve_enable_visual_message", lambda _: visual)
     monkeypatch.setattr(service, "_get_runtime_manager", lambda: SimpleNamespace(invoke_hook=hook))
-    monkeypatch.setattr(service, "_get_llm_chat_client", lambda _: SimpleNamespace(generate_response_with_context=model))
+    monkeypatch.setattr(
+        service, "_get_llm_chat_client", lambda _: SimpleNamespace(generate_response_with_context=model)
+    )
     preview = Mock(return_value=SimpleNamespace(preview_access=SimpleNamespace(preview_web_uri=None), panel=None))
     monkeypatch.setattr(chat_loop_service.PromptCLIVisualizer, "build_prompt_section_result", preview)
     monkeypatch.setattr(pet_module.global_config.debug, "save_maisaka_reasoning", True)
     result = await service.chat_loop_step(
-        [], tool_definitions=[], system_prompt="Test Planner", screen_observations=lambda: (observation,),
+        [],
+        tool_definitions=[],
+        system_prompt="Test Planner",
+        screen_observations=lambda: (observation,),
+        on_private_screen=on_private_screen,
     )
     if expected != "none":
         preview.assert_not_called()
         assert result.private_screen
         assert result.request_messages == []
         assert service.planner_request_snapshot is None
+        assert result.private_reply_snapshot is not None
+        assert MARKER not in repr(result.private_reply_snapshot.request.context_items)
+        assert not any(
+            isinstance(part, ContextImagePart)
+            for item in result.private_reply_snapshot.request.context_items
+            for part in item.parts
+        )
     else:
         assert not result.private_screen
         preview.assert_called_once()
 
 
 @pytest.mark.asyncio
-async def test_private_planner_progress_contains_only_metadata(monkeypatch):
+async def test_private_planner_progress_contains_only_tool_names_and_metadata(monkeypatch):
     from src.maisaka import reasoning_engine
     from src.maisaka.chat_loop_service import ChatResponse
     from src.llm_models.payload_content.context_item import ContextItemBuilder, RoleType
 
     output = ContextItemBuilder().set_role(RoleType.Assistant).add_text_content(MARKER).build()
     response = ChatResponse(
-        output_items=(output,), request_messages=[], selected_history_count=0, tool_count=0,
-        prompt_tokens=12, built_message_count=1, completion_tokens=2, total_tokens=14, private_screen=True,
+        output_items=(output,),
+        request_messages=[],
+        selected_history_count=0,
+        tool_count=0,
+        prompt_tokens=12,
+        built_message_count=1,
+        completion_tokens=2,
+        total_tokens=14,
+        private_screen=True,
     )
     runtime = SimpleNamespace(session_id="owner-test", _monitor_run_id="test-run")
     engine = reasoning_engine.MaisakaReasoningEngine(runtime)
@@ -294,11 +341,170 @@ async def test_private_planner_progress_contains_only_metadata(monkeypatch):
     monkeypatch.setattr(reasoning_engine, "emit_planner_snapshot", event)
     await engine._emit_planner_progress(
         SimpleNamespace(cycle_id=1),
-        SimpleNamespace(response=response, planner_duration_ms=15, planner_started_at=0, planner_ended_at=1),
+        SimpleNamespace(
+            response=response,
+            planner_duration_ms=15,
+            planner_started_at=0,
+            planner_ended_at=1,
+            private_screen_tool_names=["wait", "reply"],
+        ),
         tools=[{"tool_name": "reply", "tool_args": {"content": MARKER}}],
+        active_tool_call_id="secret-call-id",
     )
     payload = event.call_args.kwargs
     assert payload["planner_content"] is None
     assert payload["tools"] is None
+    assert payload["private_screen_tool_names"] == ["wait", "reply"]
+    assert payload["active_tool_call_id"] == ""
     assert MARKER not in repr(payload)
     assert payload["planner_prompt_tokens"] == 12
+
+
+@pytest.mark.asyncio
+@pytest.mark.parametrize("private_screen", [False, True])
+async def test_interrupt_retains_request_privacy_without_screen_observations(monkeypatch, private_screen):
+    from src.llm_models.exceptions import ReqAbortException
+    from src.maisaka import reasoning_engine
+
+    runtime = SimpleNamespace(
+        _chat_history=[],
+        _has_pending_messages=lambda: False,
+        _update_stage_status=Mock(),
+        log_prefix="[test]",
+    )
+    engine = reasoning_engine.MaisakaReasoningEngine(runtime)
+    partial = SimpleNamespace(display_text=lambda: MARKER, model_name="test")
+    result = await engine._handle_planner_interrupt(
+        exc=ReqAbortException("interrupted", partial_output=partial),
+        round_index=0,
+        round_text="",
+        current_stage_started_at=0,
+        action_tool_count=0,
+        private_screen=private_screen,
+    )
+    assert result.response.private_screen is private_screen
+    assert (MARKER in result.response.content) is not private_screen
+    assert bool(runtime._chat_history) is not private_screen
+
+
+@pytest.mark.asyncio
+async def test_history_is_trimmed_when_planner_has_no_snapshot(monkeypatch):
+    from src.maisaka import reasoning_engine
+
+    old, recent = SimpleNamespace(count_in_context=True), object()
+    request_state = SimpleNamespace(planner_request_snapshot=None, last_planner_prompt_tokens=60)
+    runtime = SimpleNamespace(
+        _chat_history=[old, recent],
+        _max_context_size=2,
+        _max_context_tokens=None,
+        _chat_loop_service=request_state,
+        _get_pending_wait_tool_call_ids=set,
+        _monitor_run_id="run",
+        session_id="test",
+        _log_history_trimmed=Mock(),
+        _trigger_trimmed_history_learning=AsyncMock(),
+    )
+    monkeypatch.setattr(
+        reasoning_engine,
+        "process_chat_history_after_cycle",
+        Mock(
+            return_value=SimpleNamespace(
+                changed_count=1,
+                removed_messages=[old],
+                history=[recent],
+                remaining_context_count=1,
+            )
+        ),
+    )
+    monkeypatch.setattr(reasoning_engine, "emit_flow_step", AsyncMock())
+    summary = AsyncMock()
+    monkeypatch.setattr(reasoning_engine, "build_context_summary", summary)
+    engine = reasoning_engine.MaisakaReasoningEngine(runtime)
+    await engine._post_process_chat_history_after_cycle(SimpleNamespace(cycle_id=1, time_records={}))
+    assert runtime._chat_history == [recent]
+    assert request_state.last_planner_prompt_tokens == 0
+    summary.assert_not_awaited()
+
+
+@pytest.mark.asyncio
+@pytest.mark.parametrize("with_snapshot", [True, False])
+async def test_private_planner_body_can_send_reply(monkeypatch, with_snapshot):
+    from src.llm_models.request_privacy import request_snapshots_suppressed
+    from src.maisaka import reasoning_engine
+
+    target = SimpleNamespace(message_id="owner-message")
+    safe_snapshot = object() if with_snapshot else None
+    response = SimpleNamespace(private_screen=True, private_reply_snapshot=safe_snapshot, prompt_html_uri=None)
+    runtime = SimpleNamespace(
+        session_id="owner-test",
+        chat_stream=SimpleNamespace(is_group_session=False),
+        _update_stage_status=Mock(),
+    )
+    engine = reasoning_engine.MaisakaReasoningEngine(runtime)
+    monkeypatch.setattr(reasoning_engine, "BuiltinToolRuntimeContext", Mock())
+    monkeypatch.setattr(engine, "_emit_planner_progress", AsyncMock())
+    supplement = AsyncMock()
+    monkeypatch.setattr(reasoning_engine, "generate_reply_supplement", supplement)
+
+    async def send(_ctx, _arguments, *, call_id, target_message, supplement_runner):
+        assert target_message is target
+        assert request_snapshots_suppressed()
+        if with_snapshot:
+            await supplement_runner()
+        else:
+            assert supplement_runner is None
+        return SimpleNamespace(success=True, metadata={}, get_history_content=lambda: "sent")
+
+    execute = AsyncMock(side_effect=send)
+    monkeypatch.setattr(reasoning_engine, "execute_reply", execute)
+    state = reasoning_engine.CycleRuntimeState(response=response, reply_target_message=target)
+    await engine._reply_from_planner_content(MARKER, SimpleNamespace(time_records={}), state)
+    assert state.cycle_end.reason == "planner_reply_end"
+    assert state.private_screen_tool_names == ["reply"]
+    execute.assert_awaited_once()
+    if with_snapshot:
+        supplement.assert_awaited_once_with(safe_snapshot, MARKER, "owner-test", False)
+    else:
+        supplement.assert_not_awaited()
+
+
+@pytest.mark.asyncio
+@pytest.mark.parametrize("event_type", ["planner.progress", "planner.finalized"])
+@pytest.mark.parametrize("names", [None, [], ["wait", "reply"]])
+async def test_monitor_serializes_private_round_without_details(monkeypatch, event_type, names):
+    from src.maisaka.monitor import events
+
+    broadcast = AsyncMock()
+    monkeypatch.setattr(events, "_broadcast", broadcast)
+    await events.emit_planner_snapshot(
+        event_type=event_type,
+        session_id="owner-test",
+        cycle_id=1,
+        run_id="test-run",
+        planner_request_messages=[],
+        planner_selected_history_count=0,
+        planner_tool_count=0,
+        planner_content=MARKER,
+        planner_reasoning=MARKER,
+        planner_tool_calls=[],
+        planner_native_tool_calls=[],
+        planner_prompt_tokens=1,
+        planner_completion_tokens=1,
+        planner_total_tokens=2,
+        planner_duration_ms=12,
+        planner_prompt_html_uri=MARKER,
+        tools=[{"tool_name": "wait", "tool_args": {"reason": MARKER}}],
+        active_tool_call_id=MARKER,
+        end_detail=MARKER,
+        private_screen_tool_names=names,
+    )
+    event, payload = broadcast.call_args.args
+    assert event == event_type
+    if names is None:
+        assert "private_screen_tool_names" not in payload
+        assert payload["planner"]["content"] == MARKER
+        assert payload["tools"][0]["tool_args"] == {"reason": MARKER}
+    else:
+        assert payload["private_screen_tool_names"] == names
+        assert MARKER not in repr(payload)
+        assert payload["tools"] == []
