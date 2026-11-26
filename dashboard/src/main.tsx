@@ -15,6 +15,7 @@ import './styles/management.css'
 import './styles/conversation.css'
 import './styles/desktop-embedded.css'
 import './i18n'
+import { BotConfigQuerySync } from './components/bot-config-query-sync'
 import { ElectronShell } from './components/electron/electron-shell'
 import { AnnouncerProvider } from './components/ui/announcer'
 import { AssetStoreProvider } from './components/asset-provider'
@@ -44,6 +45,7 @@ void bootstrapHostRuntime()
       <StrictMode>
         <ErrorBoundary>
           <QueryClientProvider client={queryClient}>
+            <BotConfigQuerySync />
             <AnnouncerProvider>
               <AssetStoreProvider>
                 <ThemeProvider defaultTheme="system">

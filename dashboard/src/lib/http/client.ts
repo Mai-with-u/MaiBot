@@ -27,6 +27,8 @@ export interface RequestOptions {
   /** 额外请求头，会覆盖默认头 */
   headers?: HeadersInit
   signal?: AbortSignal
+  /** URL 解析完成后，在调用 fetch 前同步执行。 */
+  onSend?: () => void
   /**
    * 响应解析方式，默认 'json'。
    * 'response' 返回原始 Response（仅在 HTTP 成功时；失败仍抛 ApiError）。
@@ -102,7 +104,7 @@ export function createApiClient(clientOptions: ApiClientOptions): ApiClient {
     path: string,
     options: RequestOptions = {}
   ): Promise<T> {
-    const { query, body, headers, signal, parse = 'json', errorMessage, cache } = options
+    const { query, body, headers, signal, onSend, parse = 'json', errorMessage, cache } = options
 
     // 拼接完整 URL：base + path + query
     const base = await resolveBaseUrl()
@@ -124,6 +126,7 @@ export function createApiClient(clientOptions: ApiClientOptions): ApiClient {
 
     let response: Response
     try {
+      onSend?.()
       response = await fetch(url, {
         method,
         headers: requestHeaders,

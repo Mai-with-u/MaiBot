@@ -77,7 +77,10 @@ describe('chatWsClient', () => {
       return vi.fn()
     })
     wsMocks.onStatusChange.mockImplementation(() => vi.fn())
-    wsMocks.call.mockResolvedValue({})
+    wsMocks.call.mockImplementation(async ({ onSend }: { onSend?: () => void }) => {
+      onSend?.()
+      return {}
+    })
     wsMocks.getStatus.mockReturnValue('connected')
     wsMocks.restart.mockResolvedValue(undefined)
   })
@@ -159,6 +162,7 @@ describe('chatWsClient', () => {
       domain: 'chat',
       method: 'session.open',
       session: 'retained-tab',
+      onSend: expect.any(Function),
       data: {
         ...payload,
         restore: true,
@@ -325,8 +329,8 @@ describe('chatWsClient', () => {
     expect(healthy).not.toHaveBeenCalled()
 
     eventListener?.({ domain: 'chat', session: 'chat-1', data: { text: 'hello' } })
-    expect(throwing).toHaveBeenCalledWith({ text: 'hello' })
-    expect(healthy).toHaveBeenCalledWith({ text: 'hello' })
+    expect(throwing).toHaveBeenCalledWith({ text: 'hello' }, undefined)
+    expect(healthy).toHaveBeenCalledWith({ text: 'hello' }, undefined)
     expect(consoleErrorSpy).toHaveBeenCalledWith('聊天会话监听器执行失败:', expect.any(Error))
 
     unsubscribe()
@@ -345,6 +349,39 @@ describe('chatWsClient', () => {
     unsubscribe()
     eventListener?.({ domain: 'chat', session: 'solo-tab', data: { text: 'gone' } })
     expect(listener).not.toHaveBeenCalled()
+  })
+
+  it('associates session info with its acknowledged open, including after reconnect', async () => {
+    const client = await loadClient()
+    const now = vi.spyOn(Date, 'now').mockReturnValue(100)
+    const session = 'nickname-session'
+    const listener = vi.fn()
+    client.onSessionMessage(session, listener)
+    await client.openSession(session, defaultPayload)
+
+    // A second open is pending while the first session_info is still in flight.
+    now.mockReturnValue(200)
+    const pendingResponse = createDeferred<Record<string, unknown>>()
+    wsMocks.call.mockImplementationOnce(({ onSend }: { onSend?: () => void }) => {
+      onSend?.()
+      return pendingResponse.promise
+    })
+    const nextOpen = client.openSession(session, { ...defaultPayload, user_name: 'Bob' })
+    const data = { type: 'session_info', bot_name: '小满' }
+    eventListener?.({ domain: 'chat', event: 'session_info', session, data })
+    expect(listener).toHaveBeenLastCalledWith(data, expect.objectContaining({ startedAt: 100 }))
+
+    pendingResponse.resolve({})
+    await nextOpen
+    eventListener?.({ domain: 'chat', event: 'session_info', session, data })
+    expect(listener).toHaveBeenLastCalledWith(data, expect.objectContaining({ startedAt: 200 }))
+
+    now.mockReturnValue(300)
+    reconnectListener?.()
+    await flushMicrotasks()
+    now.mockReturnValue(400)
+    eventListener?.({ domain: 'chat', event: 'session_info', session, data })
+    expect(listener).toHaveBeenLastCalledWith(data, expect.objectContaining({ startedAt: 300 }))
   })
 
   it('重连后清空已打开标记并用 restore 重新打开会话，失败只记日志', async () => {
@@ -370,12 +407,14 @@ describe('chatWsClient', () => {
       domain: 'chat',
       method: 'session.open',
       session: 'restore-fail',
+      onSend: expect.any(Function),
       data: { user_id: 'fail-user', restore: true },
     })
     expect(wsMocks.call).toHaveBeenCalledWith({
       domain: 'chat',
       method: 'session.open',
       session: 'restore-ok',
+      onSend: expect.any(Function),
       data: {
         ...defaultPayload,
         user_name: 'Erin',

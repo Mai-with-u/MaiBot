@@ -1,5 +1,6 @@
 import { VIRTUAL_TABS_STORAGE_KEY } from './types'
 import type { ChatMessage, ChatTab, SavedVirtualTab } from './types'
+import { getBotDisplayName, type BotNicknameState } from '@/lib/bot-nickname'
 
 const USER_AVATAR_VERSION_STORAGE_KEY = 'maibot_webui_user_avatar_version'
 
@@ -58,9 +59,21 @@ export function saveVirtualTabs(tabs: SavedVirtualTab[]): void {
 }
 
 // 本地聊天会话对用户来说就是和 bot 对话，不展示内部 WebUI 占位名。
-export function getChatTabDisplayName(tab: ChatTab, botNameFallback: string): string {
+export function getChatTabDisplayName(
+  tab: ChatTab,
+  botNickname: BotNicknameState,
+  fallback: string
+): string {
   if (tab.type === 'virtual') {
     return tab.label
   }
-  return tab.sessionInfo.bot_name?.trim() || botNameFallback
+  return botNickname.nickname ?? fallback
+}
+
+export function getChatBotDisplayName(
+  tab: ChatTab | undefined,
+  botNickname: BotNicknameState,
+  fallback: string
+): string {
+  return getBotDisplayName(botNickname, tab?.type === 'virtual' ? tab.sessionInfo.bot_name : undefined, fallback)
 }

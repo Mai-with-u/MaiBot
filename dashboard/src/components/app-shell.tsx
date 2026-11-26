@@ -1,9 +1,9 @@
 import { lazy, Suspense, type ReactNode } from 'react'
+import { useRouterState } from '@tanstack/react-router'
 
 import { BotUnavailable } from '@/components/bot-unavailable'
 import { RoutePendingFallback } from '@/components/route-pending-fallback'
 import { isBotIndependentPath, useHostRuntime } from '@/host/state'
-import { useRouterState } from '@tanstack/react-router'
 
 const ObservationLayout = lazy(() =>
   import('@/components/observation-layout/ObservationLayout').then((module) => ({

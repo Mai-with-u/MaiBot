@@ -16,7 +16,9 @@ import { useTranslation } from 'react-i18next'
 
 import { MOBILE_GLASS_CLASS } from '@/components/layout/mobile-glass'
 import { Avatar, AvatarFallback, AvatarImage } from '@/components/ui/avatar'
+import { useBotNickname } from '@/hooks/use-bot-nickname'
 import { useResolvedAvatarUrl } from '@/lib/avatar-url'
+import type { BotNicknameState } from '@/lib/bot-nickname'
 import { cn } from '@/lib/utils'
 import type { SessionInfo, StageStatusInfo } from '@/routes/monitor/use-maisaka-monitor'
 import { StageStatusLabel } from '@/routes/monitor/StageStatusLabel'
@@ -290,10 +292,18 @@ function ChatRow({
   )
 }
 
-function TabAvatar({ tab }: { tab: ChatTab }) {
+function TabAvatar({
+  tab,
+  botNickname,
+  botNameFallback,
+}: {
+  tab: ChatTab
+  botNickname: BotNicknameState
+  botNameFallback: string
+}) {
   const { t } = useTranslation()
   const isVirtual = tab.type === 'virtual'
-  const displayName = getChatTabDisplayName(tab, t('chat.botNameFallback'))
+  const displayName = getChatTabDisplayName(tab, botNickname, botNameFallback)
   const avatarUrl = useChatTabAvatarUrl(tab)
   const Icon = isVirtual ? UserCircle2 : Bot
   return (
@@ -377,6 +387,11 @@ export function MobileChatList({
   onClose,
 }: MobileChatListProps) {
   const { t, i18n } = useTranslation()
+  const botNickname = useBotNickname()
+  const botNameFallback = t('chat.botNameFallback')
+  const sectionBotName = botNickname.nickname ?? botNameFallback
+  const myChatsTitle = t('chat.sidebar.myChatsForBot', { name: sectionBotName })
+  const observedChatsTitle = t('chat.sidebar.observedChatsForBot', { name: sectionBotName })
   const [query, setQuery] = useState('')
   const language = i18n.resolvedLanguage ?? i18n.language
   const normalizedQuery = query.trim().toLowerCase()
@@ -384,7 +399,7 @@ export function MobileChatList({
   const visibleTabs = tabs.filter(
     (tab) =>
       !normalizedQuery ||
-      getChatTabDisplayName(tab, t('chat.botNameFallback')).toLowerCase().includes(normalizedQuery)
+      getChatTabDisplayName(tab, botNickname, botNameFallback).toLowerCase().includes(normalizedQuery)
   )
   const visibleObserved = Array.from(observedSessions.values())
     .filter((session) => session.platform !== 'internal')
@@ -394,10 +409,10 @@ export function MobileChatList({
     )
 
   const localSection = (
-    // 与麦麦的会话固定在最上面
-    <section data-mobile-chat-section="local" aria-label={t('chat.sidebar.myChats')}>
+    // 本地会话固定在最上面
+    <section data-mobile-chat-section="local" aria-label={myChatsTitle}>
       {visibleTabs.map((tab) => {
-        const displayName = getChatTabDisplayName(tab, t('chat.botNameFallback'))
+        const displayName = getChatTabDisplayName(tab, botNickname, botNameFallback)
         const lastMessage = tab.messages[tab.messages.length - 1]
         return (
           <SwipeRow
@@ -415,7 +430,9 @@ export function MobileChatList({
             }
           >
             <ChatRow
-              avatar={<TabAvatar tab={tab} />}
+              avatar={
+                <TabAvatar tab={tab} botNickname={botNickname} botNameFallback={botNameFallback} />
+              }
               title={displayName}
               badge={tab.type === 'virtual' ? t('chat.sidebar.virtualBadge') : undefined}
               preview={lastMessage?.content || t('chat.sidebar.emptyPreview')}
@@ -429,8 +446,8 @@ export function MobileChatList({
   )
 
   const observedSection = (
-    // 麦麦的聊天流接在后面，按最近活跃排序，行内标「观察」区分
-    <section data-mobile-chat-section="observed" aria-label={t('chat.sidebar.observedChats')}>
+    // 观察聊天流接在后面，按最近活跃排序，行内标「观察」区分
+    <section data-mobile-chat-section="observed" aria-label={observedChatsTitle}>
       {observedSessionsError ? (
         <p className="text-destructive px-5 py-4 text-sm">
           {t('chat.sidebar.loadObservedChatsFailed')}
@@ -670,6 +687,8 @@ export function MobileChatRoomBar({
 /** 对话页顶栏里的小头像：本地会话 */
 export function MobileChatRoomTabAvatar({ tab }: { tab: ChatTab }) {
   const { t } = useTranslation()
+  const botNickname = useBotNickname()
+  const botNameFallback = t('chat.botNameFallback')
   const isVirtual = tab.type === 'virtual'
   const avatarUrl = useChatTabAvatarUrl(tab)
   const Icon = isVirtual ? UserCircle2 : Bot
@@ -679,7 +698,7 @@ export function MobileChatRoomTabAvatar({ tab }: { tab: ChatTab }) {
         <AvatarImage
           src={avatarUrl}
           alt={t('chat.sidebar.userAvatarAlt', {
-            name: getChatTabDisplayName(tab, t('chat.botNameFallback')),
+            name: getChatTabDisplayName(tab, botNickname, botNameFallback),
           })}
           className="object-cover"
         />

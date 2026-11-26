@@ -6,15 +6,18 @@
  * 公开函数遵循 throw 契约：成功返回数据，失败抛 ApiError。
  */
 
+import { getHostRuntime } from '@/host/state'
+import { readBotNicknameVersion } from '@/lib/bot-nickname'
 import { backendApi } from '@/lib/http'
 import type { ConfigSchema } from '@/types/config-schema'
 
 const API_BASE = '/api/webui/config'
 export const BOT_CONFIG_UPDATED_EVENT = 'maibot:bot-config-updated'
+export const BOT_CONFIG_QUERY_KEY = ['bot-config'] as const
 const schemaRequestCache = new Map<string, Promise<ConfigSchema>>()
 const configDataCache = new Map<
   string,
-  { timestamp: number; request: Promise<Record<string, unknown>> }
+  { timestamp: number; request: Promise<unknown> }
 >()
 const CONFIG_DATA_CACHE_TTL = 30_000
 
@@ -56,7 +59,7 @@ function getCachedSchema(key: string, url: string): Promise<ConfigSchema> {
   return request
 }
 
-function getCachedConfigData(key: string, url: string): Promise<Record<string, unknown>> {
+function getCachedConfigResponse(key: string, url: string): Promise<unknown> {
   const cachedRequest = configDataCache.get(key)
   if (cachedRequest && Date.now() - cachedRequest.timestamp < CONFIG_DATA_CACHE_TTL) {
     return cachedRequest.request
@@ -64,7 +67,6 @@ function getCachedConfigData(key: string, url: string): Promise<Record<string, u
 
   const request = backendApi
     .get<unknown>(url, { cache: 'no-store', errorMessage: '获取配置失败' })
-    .then((data) => unwrapConfigResponse(data))
     .catch((error: unknown) => {
       // 失败后释放缓存，但不能清除过期或失效后已经启动的新请求。
       if (configDataCache.get(key)?.request === request) {
@@ -85,10 +87,47 @@ function invalidateConfigDataCache(key?: string): void {
   configDataCache.clear()
 }
 
-function notifyBotConfigUpdated(): void {
+function getBotConfigUpdateStorageKey(): string | null {
+  const { host, selected_bot_id: botId } = getHostRuntime()
+  if (!host) return `${BOT_CONFIG_UPDATED_EVENT}:standalone`
+  return botId ? `${BOT_CONFIG_UPDATED_EVENT}:bot:${botId}` : null
+}
+
+function dispatchBotConfigUpdated(): void {
+  invalidateConfigDataCache('bot')
   if (typeof window !== 'undefined') {
     window.dispatchEvent(new Event(BOT_CONFIG_UPDATED_EVENT))
   }
+}
+
+function notifyBotConfigUpdated(): void {
+  dispatchBotConfigUpdated()
+  if (typeof window === 'undefined') return
+
+  const key = getBotConfigUpdateStorageKey()
+  if (!key) return
+
+  try {
+    // storage 事件只在其他标签页触发，值只用于标记本次保存。
+    window.localStorage.setItem(key, Math.random().toString(36))
+  } catch {
+    // 浏览器禁用存储时，当前页面仍通过本地事件刷新。
+  }
+}
+
+export function subscribeToBotConfigUpdatesFromOtherTabs(): () => void {
+  const onStorage = (event: StorageEvent) => {
+    if (
+      event.key !== null &&
+      event.key === getBotConfigUpdateStorageKey() &&
+      event.newValue !== null &&
+      event.storageArea === window.localStorage
+    ) {
+      dispatchBotConfigUpdated()
+    }
+  }
+  window.addEventListener('storage', onStorage)
+  return () => window.removeEventListener('storage', onStorage)
 }
 
 /**
@@ -125,7 +164,15 @@ export async function getBotConfig(): Promise<Record<string, unknown>> {
 
 /** Cached config data for lightweight status summaries. */
 export async function getBotConfigCached(): Promise<Record<string, unknown>> {
-  return getCachedConfigData('bot', `${API_BASE}/bot`)
+  return unwrapConfigResponse(await getCachedConfigResponse('bot', `${API_BASE}/bot`))
+}
+
+export async function getBotConfigSnapshotCached() {
+  const data = await getCachedConfigResponse('bot', `${API_BASE}/bot`)
+  const nicknameVersion = data && typeof data === 'object' && 'bot_nickname_version' in data
+    ? readBotNicknameVersion(data.bot_nickname_version)
+    : undefined
+  return { config: unwrapConfigResponse(data), nicknameVersion }
 }
 
 /**
@@ -141,7 +188,7 @@ export async function getModelConfig(): Promise<Record<string, unknown>> {
 
 /** Cached model config data for lightweight status summaries. */
 export async function getModelConfigCached(): Promise<Record<string, unknown>> {
-  return getCachedConfigData('model', `${API_BASE}/model`)
+  return unwrapConfigResponse(await getCachedConfigResponse('model', `${API_BASE}/model`))
 }
 
 /**
@@ -154,7 +201,6 @@ export async function updateBotConfig(
     body: config,
     errorMessage: '更新配置失败',
   })
-  invalidateConfigDataCache('bot')
   notifyBotConfigUpdated()
   return result
 }
@@ -177,7 +223,6 @@ export async function updateBotConfigRaw(rawContent: string): Promise<Record<str
     body: { raw_content: rawContent },
     errorMessage: '更新配置失败',
   })
-  invalidateConfigDataCache('bot')
   notifyBotConfigUpdated()
   return result
 }
@@ -301,7 +346,6 @@ export async function updateBotConfigSection(
       errorMessage,
     }
   )
-  invalidateConfigDataCache('bot')
   notifyBotConfigUpdated()
   return result
 }

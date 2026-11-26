@@ -13,9 +13,9 @@ import { Popover, PopoverContent, PopoverTrigger } from '@/components/ui/popover
 import { ScrollArea } from '@/components/ui/scroll-area'
 import { Tooltip, TooltipContent, TooltipTrigger } from '@/components/ui/tooltip'
 import { VirtualList } from '@/components/ui/virtual-list'
+import { useBotNickname, useLocalChatInfo } from '@/hooks/use-bot-nickname'
 import { useFeatureFlags } from '@/hooks/use-feature-flags'
 import { useHostRuntime } from '@/host/state'
-import { backendApi } from '@/lib/http'
 import { useResolvedAvatarUrl } from '@/lib/avatar-url'
 import { getAllChatStreams } from '@/lib/chat-management-api'
 import { useLocalBotAvatarUrl } from '@/routes/chat/local-bot-avatar'
@@ -127,14 +127,13 @@ const ObservedRow = memo(function ObservedRow({
 export function ObservationConversations({ collapsed }: { collapsed: boolean }) {
   const { t } = useTranslation()
   const { selected_bot_id } = useHostRuntime()
-  const { data: chatInfo } = useQuery({
-    queryKey: ['local-chat-info', selected_bot_id],
-    queryFn: () => backendApi.get<{ bot_qq: string | null }>('/api/chat/info'),
-    staleTime: 30_000,
-  })
+  const queryClient = useQueryClient()
+  const { data: chatInfo } = useLocalChatInfo(selected_bot_id)
+  const { nickname } = useBotNickname()
+  const botName = nickname ?? t('chat.botNameFallback')
+  const observedChatsTitle = t('chat.sidebar.observedChatsForBot', { name: botName })
   const localBotAvatarUrl = useLocalBotAvatarUrl(chatInfo?.bot_qq ?? undefined)
   const navigate = useNavigate()
-  const queryClient = useQueryClient()
   const pathname = useRouterState({ select: (state) => state.location.pathname })
   const searchStr = useRouterState({ select: (state) => state.location.searchStr })
   const { flags } = useFeatureFlags()
@@ -179,12 +178,12 @@ export function ObservationConversations({ collapsed }: { collapsed: boolean }) 
       : sorted
     return [
       { title: t('observation.focusFlows'), items: filtered.filter((session) => isFocusFlowId(session.sessionId)) },
-      { title: t('chat.sidebar.observedChats'), items: filtered.filter((session) => !isFocusFlowId(session.sessionId)) },
+      { title: observedChatsTitle, items: filtered.filter((session) => !isFocusFlowId(session.sessionId)) },
     ].filter((section) => section.items.length > 0).flatMap<ObservedListEntry>((section) => [
       { kind: 'heading', key: `section:${section.title}`, title: section.title },
       ...section.items.map((session): ObservedListEntry => ({ kind: 'session', key: session.sessionId, session })),
     ])
-  }, [normalizedQuery, sorted, t])
+  }, [normalizedQuery, observedChatsTitle, sorted, t])
 
   const params = new URLSearchParams(searchStr)
   const selection: Selection =
@@ -212,7 +211,7 @@ export function ObservationConversations({ collapsed }: { collapsed: boolean }) 
     if (item.kind === 'heading') return <h3 data-observation-list-section="true">{item.title}</h3>
     if (item.kind === 'notice') return observedList
     if (item.kind === 'local') {
-      const title = item.agent ? t('observation.agentHelper') : t('chat.botNameFallback')
+      const title = item.agent ? t('observation.agentHelper') : botName
       return (
         <div title={collapsed ? title : undefined}>
           <ConversationListItem
@@ -308,7 +307,7 @@ export function ObservationConversations({ collapsed }: { collapsed: boolean }) 
                     type="button"
                     data-observation-chat-stack="true"
                     data-active={selection.kind === 'observed'}
-                    aria-label={`${t('chat.sidebar.observedChats')} (${sorted.length})`}
+                    aria-label={`${observedChatsTitle} (${sorted.length})`}
                     className="relative mx-auto my-2 flex h-16 w-full max-w-10 items-center justify-center rounded-md focus-visible:outline-2"
                   >
                     <span className="relative block h-12 w-8" aria-hidden="true">
@@ -335,7 +334,7 @@ export function ObservationConversations({ collapsed }: { collapsed: boolean }) 
                   side="right"
                   align="start"
                   sideOffset={12}
-                  aria-label={t('chat.sidebar.observedChats')}
+                  aria-label={observedChatsTitle}
                   onPointerEnter={(event) => {
                     if (event.pointerType === 'mouse') setFrozenSessions(latestSorted)
                   }}
@@ -344,7 +343,7 @@ export function ObservationConversations({ collapsed }: { collapsed: boolean }) 
                   className="flex h-[min(36rem,calc(100dvh-2rem))] max-h-[var(--radix-popover-content-available-height)] w-80 max-w-[calc(100vw-2rem)] flex-col overflow-hidden p-0 data-[state=open]:animate-none data-[state=closed]:animate-none"
                 >
                   <div className="shrink-0 space-y-2 border-b p-3">
-                    <p className="text-sm font-semibold">{t('chat.sidebar.observedChats')} · {sorted.length}</p>
+                    <p className="text-sm font-semibold">{observedChatsTitle} · {sorted.length}</p>
                     <Input
                       type="search"
                       value={query}

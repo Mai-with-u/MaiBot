@@ -157,6 +157,7 @@ export interface WsMessage {
   user_id?: string
   user_name?: string
   bot_name?: string
+  bot_nickname_version?: string | number | null
   bot_qq?: string
   platform?: string
   virtual_mode?: boolean

@@ -226,13 +226,15 @@ class UnifiedWebSocketClient {
 
   private async sendRequest(
     payload: Record<string, unknown>,
-    timeoutMs = 10000
+    timeoutMs = 10000,
+    onSend?: () => void
   ): Promise<Record<string, unknown>> {
     if (this.ws?.readyState !== WebSocket.OPEN) {
       throw new Error('统一 WebSocket 尚未连接')
     }
 
     const requestId = payload.id as string
+    onSend?.()
     return await new Promise<Record<string, unknown>>((resolve, reject) => {
       const timeoutId = window.setTimeout(() => {
         this.pendingRequests.delete(requestId)
@@ -462,6 +464,8 @@ class UnifiedWebSocketClient {
     data?: Record<string, unknown>
     domain: string
     method: string
+    /** 连接就绪后，在写入 WebSocket 前同步执行。 */
+    onSend?: () => void
     session?: string
     timeoutMs?: number
   }): Promise<Record<string, unknown>> {
@@ -476,7 +480,8 @@ class UnifiedWebSocketClient {
         session: params.session,
         data: params.data ?? {},
       },
-      params.timeoutMs
+      params.timeoutMs,
+      params.onSend
     )
   }
 

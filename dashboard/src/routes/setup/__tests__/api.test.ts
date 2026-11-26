@@ -2,6 +2,7 @@ import i18n from '@/i18n'
 import { beforeEach, describe, expect, it, vi } from 'vitest'
 
 import { ApiError, authApi, backendApi } from '@/lib/http'
+import { BOT_CONFIG_UPDATED_EVENT } from '@/lib/config-api'
 
 import {
   completeSetup,
@@ -308,6 +309,8 @@ describe('loadModelSetupConfig', () => {
 describe('saveBotBasicConfig / savePersonalityConfig', () => {
   it('把 Bot 基础配置原样写入 bot 配置段', async () => {
     postMock.mockResolvedValue({ success: true })
+    const configUpdated = vi.fn()
+    window.addEventListener(BOT_CONFIG_UPDATED_EVENT, configUpdated)
     const config = {
       platform: 'qq',
       qq_account: '12345',
@@ -316,12 +319,17 @@ describe('saveBotBasicConfig / savePersonalityConfig', () => {
       alias_names: [],
     }
 
-    await saveBotBasicConfig(config)
+    try {
+      await saveBotBasicConfig(config)
+    } finally {
+      window.removeEventListener(BOT_CONFIG_UPDATED_EVENT, configUpdated)
+    }
 
     expect(postMock).toHaveBeenCalledWith('/api/webui/config/bot/section/bot', {
       body: config,
       errorMessage: i18n.t('setupPage.errors.saveBot'),
     })
+    expect(configUpdated).toHaveBeenCalledOnce()
   })
 
   it('把人格配置原样写入 personality 配置段', async () => {
