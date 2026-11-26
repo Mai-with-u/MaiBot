@@ -326,14 +326,14 @@ class PetApi:
     def history(self, cursors: Dict[str, int], request_id: str) -> None:
         self._outbox.emit({"type": "history", "cursors": cursors, "request_id": request_id})
 
-    def send(self, request_id: str, text: str, images: List[Dict[str, str]], conversation_id: str = "") -> None:
+    def send(self, request_id: str, text: str, images: List[Dict[str, str]]) -> None:
         import re
 
         from .attachments import MAX_REQUEST_BYTES
 
         if not re.fullmatch(r"[0-9a-f]{32}", request_id):
             raise ValueError("无效请求 ID")
-        payload = json.dumps({"text": text, "images": images, "conversation_id": conversation_id}).encode("utf-8")
+        payload = json.dumps({"text": text, "images": images}).encode("utf-8")
         if len(payload) > MAX_REQUEST_BYTES:
             raise ValueError("图文消息过大")
         path = self._request_dir / f"{request_id}.json"
@@ -582,7 +582,7 @@ def execute_command(api: PetApi, window: "webview.Window", command: Dict[str, An
             records_window = api._exploration_window
             if records_window is not None:
                 records_window.evaluate_js(f"window.records.receive({json.dumps(command)})")
-        elif command["type"] in {"history", "conversation", "conversation_message", "reply", "notice", "thinking_caption", "thinking", "idle", "failed", "accepted", "buttons", "button_result", "screen_state", "exploration_state", "exploration_result", "exploration_tasks"}:
+        elif command["type"] in {"history", "reply", "notice", "thinking_caption", "thinking", "idle", "failed", "accepted", "buttons", "button_result", "screen_state", "exploration_state", "exploration_result", "exploration_tasks"}:
             window.evaluate_js(f"window.pet.receive({json.dumps(command)})")
             if command["type"] == "reply":
                 api._play_message_sound(command["sound"])

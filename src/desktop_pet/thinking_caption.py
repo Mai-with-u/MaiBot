@@ -74,13 +74,6 @@ class ThinkingCaption:
         self._key = key
         self._task = asyncio.create_task(self._run(dict(data), self._revision), name="pet-thinking-caption")
 
-    async def clear(self) -> None:
-        self.cancel()
-        try:
-            await self._publish("", self._revision)
-        except Exception as exc:
-            logger.debug("无法清空桌宠阶段摘要: %s", exc)
-
     async def _publish(self, text: str, revision: int) -> None:
         if revision != self._revision:
             return

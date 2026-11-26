@@ -1,5 +1,5 @@
 from types import SimpleNamespace
-from unittest.mock import AsyncMock
+from unittest.mock import AsyncMock, Mock
 import asyncio
 import json
 
@@ -196,6 +196,7 @@ async def test_only_internal_owner_reply_is_displayed(monkeypatch):
             "additional_config": {"platform_io_target_user_id": target}, "group_info": group,
         }, "raw_message": [{"type": "text", "data": "你好"}]}
     await service.notify_reply(message("webui", "owner"))
+    await service.notify_reply(message("qq", "owner"))
     await service.notify_reply(message("internal", "someone"))
     await service.notify_reply(message("internal", "owner", {"group_id": "g"}))
     assert not service._notifications
@@ -238,49 +239,32 @@ async def test_spawn_failure_is_observable_and_does_not_crash_host(monkeypatch):
 
 
 @pytest.mark.asyncio
-async def test_binding_change_cancels_old_caption_before_accepting_new_stage(monkeypatch):
+async def test_only_owner_chat_updates_thinking_and_caption(monkeypatch):
+    from src.desktop_pet import chat_tools
+
     service = DesktopPetService()
     service._ready = True
     service._closing = False
-    config = pet_module.global_config.desktop_pet
-    monkeypatch.setattr(config, "conversation_session_id", "session-a")
+    command = AsyncMock()
+    update = Mock()
+    owner = SimpleNamespace(platform="internal", group_id=None, user_id="owner")
+    other = SimpleNamespace(platform="qq", group_id="123", user_id="owner")
+    sessions = {"owner-private": owner, "qq-group": other}
+    monkeypatch.setattr(chat_tools.chat_manager, "get_session_by_session_id", sessions.get)
+    monkeypatch.setattr(service, "_command", command)
+    monkeypatch.setattr(service._thinking_caption, "update", update)
     monkeypatch.setattr(pet_module, "caption_enabled", lambda: True)
-    monkeypatch.setattr(service, "_can_stream_conversation", lambda: False)
-    await service._publish_conversation()
 
-    old_summary_started = asyncio.Event()
-    new_summary_started = asyncio.Event()
-    clear_started = asyncio.Event()
-    release_clear = asyncio.Event()
+    await service.notify_thinking("qq-group")
+    service.observe_stage({"session_id": "qq-group", "stage": "生成"})
+    assert not service.status()["thinking"]
+    assert not service._notifications
+    update.assert_not_called()
 
-    async def summarize(data):
-        if data["session_id"] == "session-a":
-            old_summary_started.set()
-            await asyncio.Event().wait()
-        new_summary_started.set()
-        return "新摘要"
-
-    async def send(command):
-        if command["text"] == "":
-            clear_started.set()
-            await release_clear.wait()
-
-    monkeypatch.setattr(service._thinking_caption, "_summarize", summarize)
-    monkeypatch.setattr(service._thinking_caption, "_send", send)
-    service.observe_stage({"session_id": "session-a", "stage": "生成"})
-    await asyncio.wait_for(old_summary_started.wait(), timeout=1)
-    old_task = service._thinking_caption._task
-
-    config.conversation_session_id = "session-b"
-    publish = asyncio.create_task(service._publish_conversation())
-    try:
-        await asyncio.wait_for(clear_started.wait(), timeout=1)
-        service.observe_stage({"session_id": "session-b", "stage": "生成"})
-        assert service._thinking_caption._task is None
-    finally:
-        release_clear.set()
-        await publish
-    assert old_task.cancelled()
-
-    service.observe_stage({"session_id": "session-b", "stage": "生成"})
-    await asyncio.wait_for(new_summary_started.wait(), timeout=1)
+    await service.notify_thinking("owner-private")
+    stage = {"session_id": "owner-private", "stage": "生成"}
+    service.observe_stage(stage)
+    await asyncio.gather(*service._notifications)
+    assert service.status()["thinking"]
+    command.assert_awaited_once_with({"type": "thinking"})
+    update.assert_called_once_with(stage)

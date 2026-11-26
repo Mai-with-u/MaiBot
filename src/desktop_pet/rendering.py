@@ -3,10 +3,7 @@
 from typing import Any, Dict, List
 import base64
 
-from src.core.internal_chat import INTERNAL_CHAT_USER_ID
-
-
-def render_history_events(events: List[Dict[str, Any]], *, show_senders: bool = False) -> List[Dict[str, Any]]:
+def render_history_events(events: List[Dict[str, Any]]) -> List[Dict[str, Any]]:
     """只适配聊天流浏览的消息事件展示，查询和分页由共享事件账本负责。"""
     from src.webui.routers.system import _resolve_monitor_media_file
 
@@ -25,8 +22,6 @@ def render_history_events(events: List[Dict[str, Any]], *, show_senders: bool = 
                 })})
         items[data["message_id"]] = {"id": data["message_id"],
                                      "who": "mai" if kind == "message.sent" else "me", "parts": parts}
-        if show_senders and kind != "message.sent" and data.get("user_id") != INTERNAL_CHAT_USER_ID:
-            items[data["message_id"]].update(who="peer", sender=data.get("speaker_name", ""))
     return list(items.values())
 
 

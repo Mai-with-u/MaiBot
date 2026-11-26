@@ -18,7 +18,7 @@ import time
 
 from src.common.runtime_loop import get_main_loop, run_on_main_loop
 
-from .attachments import MAX_IMAGE_BYTES
+from .attachments import MAX_IMAGE_BYTES, reject_legacy_chat_target
 from .skins import SkinAssets
 
 PROTOCOL_VERSION = 1
@@ -65,8 +65,7 @@ def validate_hello(event: Dict[str, Any]) -> Tuple[str, Dict[str, bool]]:
         raise ValueError("客户端必须明确声明 screen_read 能力")
     return client_id, {"screen_read": capabilities["screen_read"],
                        "skin_assets": capabilities.get("skin_assets") is True,
-                       "skin_loading": capabilities.get("skin_loading") is True,
-                       "chat_binding": capabilities.get("chat_binding") is True}
+                       "skin_loading": capabilities.get("skin_loading") is True}
 
 
 def _text_field(payload: Dict[str, Any], name: str, *, limit: int, empty: bool = False) -> str:
@@ -145,6 +144,7 @@ def validate_todo_payload(action: str, payload: Dict[str, Any]) -> None:
 
 
 def validate_chat_request(payload: Dict[str, Any]) -> Dict[str, Any]:
+    reject_legacy_chat_target(payload)
     """校验实际图片内容；在工作线程执行解码和图片检查。"""
     text = payload.get("text")
     images = payload.get("images")
@@ -174,10 +174,7 @@ def validate_chat_request(payload: Dict[str, Any]) -> Dict[str, Any]:
         except (binascii.Error, OSError, Image.DecompressionBombError) as exc:
             raise ValueError("图片数据无效") from exc
         normalized.append({"base64": encoded, "mime_type": mime})
-    conversation_id = payload.get("conversation_id")
-    if conversation_id is not None and (not isinstance(conversation_id, str) or len(conversation_id) > 200):
-        raise ValueError("桌宠会话 ID 无效")
-    return {"text": text, "images": normalized, "conversation_id": conversation_id}
+    return {"text": text, "images": normalized}
 
 
 class RemotePeer:

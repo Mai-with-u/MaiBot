@@ -3,7 +3,6 @@ import { useCallback, useRef, useState } from 'react'
 import { useTranslation } from 'react-i18next'
 
 import { DesktopPetCurrentTaskField } from '@/components/DesktopPetCurrentTaskField'
-import { DesktopPetConversationField } from '@/components/DesktopPetConversationField'
 import { DesktopPetSkinField } from '@/components/DesktopPetSkinField'
 import { DesktopPetSoundField } from '@/components/DesktopPetSoundField'
 import { DynamicConfigForm } from '@/components/dynamic-form'
@@ -20,7 +19,6 @@ const settingsQueryKey = ['desktop-pet', 'settings'] as const
 const settingsFieldHooks = new FieldHookRegistry()
 settingsFieldHooks.register('desktop_pet.skin_id', (props) => <DesktopPetSkinField {...props} autoSave />)
 settingsFieldHooks.register('desktop_pet.show_current_task', DesktopPetCurrentTaskField)
-settingsFieldHooks.register('desktop_pet.conversation_session_id', DesktopPetConversationField)
 settingsFieldHooks.register('desktop_pet.message_sound', DesktopPetSoundField, 'wrapper')
 
 export function DesktopPetSettings({ onSaved }: { onSaved: () => void }) {
@@ -115,7 +113,7 @@ export function DesktopPetSettings({ onSaved }: { onSaved: () => void }) {
                   changesRef.current = next
                   setChanges(next)
                   setSaveError(null)
-                  if (field === 'skin_id' || field === 'conversation_session_id') void saveNow('desktop_pet', next)
+                  if (field === 'skin_id') void saveNow('desktop_pet', next)
                   else triggerAutoSave('desktop_pet', next)
                 }}
               />

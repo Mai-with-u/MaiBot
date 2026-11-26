@@ -79,9 +79,6 @@ class DesktopPetConfig(ConfigBase):
 
     _normalize_chat_hotkey = field_validator("chat_hotkey")(_validate_chat_hotkey)
 
-    conversation_session_id: str = Field(default="", max_length=200, json_schema_extra={"label": {"zh_CN": "聊天会话"}})
-    """桌宠绑定的已有聊天会话 ID。留空使用主人私聊。"""
-
     skin_id: str = Field(default="builtin", json_schema_extra={"label": {"zh_CN": "当前皮肤"}, **_SKIN_COLUMN})
     """选择已安装的皮肤 ID；支持热切换，builtin 为内置麦麦。"""
 

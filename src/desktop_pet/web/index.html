@@ -54,8 +54,7 @@
   @media (prefers-reduced-motion: reduce) { #thinking-caption span { animation: none; } }
 
   /* ---------- 桌宠 ---------- */
-  .chat-conversation { min-width: 0; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; font-weight: 600; }
-  .chat-sender { display: block; font-size: 11px; opacity: .75; overflow-wrap: anywhere; }
+  .chat-title { min-width: 0; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; font-weight: 600; }
   #pet {
     position: absolute;
     left: 55px;
@@ -604,7 +603,7 @@
   </div>
 
   <div id="chat" class="bubble" data-hit="18">
-    <div id="chat-conversation" class="chat-conversation" title="主人私聊">主人私聊</div>
+    <div class="chat-title" title="主人私聊">主人私聊</div>
     <div class="screen-controls">
       <button class="pet-button" type="button" id="screen-toggle" disabled aria-pressed="false" title="需在 WebUI 桌宠设置开启允许读取桌面"></button>
       <span id="screen-status" role="status"></span>
@@ -673,7 +672,6 @@
   pet.append(unreadIndicator);
   const log = document.getElementById("log");
   const chatInput = document.getElementById("chat-input");
-  const chatConversation = document.getElementById("chat-conversation");
   const todoList = document.getElementById("todos");
   const todoInput = document.getElementById("todo-input");
   const say = document.getElementById("say");
@@ -683,8 +681,6 @@
   const pupils = document.querySelectorAll(".pupil");
 
   let historyCursors = {};
-  let conversationId = "";
-  let conversationRevision = 0;
   let historyLoaded = false;
   const chatMessageIds = new Set();
   let historyHasMore = true;
@@ -1115,15 +1111,9 @@
   });
   log.tabIndex = 0;
   new ResizeObserver(scrollLog).observe(log);
-  function lineNode(who, parts, sender) {
+  function lineNode(who, parts) {
     const line = document.createElement("div");
     line.className = `line ${who}`;
-    if (sender) {
-      const label = document.createElement("span");
-      label.className = "chat-sender";
-      label.textContent = sender;
-      line.append(label);
-    }
     for (const part of parts) {
       if (part.kind === "image") {
         const img = document.createElement("img");
@@ -1136,11 +1126,11 @@
     }
     return line;
   }
-  function pushLine(who, parts, messageId, sender) {
+  function pushLine(who, parts, messageId) {
     if (messageId && chatMessageIds.has(messageId)) return;
     if (messageId) chatMessageIds.add(messageId);
     log.querySelector(".dots")?.remove();
-    log.append(lineNode(who, parts, sender));
+    log.append(lineNode(who, parts));
     if (waitTimer) log.append(dotsNode());
     scrollLog();
     updateRegion();
@@ -1183,7 +1173,6 @@
     if (!files.length) return;
     event.preventDefault();
     if (pendingSend || readingImages) return;
-    const revision = conversationRevision;
     readingImages = true;
     chatError.textContent = "";
     try {
@@ -1196,7 +1185,6 @@
           reader.onerror = () => reject(new Error("读取剪贴板图片失败"));
           reader.readAsDataURL(file);
         });
-        if (revision !== conversationRevision) return;
         draftImages.push({src, base64: src.split(",")[1], mime_type: file.type, name: file.name});
       }
     } catch (error) { chatError.textContent = String(error.message || error); }
@@ -1236,7 +1224,7 @@
     clearTimeout(waitTimer);
     waitTimer = setTimeout(stopWaiting, WAIT_LIMIT_MS);
     try {
-      await api.send(id, text, draftImages.map(({base64, mime_type, name}) => ({base64, mime_type, name})), conversationId);
+      await api.send(id, text, draftImages.map(({base64, mime_type, name}) => ({base64, mime_type, name})));
     } catch (error) { finishSend({type: "failed", request_id: id, error: String(error.message || error)}); }
   });
 
@@ -1784,38 +1772,6 @@
       updateRegion();
     },
     receive(message) {
-      if (message.type === "conversation") {
-        const label = [message.name, message.target_id && `${message.platform.toUpperCase()} ${message.target_id}`].filter(Boolean).join(" · ");
-        chatConversation.title = chatConversation.textContent = label;
-        if (conversationId !== message.conversation_id) {
-          conversationId = message.conversation_id;
-          conversationRevision++;
-          historyRequest = null;
-          historyLoaded = false;
-          historyHasMore = true;
-          historyCursors = {};
-          chatMessageIds.clear();
-          log.replaceChildren();
-          chatStickBottom = true;
-          clearReadMessages();
-          stopWaiting();
-          hideSay();
-          pendingSend = null;
-          draftImages = [];
-          chatInput.value = "";
-          chatInput.disabled = false;
-          chatError.textContent = "";
-          renderAttachments();
-          void loadHistory();
-        }
-        return;
-      }
-      if (["history", "reply", "thinking", "conversation_message"].includes(message.type)
-          && (message.conversation_id || "") !== conversationId) return;
-      if (message.type === "conversation_message") {
-        pushLine("peer", message.parts, message.message_id, message.sender);
-        return;
-      }
       if (message.type === "history") {
         if (message.request_id !== historyRequest) return;
         historyRequest = null;
@@ -1829,7 +1785,7 @@
         for (const item of message.items) {
           if (chatMessageIds.has(item.id)) continue;
           chatMessageIds.add(item.id);
-          fragment.append(lineNode(item.who, item.parts, item.sender));
+          fragment.append(lineNode(item.who, item.parts));
         }
         log.prepend(fragment);
         historyLoaded = true;

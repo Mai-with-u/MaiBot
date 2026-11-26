@@ -5,7 +5,7 @@
   if (!bridge) return;
   window.pywebview = { api: bridge.api };
   const received = new Set([
-    'history', 'conversation', 'conversation_message', 'reply', 'notice', 'thinking_caption', 'thinking', 'idle', 'failed', 'accepted',
+    'history', 'reply', 'notice', 'thinking_caption', 'thinking', 'idle', 'failed', 'accepted',
     'buttons', 'button_result', 'screen_state', 'exploration_state', 'exploration_result', 'exploration_tasks', 'connection',
   ]);
   const sounds = {wood: 'wooden-pop.wav', bubbles: 'soft-bubbles.wav', bell: 'warm-bell.wav', water: 'water-drop.wav'};

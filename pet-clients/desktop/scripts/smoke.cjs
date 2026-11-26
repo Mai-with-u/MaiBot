@@ -45,7 +45,6 @@ class HostFixture {
     this.basicChallenges = 0; this.basicHTTP = 0; this.basicWS = 0; this.connection = null;
     this.skinDownloads = 0;
     this.skinPrefetches = 0;
-    this.conversationId = '';
     this.server = http.createServer((request, response) => this.handle(request, response).catch(error => {
       this.failures.push(error);
       if (!response.headersSent) this.json(response, { detail: error.message }, 500); else response.destroy();
@@ -147,12 +146,11 @@ class HostFixture {
     }
     if (new RegExp(`^${BASE}/chat/[0-9a-f]{32}$`).test(pathname)) {
       assert.equal(request.method, 'POST'); this.chats.push(body);
-      assert.equal(body.conversation_id, this.conversationId);
-      if (this.conversationId) {
-        return this.json(response, { accepted: true, request_id: pathname.split('/').at(-1), message_id: 'sent-bound-user' });
-      }
-      this.json(response, { accepted: true, request_id: pathname.split('/').at(-1), message_id: 'sent-user' });
-      this.command('reply', { message_id: 'live-reply', sound: 'wood', parts: [{ kind: 'text', text: '来自本机测试服务器的回复' }] }).catch(error => this.failures.push(error)); return;
+      assert.equal(body.conversation_id, undefined);
+      const requestId = pathname.split('/').at(-1);
+      this.json(response, { accepted: true, request_id: requestId, message_id: `sent-${requestId}` });
+      const reply = this.chats.length === 1 ? '来自本机测试服务器的回复' : '重连后的主人私聊回复';
+      this.command('reply', { message_id: `reply-${requestId}`, sound: 'wood', parts: [{ kind: 'text', text: reply }] }).catch(error => this.failures.push(error)); return;
     }
     throw new Error(`Unexpected fixture endpoint: ${request.method} ${pathname}`);
   }
@@ -164,7 +162,7 @@ class HostFixture {
         const event = JSON.parse(raw.toString());
         if (event.type === 'hello') {
           assert.equal(event.version, 1); assert.equal(event.capabilities.screen_read, false, 'smoke must not authorize desktop capture');
-          assert.equal(event.capabilities.chat_binding, true);
+          assert.equal(event.capabilities.chat_binding, undefined);
           this.connection = connection;
           ws.send(JSON.stringify({ type: 'hello', version: 1, connection_id: connection.id, heartbeat_interval: 1, heartbeat_timeout: 5 }));
         } else if (event.type === 'ready') {
@@ -176,12 +174,6 @@ class HostFixture {
         } else if (event.type === 'ping') ws.send(JSON.stringify({ type: 'pong' }));
         else if (event.type === 'ack') this.acks.get(event.id)?.(event);
         else if (event.type === 'history') {
-          if (this.conversationId) {
-            this.command('history', {request_id: event.request_id, conversation_id: this.conversationId,
-              items: [{id: 'bound-history', who: 'peer', sender: '群成员', parts: [{kind: 'text', text: '所选会话历史'}]}], cursors: {}, has_more: false})
-              .catch(error => this.failures.push(error));
-            return;
-          }
           const older = Object.keys(event.cursors).length > 0;
           const items = older ? [{id: 'oldest', who: 'mai', parts: [{kind: 'text', text: '更早的历史回复'}]}]
             : Array.from({length: 30}, (_, index) => ({id: `history-${index}`, who: 'mai', parts: [{kind: 'text', text: `历史回复 ${index}`}]}));
@@ -497,28 +489,13 @@ async function run() {
     await pet.locator('#remote-indicator[data-connected="true"]').waitFor(); assert.notEqual(fixture.connection.id, previousConnection);
     assert.equal((await pet.evaluate(() => window.desktopPetBridge.api.todos(true))).length, 1);
     assert.equal(fixture.chats.length, 1); assert.equal(fixture.writes.length, 3);
-    fixture.conversationId = 'qq-group-session';
-    const bound = await fixture.command('conversation', {conversation_id: fixture.conversationId,
-      name: '测试群', platform: 'qq', target_id: '123456', chat_type: 'group'});
-    assert.equal(bound.error, undefined);
     await openPanel(pet, '#orb-chat', 'chat');
-    await pet.getByText('所选会话历史', {exact: false}).waitFor();
-    assert.match(await pet.locator('#chat-conversation').textContent(), /测试群.*123456/);
-    assert.equal(await pet.getByText('历史回复 29', {exact: true}).count(), 0);
-    await fixture.command('conversation_message', {conversation_id: 'other-session', message_id: 'wrong',
-      sender: '其他群', parts: [{kind: 'text', text: '不应显示的消息'}]});
-    assert.equal(await pet.getByText('不应显示的消息').count(), 0);
-    await fixture.command('conversation_message', {conversation_id: fixture.conversationId, message_id: 'incoming-qq',
-      sender: '新群成员', parts: [{kind: 'text', text: '实时群聊消息'}]});
-    await pet.getByText('新群成员', {exact: true}).waitFor();
-    await pet.locator('#chat-input').fill('投递到所选会话');
-    await pet.locator('#chat-input').press('Enter');
-    await until(() => fixture.chats.length === 2, 'bound chat submission');
-    assert.equal(fixture.chats[1].conversation_id, fixture.conversationId);
-    fixture.conversationId = '';
-    await fixture.command('conversation', {conversation_id: '', name: '主人私聊'});
     await pet.getByText('历史回复 29', {exact: true}).waitFor();
-    assert.equal(await pet.getByText('新群成员', {exact: true}).count(), 0);
+    await pet.locator('#chat-input').fill('重连后发给主人私聊');
+    await pet.locator('#chat-input').press('Enter');
+    await until(() => fixture.chats.length === 2, 'owner chat submission after reconnect');
+    assert.equal(fixture.chats[1].text, '重连后发给主人私聊');
+    await pet.getByText('重连后的主人私聊回复', { exact: true }).waitFor();
     if (keep) { await pet.screenshot({ path: path.join(temporary, 'pet.png') }); await records.screenshot({ path: path.join(temporary, 'records.png') }); }
     await isolation(app, auth, pet, fixture); assert.deepEqual(app.backgroundErrors.map(error => error.message), []);
     await app.close(); app = null; await delay(1000);

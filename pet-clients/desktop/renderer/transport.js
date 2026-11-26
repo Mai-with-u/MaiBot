@@ -295,7 +295,7 @@
       socket.addEventListener('open', () => {
         if (!active()) return;
         try { send(socket, { type: 'hello', version: VERSION, client_id: selected.clientId,
-          capabilities: { screen_read: selected.allowScreenRead, skin_assets: true, skin_loading: true, chat_binding: true } }); } catch (error) { fail(error); }
+          capabilities: { screen_read: selected.allowScreenRead, skin_assets: true, skin_loading: true } }); } catch (error) { fail(error); }
       });
       socket.addEventListener('error', () => fail(new Error('无法连接服务器，请检查网络和 WebUI 登录状态')));
       socket.addEventListener('close', event => fail(event.code === 4001

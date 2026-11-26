@@ -218,6 +218,7 @@ class MaisakaReasoningEngine:
             planner_task = asyncio.create_task(
                 self._runtime._chat_loop_service.chat_loop_step(
                     self._runtime._chat_history,
+                    screen_observations=self._runtime.desktop_screen_observations,
                     deferred_tools_reminder=deferred_tools_reminder,
                     injected_user_messages=injected_user_messages,
                     tail_user_messages=tail_user_messages,
@@ -594,6 +595,7 @@ class MaisakaReasoningEngine:
 
         response = state.response
         assert response is not None
+        inspect_content = not response.private_screen
         await emit_planner_snapshot(
             event_type="planner.progress",
             session_id=self._runtime.session_id,
@@ -601,11 +603,11 @@ class MaisakaReasoningEngine:
             planner_request_messages=None,
             planner_selected_history_count=None,
             planner_tool_count=None,
-            planner_content=response.content,
-            planner_reasoning=response.reasoning,
+            planner_content=response.content if inspect_content else None,
+            planner_reasoning=response.reasoning if inspect_content else None,
             planner_model_name=response.model_name,
-            planner_tool_calls=response.tool_calls,
-            planner_native_tool_calls=response.native_tool_calls,
+            planner_tool_calls=response.tool_calls if inspect_content else None,
+            planner_native_tool_calls=response.native_tool_calls if inspect_content else None,
             planner_prompt_tokens=response.prompt_tokens,
             planner_completion_tokens=response.completion_tokens,
             planner_total_tokens=response.total_tokens,
@@ -616,7 +618,7 @@ class MaisakaReasoningEngine:
             planner_prompt_cache_hit_tokens=response.prompt_cache_hit_tokens,
             planner_prompt_cache_miss_tokens=response.prompt_cache_miss_tokens,
             planner_context_sections=None,
-            tools=tools,
+            tools=tools if inspect_content else None,
             active_tool_call_id=active_tool_call_id,
             run_id=self._runtime._monitor_run_id,
         )
@@ -859,7 +861,10 @@ class MaisakaReasoningEngine:
     ) -> TurnStartContext:
         """消费触发信号并准备本轮初始消息与触发消息。"""
 
-        message_triggered, timeout_triggered, proactive_triggered = self._drain_ready_turn_triggers(queued_trigger)
+        message_triggered, timeout_triggered, proactive_triggered, screen_trigger = self._drain_ready_turn_triggers(
+            queued_trigger
+        )
+        proactive_triggered = proactive_triggered or screen_trigger is not None
         silence_triggered = self._runtime._message_turn_scheduler.consume_silence_trigger()
         silent_reply_frequency = self._runtime._is_reply_frequency_silent()
 
@@ -914,7 +919,7 @@ class MaisakaReasoningEngine:
             await self._ingest_messages(cached_messages)
             trigger_message = cached_messages[-1]
         elif proactive_triggered:
-            trigger_message = self._runtime._consume_proactive_trigger_message()
+            trigger_message = self._runtime._consume_proactive_trigger_message() or screen_trigger
             proactive_logical_turn_id = self._runtime._consume_proactive_logical_turn_id()
             if trigger_message is None:
                 logger.warning(f"{self._runtime.log_prefix} 主动触发缺少对应的触发消息，跳过本轮")
@@ -994,9 +999,11 @@ class MaisakaReasoningEngine:
                 cycle_end = self._cycle_end_for_max_rounds(self._runtime._max_internal_rounds)
 
         response = state.response
+        inspect_content = response is not None and not response.private_screen
+        tool_records = state.tool_monitor_results if response is None or inspect_content else []
         # 记录先在线程中保存并回填监控数据，终端开关仅影响后续打印。
         tool_prompt_panels = await asyncio.to_thread(
-            self._runtime._prepare_tool_prompt_records, state.tool_monitor_results
+            self._runtime._prepare_tool_prompt_records, tool_records
         )
         self._runtime._render_context_usage_panel(
             tool_prompt_panels=tool_prompt_panels,
@@ -1005,10 +1012,10 @@ class MaisakaReasoningEngine:
             planner_selected_history_count=response.selected_history_count if response is not None else None,
             planner_prompt_tokens=response.prompt_tokens if response is not None else None,
             planner_model_name=response.model_name if response is not None else None,
-            planner_response=(response.content or "") if response is not None else "",
-            planner_tool_calls=response.tool_calls if response is not None else None,
-            planner_tool_results=state.tool_result_summaries,
-            planner_tool_detail_results=state.tool_monitor_results,
+            planner_response=(response.content or "") if inspect_content else "",
+            planner_tool_calls=response.tool_calls if inspect_content else None,
+            planner_tool_results=state.tool_result_summaries if response is None or inspect_content else [],
+            planner_tool_detail_results=tool_records,
             planner_prompt_section=response.prompt_section if response is not None else None,
             planner_extra_lines=state.planner_extra_lines,
         )
@@ -1017,14 +1024,14 @@ class MaisakaReasoningEngine:
             session_id=self._runtime.session_id,
             cycle_id=cycle_detail.cycle_id,
             run_id=self._runtime._monitor_run_id,
-            planner_request_messages=response.request_messages if response is not None else None,
+            planner_request_messages=response.request_messages if inspect_content else None,
             planner_selected_history_count=response.selected_history_count if response is not None else None,
             planner_tool_count=response.tool_count if response is not None else None,
-            planner_content=response.content if response is not None else None,
-            planner_reasoning=response.reasoning if response is not None else None,
+            planner_content=response.content if inspect_content else None,
+            planner_reasoning=response.reasoning if inspect_content else None,
             planner_model_name=response.model_name if response is not None else None,
-            planner_tool_calls=response.tool_calls if response is not None else None,
-            planner_native_tool_calls=response.native_tool_calls if response is not None else None,
+            planner_tool_calls=response.tool_calls if inspect_content else None,
+            planner_native_tool_calls=response.native_tool_calls if inspect_content else None,
             planner_prompt_tokens=response.prompt_tokens if response is not None else None,
             planner_completion_tokens=response.completion_tokens if response is not None else None,
             planner_total_tokens=response.total_tokens if response is not None else None,
@@ -1035,12 +1042,12 @@ class MaisakaReasoningEngine:
             planner_prompt_cache_hit_tokens=response.prompt_cache_hit_tokens if response is not None else None,
             planner_prompt_cache_miss_tokens=response.prompt_cache_miss_tokens if response is not None else None,
             planner_context_sections=list(response.context_sections) if response is not None else None,
-            tools=state.tool_monitor_results,
+            tools=tool_records,
             time_records=dict(completed_cycle.time_records),
             agent_state=self._runtime._agent_state,
             planner_interrupted=state.planner_interrupted,
             end_reason=cycle_end.reason,
-            end_detail=cycle_end.detail,
+            end_detail=cycle_end.detail if response is None or inspect_content else "",
         )
         self._runtime._message_turn_scheduler.record_cycle_result(cycle_end.reason)
         return cycle_end
@@ -1209,16 +1216,19 @@ class MaisakaReasoningEngine:
     def _drain_ready_turn_triggers(
         self,
         queued_trigger: TurnTrigger,
-    ) -> tuple[bool, bool, bool]:
+    ) -> tuple[bool, bool, bool, Optional[SessionMessage]]:
         """合并当前已就绪的消息触发信号。"""
 
         message_triggered = timeout_triggered = proactive_triggered = False
+        screen_trigger = None
 
         while True:
             if queued_trigger == "message":
                 message_triggered = True
             elif queued_trigger == "proactive":
                 proactive_triggered = True
+            elif queued_trigger == "desktop_pet_screen":
+                screen_trigger = self._runtime.consume_desktop_screen_wake()
             elif isinstance(queued_trigger, WaitTimeoutTrigger):
                 # 已结束的 wait 即使还有信号排队，也不能唤醒或结束后来的 wait。
                 if queued_trigger.tool_call_id == self._runtime._pending_wait_tool_call_id:
@@ -1228,7 +1238,7 @@ class MaisakaReasoningEngine:
             except asyncio.QueueEmpty:
                 break
 
-        return message_triggered, timeout_triggered, proactive_triggered
+        return message_triggered, timeout_triggered, proactive_triggered, screen_trigger
 
     def _build_wait_completed_message(self, *, has_new_messages: bool) -> ToolResultMessage | WaitCompletedMessage:
         """独立 wait 补齐工具结果，reply 后的等待只追加上下文提醒。"""

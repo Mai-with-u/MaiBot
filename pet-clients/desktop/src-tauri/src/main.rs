@@ -1018,7 +1018,7 @@ async fn pet_call(window: WebviewWindow, method: String, args: Vec<Value>) -> Re
                 app,
                 "POST",
                 &format!("/chat/{request_id}"),
-                json!({"text":args.get(1),"images":args.get(2),"conversation_id":args.get(3)}),
+                json!({"text":args.get(1),"images":args.get(2)}),
             )
             .await?;
             let _ = page(
@@ -1360,8 +1360,6 @@ async fn execute(app: &tauri::AppHandle, session: Session, nonce: &str, command:
             }
         }
         "history"
-        | "conversation"
-        | "conversation_message"
         | "skin_loading"
         | "animation"
         | "reply"
