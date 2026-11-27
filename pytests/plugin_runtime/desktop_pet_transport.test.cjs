@@ -14,9 +14,12 @@ const botId = 'a'.repeat(32);
 const assetPath = '/skins/assets/' + 'b'.repeat(64);
 const requestId = 'c'.repeat(32);
 
-function setup({ fetch, forceToken = false, authStatus = () => ({ authenticated: true }) }) {
+function setup({
+  fetch, forceToken = false, ready = { tryToken: forceToken, forceToken }, tokenAvailable = true,
+  authStatus = () => ({ authenticated: true }), pathname = '/auth',
+}) {
   const messages = [], timers = new Map();
-  const location = new URL(server + '/auth');
+  const location = new URL(server + pathname);
   let socket;
   class WebSocket extends EventTarget {
     static OPEN = 1;
@@ -36,7 +39,11 @@ function setup({ fetch, forceToken = false, authStatus = () => ({ authenticated:
   Object.assign(window, {
     top: window, self: window, location,
     __petTransportConfig: { server, nonce: 'test', tryToken: forceToken, forceToken },
-    __TAURI_INTERNALS__: { async invoke(_command, { payload }) { messages.push(payload); } },
+    __TAURI_INTERNALS__: { async invoke(_command, { payload }) {
+      messages.push(payload);
+      if (payload.type === 'ready') return ready;
+      if (payload.type === 'token_required') return tokenAvailable;
+    } },
   });
   vm.runInNewContext(source, {
     window, location, URL, TextEncoder, TextDecoder, AbortController, AbortSignal: {}, Blob, FileReader, WebSocket,
@@ -160,11 +167,52 @@ test('first setup notifies native verification but waits for a custom password',
   assert.ok(ctx.messages.some(({ type }) => type === 'auth_required'));
   assert.ok(!ctx.messages.some(({ type }) => type === 'authenticated'));
 
-  setupPending = false;
-  assert.equal(ctx.fireTimer(2000), true);
-  await flush();
-  assert.ok(ctx.messages.some(({ type }) => type === 'authenticated'));
   ctx.api.stop();
+  const reloaded = setup({
+    forceToken: true, // The original window configuration still has the old flags.
+    ready: { tryToken: false, forceToken: false },
+    authStatus: () => ({ authenticated: true, requires_custom_token: setupPending }),
+  });
+  await flush();
+  assert.equal(reloaded.fireTimer(0), true);
+  await flush();
+  assert.ok(reloaded.messages.some(({ type }) => type === 'auth_required'));
+  assert.ok(!reloaded.messages.some(({ type }) => type === 'token_required' || type === 'authenticated'));
+
+  setupPending = false;
+  assert.equal(reloaded.fireTimer(2000), true);
+  await flush();
+  assert.ok(reloaded.messages.some(({ type }) => type === 'authenticated'));
+  reloaded.api.stop();
+
+  const session = setup({
+    pathname: '/api/host/desktop-pet/session', forceToken: true,
+    ready: { tryToken: false, forceToken: false },
+  });
+  await flush();
+  assert.equal(session.fireTimer(0), true);
+  await flush();
+  assert.ok(session.messages.some(({ type }) => type === 'authenticated'));
+  assert.ok(!session.messages.some(({ type }) => type.startsWith('token_')));
+  session.api.stop();
+});
+
+test('reloading before explicit verification cannot accept an old cookie when no token can be delivered', async () => {
+  const ctx = setup({ forceToken: true, ready: { tryToken: false, forceToken: true }, tokenAvailable: false });
+  await flush();
+  assert.equal(ctx.fireTimer(0), true);
+  await flush();
+  assert.deepEqual(ctx.messages.map(({ type }) => type).filter(type => type !== 'state'), ['ready', 'token_invalid']);
+  assert.equal(ctx.timers.size, 0);
+});
+
+test('an undeliverable explicit password prompts retry rather than polling forever', async () => {
+  const ctx = setup({ forceToken: true, tokenAvailable: false });
+  await flush();
+  assert.equal(ctx.fireTimer(0), true);
+  await flush();
+  assert.deepEqual(ctx.messages.map(({ type }) => type).filter(type => type !== 'state'), ['ready', 'token_required', 'token_invalid']);
+  assert.equal(ctx.timers.size, 0);
 });
 
 test('the WebUI route changing during explicit sign-in does not resume cookie discovery', async () => {

@@ -36,8 +36,7 @@
   const pendingRequests = new Set();
   let options, controller, runner, connection, generation = 0;
   let authTimer, authController, authProbe, authenticated = false, authNotice = false, stopped = false;
-  let tokenRequested = false, checkingToken = false;
-  let forceTokenPending = config.forceToken === true && location.pathname === authPath;
+  let tryToken = false, forceTokenPending = false, tokenRequested = false, checkingToken = false;
 
   class ProtocolError extends Error {}
   class AuthRequired extends Error {}
@@ -177,20 +176,21 @@
   async function probeAuth(signal) {
     if (forceTokenPending) {
       // An explicitly entered password must succeed before we consult an existing cookie.
-      if (location.pathname !== authPath) await rejectToken();
+      if (location.pathname !== authPath || !tryToken) await rejectToken();
       else if (!tokenRequested) {
         tokenRequested = true;
-        try { await notify({type: 'token_required'}); }
+        try {
+          if (await notify({type: 'token_required'}) !== true && !signal.aborted) await rejectToken();
+        }
         catch { if (!signal.aborted) await rejectToken(); }
       }
       return;
     }
     const status = await jsonRequest(server + '/api/webui/auth/check', { signal, limit: MAX_AUTH_BYTES, timeout: 15_000 });
     if (typeof status.authenticated !== 'boolean') throw new ProtocolError('服务器返回了无效的认证状态');
-    if (!tokenRequested && config.tryToken && location.pathname === authPath && !status.authenticated) {
+    if (!tokenRequested && tryToken && location.pathname === authPath && !status.authenticated) {
       tokenRequested = true;
-      await notify({type: 'token_required'});
-      return;
+      if (await notify({type: 'token_required'}) === true) return;
     }
     if (!status.authenticated || status.requires_custom_token === true) {
       throw new AuthRequired(status.requires_custom_token === true ? '请先在 WebUI 完成首次设置' : '请在 WebUI 中登录');
@@ -507,5 +507,12 @@
   Object.defineProperty(window, '__petTransport', { configurable: true,
     value: Object.freeze({ nonce, start, stop, request, sendEvent, commandResult, verifyToken }) });
   window.addEventListener('pagehide', stop, { once: true });
-  notify({ type: 'ready' }).then(() => scheduleAuth(0)).catch(stop);
+  notify({ type: 'ready' }).then(state => {
+    if (!object(state) || typeof state.tryToken !== 'boolean' || typeof state.forceToken !== 'boolean') {
+      throw new ProtocolError('原生端未返回有效的认证状态');
+    }
+    tryToken = state.tryToken;
+    forceTokenPending = state.forceToken;
+    scheduleAuth(0);
+  }).catch(stop);
 })();

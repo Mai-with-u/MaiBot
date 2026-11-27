@@ -42,6 +42,7 @@ class HostFixture {
     this.sessions = new Set(); this.sockets = new Set(); this.acks = new Map();
     this.todos = []; this.chats = []; this.writes = []; this.failures = [];
     this.readyCount = 0; this.verifyCount = 0; this.logoutCount = 0; this.forbiddenRequests = 0;
+    this.requiresCustomToken = false; this.authCheckCount = 0;
     this.basicChallenges = 0; this.basicHTTP = 0; this.basicWS = 0; this.connection = null;
     this.skinDownloads = 0;
     this.skinPrefetches = 0;
@@ -98,12 +99,15 @@ class HostFixture {
     if (pathname.startsWith('/forbidden-')) { this.forbiddenRequests++; return this.json(response, { error: 'must not navigate' }); }
     const chunks = []; for await (const chunk of request) chunks.push(chunk);
     const raw = Buffer.concat(chunks).toString('utf8'), body = raw ? JSON.parse(raw) : {};
-    if (pathname === '/api/webui/auth/check') return this.json(response, { authenticated: this.sessions.has(this.cookie(request)), requires_custom_token: false });
+    if (pathname === '/api/webui/auth/check') {
+      this.authCheckCount++;
+      return this.json(response, { authenticated: this.sessions.has(this.cookie(request)), requires_custom_token: this.requiresCustomToken });
+    }
     if (pathname === '/api/webui/auth/verify') {
       assert.equal(request.method, 'POST'); assert.equal(body.token, PASSWORD); this.verifyCount++;
       const session = id(); this.sessions.add(session);
       response.setHeader('Set-Cookie', `pet-smoke-session=${session}; Path=/; HttpOnly; SameSite=Lax; Max-Age=3600`);
-      return this.json(response, { valid: true, is_first_setup: false, requires_custom_token: false });
+      return this.json(response, { valid: true, is_first_setup: this.requiresCustomToken, requires_custom_token: this.requiresCustomToken });
     }
     const session = this.authenticate(request);
     if (pathname === '/api/webui/auth/logout') { this.logoutCount++; this.sessions.delete(session); return this.json(response, { success: true }); }
@@ -550,6 +554,33 @@ async function run() {
       await connectClient(app, fixture, true, true);
       assert.deepEqual(fixture.failures.map(error => error.message), []); assert.deepEqual(pageErrors, []);
       console.log('A WebUI credential write failure was reported without blocking the connection.');
+
+      await app.close(); app = null;
+      const firstSetup = path.join(temporary, 'first-setup-reload');
+      fixture.requiresCustomToken = true;
+      const verifyCount = fixture.verifyCount, authCheckCount = fixture.authCheckCount;
+      app = await launch(firstSetup, pageErrors);
+      const login = await until(() => localPage(app, '/login/login.html'), 'first setup login form');
+      await login.waitForFunction(() => window.desktopPetBridge && document.querySelector('#server')?.value);
+      await login.locator('#server').fill(fixture.url);
+      await login.locator('details').first().evaluate(element => { element.open = true; });
+      await login.locator('#basic-user').fill(BASIC_USER);
+      await login.locator('#basic-password').fill(BASIC_PASSWORD);
+      await login.locator('#webui-token').fill(PASSWORD);
+      await login.locator('#connect').click();
+      const setupPage = await until(() => app.pages().find(page => page.url() === fixture.url + '/auth'), 'first setup WebUI');
+      await until(() => fixture.authCheckCount > authCheckCount, 'session checked after temporary password verification');
+      const checksBeforeReload = fixture.authCheckCount;
+      await setupPage.reload({ waitUntil: 'load' });
+      await until(() => fixture.authCheckCount > checksBeforeReload, 'reloaded WebUI checks the verified session');
+      assert.ok(!localPage(app, '/pet/index.html'), 'discovery must wait for first setup to finish');
+      fixture.requiresCustomToken = false;
+      const reloadedPet = await until(() => localPage(app, '/pet/index.html'), 'pet after first setup and reload');
+      await reloadedPet.locator('#remote-indicator[data-connected="true"]').waitFor();
+      assert.equal(fixture.verifyCount, verifyCount + 1, 'reload must not reuse the temporary password');
+      await assert.rejects(fs.access(path.join(firstSetup, 'settings', 'saved-logins', profile, 'webui')), { code: 'ENOENT' });
+      assert.deepEqual(fixture.failures.map(error => error.message), []); assert.deepEqual(pageErrors, []);
+      console.log('First setup survived an auth page reload without saving the temporary password.');
     }
     passed = true;
     console.log('Tauri smoke passed: BasicAuth HTTP/WS, restart login, skin assets, chat, todos, records, consent, IPC isolation, reconnect.');

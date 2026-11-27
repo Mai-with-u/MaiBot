@@ -74,8 +74,12 @@ struct TokenAttempt {
 
 #[cfg(windows)]
 impl TokenAttempt {
+    fn can_deliver(&self) -> bool {
+        self.value.is_some() && self.requested_by.is_none() && !self.verified
+    }
+
     fn begin_verification(&mut self, nonce: &str) -> Option<String> {
-        if self.requested_by.is_some() {
+        if !self.can_deliver() {
             return None;
         }
         let token = self.value.clone()?;
@@ -736,16 +740,7 @@ async fn discover(app: &tauri::AppHandle, server: &str, _input: &Value) -> Reply
         .await
         .map_err(error)?
         .map_err(error)?;
-    #[allow(unused_mut)]
-    let mut transport_config = json!({"nonce":nonce,"server":server});
-    #[cfg(windows)]
-    if let Some(login) = &credentials {
-        let attempt = login.webui.lock().unwrap();
-        if attempt.value.is_some() {
-            transport_config["tryToken"] = json!(true);
-            transport_config["forceToken"] = json!(attempt.explicit);
-        }
-    }
+    let transport_config = json!({"nonce":nonce,"server":server});
     #[cfg(windows)]
     let script = format!(
         "(() => {{
@@ -1523,7 +1518,7 @@ async fn transport_message(
     window: WebviewWindow,
     nonce: String,
     payload: Value,
-) -> Result<(), String> {
+) -> Reply {
     let auth = authenticated_window(&window, &nonce)?;
     if payload.to_string().len() > 65 * 1024 * 1024 {
         return Err("传输消息过大".into());
@@ -1543,8 +1538,10 @@ async fn transport_message(
                     window
                         .eval(token_delivery_script(&auth_page, &nonce, &token))
                         .map_err(error)?;
+                    return Ok(json!(true));
                 }
             }
+            return Ok(json!(false));
         }
         #[cfg(windows)]
         "token_verified" => {
@@ -1566,13 +1563,20 @@ async fn transport_message(
             );
         }
         "ready" => {
-            app.state::<Shared>()
-                .lock()
-                .unwrap()
+            let state = app.state::<Shared>();
+            let mut state = state.lock().unwrap();
+            let current = state
                 .auth
                 .as_mut()
-                .unwrap()
-                .connected = false;
+                .filter(|current| current.label == auth.label)
+                .ok_or("登录已切换")?;
+            current.connected = false;
+            #[cfg(windows)]
+            if let Some(credentials) = &current.credentials {
+                let attempt = credentials.webui.lock().unwrap();
+                return Ok(json!({"tryToken":attempt.can_deliver(),"forceToken":!attempt.allows_authenticated()}));
+            }
+            return Ok(json!({"tryToken":false,"forceToken":false}));
         }
         "authenticated" => {
             #[cfg(windows)]
@@ -1658,7 +1662,7 @@ async fn transport_message(
             if window.url().map_err(error)?.path() != session_page.path() {
                 // 认证后卸载完整 WebUI，仅保留同源轻量文档承载浏览器认证的 HTTP/WSS。
                 window.navigate(session_page).map_err(error)?;
-                return Ok(());
+                return Ok(Value::Null);
             }
             let options = {
                 let state = app.state::<Shared>();
@@ -1798,7 +1802,7 @@ async fn transport_message(
         }
         _ => return Err("未知传输消息".into()),
     }
-    Ok(())
+    Ok(Value::Null)
 }
 
 fn change_connection(app: &tauri::AppHandle) -> Result<(), String> {
@@ -1995,15 +1999,18 @@ mod tests {
                 verified: false,
             };
             assert!(!attempt.allows_authenticated());
+            assert!(attempt.can_deliver());
             attempt.record_verified("login-document", requires_custom_token);
             assert!(!attempt.allows_authenticated());
 
             assert!(attempt.begin_verification("login-document").is_some());
+            assert!(!attempt.can_deliver());
             attempt.record_verified("redirected-document", requires_custom_token);
             assert!(!attempt.allows_authenticated());
             assert_eq!(attempt.value.as_deref(), Some("test-password"));
             attempt.record_verified("login-document", requires_custom_token);
             assert!(attempt.allows_authenticated());
+            assert!(!attempt.can_deliver());
 
             assert_eq!(
                 attempt.value.take().as_deref(),
