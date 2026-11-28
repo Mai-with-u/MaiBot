@@ -305,9 +305,7 @@ async def test_planner_consumes_private_observation_without_preview_or_hook_payl
         assert result.private_screen
         assert result.request_messages == []
         assert service.planner_request_snapshot is not None
-        history_parts = [
-            part for item in service.planner_request_snapshot.request.context_items for part in item.parts
-        ]
+        history_parts = [part for item in service.planner_request_snapshot.request.context_items for part in item.parts]
         assert any(isinstance(part, ContextTextPart) and MARKER in part.text for part in history_parts)
         assert any(isinstance(part, ContextImagePart) for part in history_parts) is (expected == "image")
         assert result.private_reply_snapshot is not None
