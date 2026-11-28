@@ -240,13 +240,12 @@ export function LearningCreateDialog({
     setImporting(true)
     setError('')
     try {
-      const result = await importLearningCandidates(
-        kind,
-        isGlobal ? [] : validTargetIds,
-        selectedIndices.map((index) => editedCandidates[index]),
-        isGlobal,
-        ...(kind === 'jargon' ? [reviewConflict, lockMeaning] as const : [])
-      )
+      const targets = isGlobal ? [] : validTargetIds
+      const items = selectedIndices.map((index) => editedCandidates[index])
+      const result =
+        kind === 'jargon'
+          ? await importLearningCandidates(kind, targets, items, isGlobal, reviewConflict, lockMeaning)
+          : await importLearningCandidates(kind, targets, items, isGlobal)
       if (!result.success) throw new Error(result.message)
       onSuccess(isGlobal)
       const message = `成功导入 ${result.imported_count} 条，跳过重复 ${result.skipped_count} 条，失败 ${result.failed_count} 条`
