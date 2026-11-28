@@ -1,4 +1,4 @@
-import { USER_DATA_MIGRATION_ENABLED } from '@/lib/release-features'
+import { useNavigate } from '@tanstack/react-router'
 import { useCallback, useEffect, useRef, useState } from 'react'
 import { useTranslation } from 'react-i18next'
 
@@ -22,12 +22,15 @@ import { customPageDocument, parseCustomPageRequest } from '@/lib/plugin-custom-
 import { pluginPageFonts, readPluginPageTheme } from '@/lib/plugin-page-theme'
 import type { PluginPageContext, PluginPageFont } from '@/lib/plugin-page-theme'
 import {
-  extensionPath,
+  getCachedCustomPageDocument,
+  getCustomPageDocument,
+  invalidateCustomPageDocuments,
   invokePluginWebUI,
   refreshPluginWebUI,
   uploadPluginWebUI,
 } from '@/lib/plugin-webui'
 import type { CustomPage, WebUIPage } from '@/lib/plugin-webui'
+import { USER_DATA_MIGRATION_ENABLED } from '@/lib/release-features'
 import { prepareUploadImage } from '@/lib/upload-image'
 
 const REQUESTS_PER_SECOND = 60
@@ -39,6 +42,7 @@ interface CustomPageProps {
   pages: WebUIPage[]
   embedded?: boolean
   initialState?: Record<string, string>
+  searchStr?: string
 }
 
 export function PluginCustomPage(props: CustomPageProps) {
@@ -58,15 +62,17 @@ function CustomPageSession({
   pages,
   embedded = false,
   initialState,
+  searchStr,
   onReload,
 }: CustomPageProps & { onReload: () => void }) {
   const { t, i18n } = useTranslation()
+  const navigate = useNavigate()
   const frame = useRef<HTMLIFrameElement>(null)
   const port = useRef<MessagePort | null>(null)
   const controller = useRef<AbortController | null>(null)
   const loaded = useRef(false)
   const connected = useRef(false)
-  const [pageState] = useState(() => initialState ?? readPluginPageState())
+  const [pageState] = useState(() => initialState ?? readPluginPageState(searchStr))
   // getRandomValues also works on public HTTP deployments where randomUUID is unavailable.
   const [nonce] = useState(() =>
     Array.from(crypto.getRandomValues(new Uint32Array(4)), (value) =>
@@ -81,7 +87,12 @@ function CustomPageSession({
     dashboardStyle: 'modern',
     styles: '',
   })
-  const [source, setSource] = useState<string | null>(null)
+  const [cachedDocument] = useState(() =>
+    getCachedCustomPageDocument(pluginId, page.id, page.document_revision)
+  )
+  const [source, setSource] = useState<string | null>(() =>
+    cachedDocument !== null ? customPageDocument(cachedDocument, nonce) : null
+  )
   const [height, setHeight] = useState(384)
   const [error, setError] = useState<string | null>(null)
   const [stopped, setStopped] = useState(false)
@@ -169,21 +180,16 @@ function CustomPageSession({
   useEffect(() => {
     const operation = new AbortController()
     controller.current = operation
-    const path = [pluginId, page.id].map(encodeURIComponent).join('/')
-    void backendApi
-      .get<{ document: string; revision: string }>(
-        `/api/webui/plugins/runtime/webui/${path}/document`,
-        { signal: operation.signal }
-      )
-      .then((result) => {
-        if (operation.signal.aborted) return
-        if (result.revision !== page.document_revision)
-          throw new Error('Page changed; refresh the plugin registry')
-        setSource(customPageDocument(result.document, nonce))
-      })
-      .catch((error) => {
-        if (!operation.signal.aborted) setError(String(error))
-      })
+    if (cachedDocument === null) {
+      void getCustomPageDocument(pluginId, page.id, page.document_revision, operation.signal)
+        .then((document) => {
+          if (operation.signal.aborted) return
+          setSource(customPageDocument(document, nonce))
+        })
+        .catch((error) => {
+          if (!operation.signal.aborted) setError(String(error))
+        })
+    }
     return () => {
       operation.abort()
       port.current?.close()
@@ -191,7 +197,7 @@ function CustomPageSession({
       confirm.current?.(false)
       confirm.current = null
     }
-  }, [pluginId, page.id, page.document_revision, nonce])
+  }, [cachedDocument, pluginId, page.id, page.document_revision, nonce])
 
   const reload = async () => {
     setReloading(true)
@@ -201,6 +207,7 @@ function CustomPageSession({
         `/api/webui/plugins/runtime/webui/${encodeURIComponent(pluginId)}/reload`,
         {}
       )
+      invalidateCustomPageDocuments(pluginId)
       await refreshPluginWebUI(true)
       onReload()
     } catch (error) {
@@ -299,17 +306,28 @@ function CustomPageSession({
               request.name === 'group-mappings' &&
               request.args.view === 'injection'
             ) {
-              const search = new URLSearchParams({ tab: 'user-migration' })
-              if (typeof request.args.source === 'string') search.set('source', request.args.source)
-              if (typeof request.args.target === 'string') search.set('target', request.args.target)
-              if (request.args.fromMapping === true) search.set('fromMapping', 'true')
               channel.port1.postMessage({ id, result: null })
-              window.location.assign(`/data-transfer?${search}`)
+              void navigate({
+                to: '/data-transfer',
+                search: {
+                  tab: 'user-migration',
+                  ...(typeof request.args.source === 'string'
+                    ? { source: request.args.source }
+                    : {}),
+                  ...(typeof request.args.target === 'string'
+                    ? { target: request.args.target }
+                    : {}),
+                  ...(request.args.fromMapping === true ? { fromMapping: true } : {}),
+                },
+              })
               return
             }
-            const state = new URLSearchParams({ state: JSON.stringify(request.args) })
             channel.port1.postMessage({ id, result: null })
-            window.location.assign(`${extensionPath(pluginId, request.name)}?${state}`)
+            void navigate({
+              to: '/extensions/$pluginId/$pageId',
+              params: { pluginId, pageId: request.name },
+              search: Object.keys(request.args).length ? { state: request.args } : {},
+            })
             return
           }
           const binding =
@@ -389,7 +407,7 @@ function CustomPageSession({
       [channel.port2]
     )
     updateViewport()
-  }, [page, pages, pageState, pluginId, stop, t, updateViewport])
+  }, [navigate, page, pages, pageState, pluginId, stop, t, updateViewport])
 
   useEffect(() => {
     if (!source) return

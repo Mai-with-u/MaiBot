@@ -35,8 +35,8 @@ export function validateAPIArguments(
     throw new Error(`Arguments exceed ${maxBytes / 1024} KiB`)
 }
 
-export function readPluginPageState(): APIArguments {
-  const raw = new URLSearchParams(window.location.search).get('state')
+export function readPluginPageState(search = window.location.search): APIArguments {
+  const raw = new URLSearchParams(search).get('state')
   if (raw === null) return {}
   if (raw.length > 4096) throw new Error('Page state exceeds 4 KiB')
   const state: unknown = JSON.parse(raw)

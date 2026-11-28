@@ -2,9 +2,14 @@ import { act, fireEvent, render, screen, waitFor } from '@testing-library/react'
 import { describe, expect, it, vi } from 'vitest'
 import { PluginWebUIPage } from '@/routes/plugin-webui'
 
-const mocks = vi.hoisted(() => ({ invoke: vi.fn() }))
+const mocks = vi.hoisted(() => ({ invoke: vi.fn(), navigate: vi.fn() }))
 vi.mock('@tanstack/react-router', () => ({
   useParams: () => ({ pluginId: 'test.plugin', pageId: 'jobs' }),
+  useNavigate: () => mocks.navigate,
+  useLocation: (opts?: { select?: (location: { searchStr: string }) => unknown }) => {
+    const location = { searchStr: window.location.search }
+    return opts?.select ? opts.select(location) : location
+  },
   Link: ({ children }: { children: React.ReactNode }) => <span>{children}</span>,
 }))
 vi.mock('react-i18next', () => ({ useTranslation: () => ({ t: (key: string) => key }) }))

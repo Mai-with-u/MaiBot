@@ -1,13 +1,11 @@
-import { USER_DATA_MIGRATION_ENABLED } from '@/lib/release-features'
-import { Link, useParams } from '@tanstack/react-router'
-import { useCallback, useEffect, useRef, useState } from 'react'
+import { Link, useLocation, useNavigate, useParams } from '@tanstack/react-router'
+import { useCallback, useEffect, useMemo, useRef, useState } from 'react'
 import { useTranslation } from 'react-i18next'
 
 import { ErrorBoundary } from '@/components/error-boundary'
-import { QQAdapterPage } from '@/components/qq-adapter-page'
-import { useHostRuntime } from '@/host/state'
 import { PluginCustomPage } from '@/components/plugin-custom-page'
 import { PluginWebUIRenderer } from '@/components/plugin-webui-renderer'
+import { QQAdapterPage } from '@/components/qq-adapter-page'
 import { Alert, AlertDescription } from '@/components/ui/alert'
 import {
   AlertDialog,
@@ -20,21 +18,23 @@ import {
   AlertDialogTitle,
 } from '@/components/ui/alert-dialog'
 import { Button } from '@/components/ui/button'
+import { useHostRuntime } from '@/host/state'
 import { readPluginPageState } from '@/lib/plugin-api-arguments'
 import {
   invokePluginWebUI,
+  nodeChildren,
   refreshPluginWebUI,
   resolveReference,
   usePluginWebUI,
-  nodeChildren,
 } from '@/lib/plugin-webui'
 import type {
-  DeclarativeBinding,
   DataContexts,
+  DeclarativeBinding,
   DeclarativePage,
   Scalar,
   WebUINode,
 } from '@/lib/plugin-webui'
+import { USER_DATA_MIGRATION_ENABLED } from '@/lib/release-features'
 
 function initialValues(nodes: WebUINode[]): Record<string, Scalar> {
   const values: Record<string, Scalar> = {}
@@ -54,10 +54,10 @@ function initialValues(nodes: WebUINode[]): Record<string, Scalar> {
   return values
 }
 
-function pageValues(page: DeclarativePage): Record<string, Scalar> {
+function pageValues(page: DeclarativePage, searchStr?: string): Record<string, Scalar> {
   const values = initialValues(page.content)
   // 导航状态仅初始化本页已声明的表单；不猜测字符串类型或写入插件配置。
-  for (const [name, value] of Object.entries(readPluginPageState())) {
+  for (const [name, value] of Object.entries(readPluginPageState(searchStr))) {
     if (!Object.hasOwn(values, name) || (value !== null && typeof value === 'object'))
       throw new Error(`Page state must target a declared scalar input: ${name}`)
     values[name] = value
@@ -91,9 +91,17 @@ function argumentsFor(
   return args
 }
 
-function ExtensionPage({ pluginId, page }: { pluginId: string; page: DeclarativePage }) {
+function ExtensionPage({
+  pluginId,
+  page,
+  searchStr,
+}: {
+  pluginId: string
+  page: DeclarativePage
+  searchStr: string
+}) {
   const { t } = useTranslation()
-  const [values, setValues] = useState(() => pageValues(page))
+  const [values, setValues] = useState(() => pageValues(page, searchStr))
   const valuesRef = useRef(values)
   const [data, setData] = useState<Record<string, unknown>>({})
   const [busy, setBusy] = useState(false)
@@ -331,7 +339,7 @@ function ExtensionPage({ pluginId, page }: { pluginId: string; page: Declarative
   )
 }
 
-function PluginWebUIContent({ view }: { view?: string }) {
+function PluginWebUIContent({ view, searchStr }: { view?: string; searchStr: string }) {
   const { pluginId, pageId } = useParams({ from: '/protected/extensions/$pluginId/$pageId' })
   const registry = usePluginWebUI()
   const { t } = useTranslation()
@@ -368,9 +376,9 @@ function PluginWebUIContent({ view }: { view?: string }) {
         </Link>
       </p>
     )
-  // 注册表刷新得到相同声明时保留表单；声明发生变化时重建页面状态。
+  // 注册表刷新得到相同声明时保留表单；声明或导航状态变化时重建页面状态。
   return (
-    <ErrorBoundary key={`${pluginId}/${pageId}/${JSON.stringify(page)}`}>
+    <ErrorBoundary key={`${pluginId}/${pageId}/${searchStr}/${JSON.stringify(page)}`}>
       {page.mode === 'custom' ? (
         <PluginCustomPage
           pluginId={pluginId}
@@ -378,9 +386,10 @@ function PluginWebUIContent({ view }: { view?: string }) {
           pages={extension!.pages}
           embedded={!!view}
           initialState={view ? { view, host: 'true' } : undefined}
+          searchStr={searchStr}
         />
       ) : (
-        <ExtensionPage pluginId={pluginId} page={page} />
+        <ExtensionPage pluginId={pluginId} page={page} searchStr={searchStr} />
       )}
     </ErrorBoundary>
   )
@@ -388,22 +397,32 @@ function PluginWebUIContent({ view }: { view?: string }) {
 
 export function PluginWebUIPage() {
   const { pluginId, pageId } = useParams({ from: '/protected/extensions/$pluginId/$pageId' })
+  const navigate = useNavigate()
+  const searchStr = useLocation({ select: (location) => location.searchStr })
   const runtime = useHostRuntime()
-  const [pageState] = useState(readPluginPageState)
   const qqPage = runtime.host && pluginId === 'Mai-with-u.qq-adapter' && pageId === 'group-mappings'
+  const pageState = useMemo(
+    () => (qqPage ? readPluginPageState(searchStr) : {}),
+    [qqPage, searchStr]
+  )
   useEffect(() => {
     if (USER_DATA_MIGRATION_ENABLED && qqPage && pageState.view === 'injection') {
-      const search = new URLSearchParams({ tab: 'user-migration' })
-      if (typeof pageState.source === 'string') search.set('source', pageState.source)
-      if (typeof pageState.target === 'string') search.set('target', pageState.target)
-      if (pageState.fromMapping === true) search.set('fromMapping', 'true')
-      window.location.replace(`/data-transfer?${search}`)
+      void navigate({
+        to: '/data-transfer',
+        search: {
+          tab: 'user-migration',
+          ...(typeof pageState.source === 'string' ? { source: pageState.source } : {}),
+          ...(typeof pageState.target === 'string' ? { target: pageState.target } : {}),
+          ...(pageState.fromMapping === true ? { fromMapping: true } : {}),
+        },
+        replace: true,
+      })
     }
-  }, [qqPage, pageState])
-  if (!qqPage) return <PluginWebUIContent />
+  }, [navigate, qqPage, pageState])
+  if (!qqPage) return <PluginWebUIContent searchStr={searchStr} />
   return (
     <QQAdapterPage
-      key={runtime.selected_bot_id}
+      key={`${runtime.selected_bot_id ?? ''}:${searchStr}`}
       initialTab={pageState.view === 'user' ? 'user' : 'users'}
     />
   )

@@ -4,9 +4,19 @@ import { beforeEach, describe, expect, it, vi } from 'vitest'
 import type { WebUIExtension, DeclarativePage, WebUINode } from '@/lib/plugin-webui'
 import { PluginWebUIPage } from '@/routes/plugin-webui'
 
-const mocks = vi.hoisted(() => ({ extensions: [] as WebUIExtension[], invoke: vi.fn() }))
+const mocks = vi.hoisted(() => ({
+  extensions: [] as WebUIExtension[],
+  invoke: vi.fn(),
+  navigate: vi.fn(),
+  searchStr: '',
+}))
 vi.mock('@tanstack/react-router', () => ({
   useParams: () => ({ pluginId: 'test.plugin', pageId: 'overview' }),
+  useNavigate: () => mocks.navigate,
+  useLocation: (opts?: { select?: (location: { searchStr: string }) => unknown }) => {
+    const location = { searchStr: mocks.searchStr }
+    return opts?.select ? opts.select(location) : location
+  },
   Link: ({ children }: { children: React.ReactNode }) => <span>{children}</span>,
 }))
 vi.mock('react-i18next', () => ({ useTranslation: () => ({ t: (key: string) => key }) }))
@@ -48,6 +58,9 @@ function install(value: DeclarativePage) {
 
 describe('plugin page lifecycle', () => {
   beforeEach(() => {
+    mocks.searchStr = ''
+    mocks.navigate.mockReset()
+    mocks.invoke.mockReset()
     mocks.invoke.mockResolvedValue({ count: 3 })
     install(page())
   })
@@ -142,6 +155,59 @@ describe('plugin page lifecycle', () => {
     view.unmount()
     expect(signal.aborted).toBe(true)
     expect(mocks.invoke).toHaveBeenCalledOnce()
+  })
+
+  it('remounts page state when SPA navigation updates the search state on the same page', async () => {
+    install(
+      page({
+        queries: {
+          summary: {
+            api: 'summary',
+            version: '1',
+            confirmation: null,
+            parameters: {
+              term: {
+                type: 'string',
+                required: false,
+                max_length: 100,
+                minimum: null,
+                maximum: null,
+                choices: [],
+              },
+            },
+          },
+        },
+        content: [node({ type: 'input', label: 'Search', name: 'term', value: '' })],
+      })
+    )
+    mocks.searchStr = '?state=%7B%22term%22%3A%22first%22%7D'
+    const view = render(<PluginWebUIPage />)
+    await waitFor(() =>
+      expect(mocks.invoke).toHaveBeenLastCalledWith(
+        'test.plugin',
+        'overview',
+        'queries',
+        'summary',
+        { term: 'first' },
+        false,
+        expect.any(AbortSignal)
+      )
+    )
+
+    mocks.searchStr = '?state=%7B%22term%22%3A%22second%22%7D'
+    view.rerender(<PluginWebUIPage />)
+    await waitFor(() =>
+      expect(mocks.invoke).toHaveBeenLastCalledWith(
+        'test.plugin',
+        'overview',
+        'queries',
+        'summary',
+        { term: 'second' },
+        false,
+        expect.any(AbortSignal)
+      )
+    )
+    mocks.searchStr = ''
   })
 })
 
