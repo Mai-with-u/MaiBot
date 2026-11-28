@@ -22,8 +22,9 @@ export interface ProviderTemplate {
   base_url: string
   // 额外匹配的 base_url 正则（可选，用于含账号/地域变量的官方地址；对规范化后的 URL 整体匹配）
   baseUrlPattern?: RegExp
-  client_type: 'openai' | 'openai_responses' | 'gemini'
-  allowed_client_types?: Array<'openai' | 'openai_responses' | 'gemini'>
+  client_type: 'openai' | 'openai_responses' | 'gemini' | 'anthropic'
+  allowed_client_types?: ProviderTemplate['client_type'][]
+  baseUrlsByClientType?: Partial<Record<string, string>>
   display_name: string
   description?: string
   defaultApiKey?: string
@@ -45,7 +46,8 @@ export const PROVIDER_TEMPLATES: ProviderTemplate[] = [
     base_url: 'https://api.deepseek.com',
     baseUrlPattern: /^https:\/\/api\.deepseek\.com\/v1$/,
     client_type: 'openai',
-    allowed_client_types: ['openai', 'openai_responses'],
+    allowed_client_types: ['openai', 'openai_responses', 'anthropic'],
+    baseUrlsByClientType: { anthropic: 'https://api.deepseek.com/anthropic' },
     display_name: 'DeepSeek',
     modelFetcher: { endpoint: '/models', parser: 'openai' },
     // 思考开关由 model.tsx 中 DeepSeek 专用段处理（含 Responses 客户端的 reasoning.effort 与联网搜索）
@@ -268,9 +270,9 @@ export const PROVIDER_TEMPLATES: ProviderTemplate[] = [
     id: 'anthropic',
     name: 'Anthropic',
     base_url: 'https://api.anthropic.com/v1',
-    client_type: 'openai',
+    client_type: 'anthropic',
+    allowed_client_types: ['anthropic', 'openai'],
     display_name: 'Anthropic (Claude)',
-    // Anthropic 使用不同的 API 格式，暂不支持自动获取
   },
   {
     id: 'gemini',
@@ -339,17 +341,22 @@ export function normalizeUrl(url: string): string {
  * @param baseUrl 提供商的 base_url
  * @returns 匹配的模板，如果未找到则返回 null
  */
-export function findTemplateByBaseUrl(baseUrl: string): ProviderTemplate | null {
+export function findTemplateByBaseUrl(baseUrl: string, clientType?: string): ProviderTemplate | null {
   if (!baseUrl) return null
 
   const normalizedUrl = normalizeUrl(baseUrl)
 
   return (
     PROVIDER_TEMPLATES.find(
-      (template) =>
-        template.id !== 'custom' &&
-        (normalizeUrl(template.base_url) === normalizedUrl ||
-          (template.baseUrlPattern?.test(normalizedUrl) ?? false))
+      (template) => {
+        if (template.id === 'custom') return false
+        const protocolUrl = clientType ? template.baseUrlsByClientType?.[clientType] : undefined
+        if (protocolUrl && (normalizedUrl === protocolUrl || normalizedUrl === `${protocolUrl}/v1`)) {
+          return true
+        }
+        return normalizeUrl(template.base_url) === normalizedUrl ||
+          (template.baseUrlPattern?.test(normalizedUrl) ?? false)
+      }
     ) || null
   )
 }
@@ -397,7 +404,7 @@ export function resolveModelFetcherTemplate(
   baseUrl: string,
   clientType = 'openai'
 ): ProviderTemplate | null {
-  const matchedTemplate = findTemplateByBaseUrl(baseUrl)
+  const matchedTemplate = findTemplateByBaseUrl(baseUrl, clientType)
   if (matchedTemplate) {
     return matchedTemplate.modelFetcher
       ? matchedTemplate
@@ -407,6 +414,16 @@ export function resolveModelFetcherTemplate(
 
   const isGemini = clientType === 'gemini'
   const isOpenAIResponses = clientType === 'openai_responses'
+  if (clientType === 'anthropic') {
+    return {
+      id: 'custom-anthropic',
+      name: '',
+      base_url: baseUrl,
+      client_type: 'anthropic',
+      display_name: '自定义 Anthropic 端点',
+      modelFetcher: defaultModelFetcher(clientType),
+    }
+  }
   return {
     id: isGemini
       ? 'custom-gemini'

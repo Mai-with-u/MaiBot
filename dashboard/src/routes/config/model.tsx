@@ -435,7 +435,7 @@ function ModelConfigPageContent() {
     ? getProviderConfig(editingModel.api_provider)
     : undefined
   const selectedClientType = selectedProviderConfig?.client_type
-  const selectedThinkingTemplate = findTemplateByBaseUrl(selectedProviderConfig?.base_url ?? '')
+  const selectedThinkingTemplate = findTemplateByBaseUrl(selectedProviderConfig?.base_url ?? '', selectedClientType)
   const [thinkingProbeRunning, setThinkingProbeRunning] = useState(false)
   const modelExtraParams = editingModel?.extra_params || {}
   const editingModelType = editingModel?.model_type
@@ -443,7 +443,7 @@ function ModelConfigPageContent() {
   const editingModelIsEmbedding = editingModelType === 'embedding' || editingModelType === 'image_embedding'
   const deepSeekClientType: DeepSeekClientType | null =
     editingModelType === 'llm' && selectedThinkingTemplate?.id === 'deepseek' &&
-    (selectedClientType === 'openai' || selectedClientType === 'openai_responses')
+    (selectedClientType === 'openai' || selectedClientType === 'openai_responses' || selectedClientType === 'anthropic')
       ? selectedClientType
       : null
   // 预置思考格式直接匹配当前提供商地址；无预置时显示自动测试入口。
@@ -476,9 +476,10 @@ function ModelConfigPageContent() {
   const deepSeekWebSearchEnabled = isDeepSeekWebSearchEnabled(modelExtraParams)
   const deepSeekSearchHint = deepSeekSearchTool
     ? `由 DeepSeek 在服务端搜索（${deepSeekSearchTool}）`
-    : !modelIdentifier ? '先选择模型标识符'
-      : modelIdentifier === 'deepseek-v4-pro' ? 'DeepSeek V4 Pro 的联网搜索需要 Responses API'
-        : '当前模型未提供原生联网搜索'
+    : deepSeekClientType === 'anthropic' ? '当前客户端未接入 DeepSeek 联网搜索'
+      : !modelIdentifier ? '先选择模型标识符'
+        : modelIdentifier === 'deepseek-v4-pro' ? 'DeepSeek V4 Pro 的联网搜索需要 Responses API'
+          : '当前模型未提供原生联网搜索'
   const deepSeekThinkingEnabled = deepSeekClientType
     ? isDeepSeekThinkingEnabled(modelExtraParams, deepSeekClientType)
     : false
@@ -1526,25 +1527,28 @@ function ModelConfigPageContent() {
                     />
                   </div>
                   <p className="text-xs text-muted-foreground">
-                    {deepSeekClientType === 'openai_responses' ? '写入 reasoning.effort' : '写入 thinking.type'}
+                    {deepSeekClientType === 'anthropic' ? '写入 output_config.effort'
+                      : deepSeekClientType === 'openai_responses' ? '写入 reasoning.effort' : '写入 thinking.type'}
                   </p>
                 </FormRow>
-                <FormRow label="联网搜索" htmlFor="deepseek_web_search">
-                  <div className="flex items-center justify-between gap-3">
-                    <span className="text-xs text-muted-foreground">
-                      {deepSeekSearchHint}
-                    </span>
-                    <Switch
-                      id="deepseek_web_search"
-                      aria-label="启用联网搜索"
-                      checked={deepSeekWebSearchEnabled}
-                      disabled={(!deepSeekSearchTool && !deepSeekWebSearchEnabled) || deepSeekToolsInvalid}
-                      onCheckedChange={(checked) => updateModelExtraParams((params) =>
-                        setDeepSeekWebSearchEnabled(params, checked ? deepSeekSearchTool : null)
-                      )}
-                    />
-                  </div>
-                </FormRow>
+                {(deepSeekClientType !== 'anthropic' || deepSeekWebSearchEnabled) && (
+                  <FormRow label="联网搜索" htmlFor="deepseek_web_search">
+                    <div className="flex items-center justify-between gap-3">
+                      <span className="text-xs text-muted-foreground">
+                        {deepSeekSearchHint}
+                      </span>
+                      <Switch
+                        id="deepseek_web_search"
+                        aria-label="启用联网搜索"
+                        checked={deepSeekWebSearchEnabled}
+                        disabled={(!deepSeekSearchTool && !deepSeekWebSearchEnabled) || deepSeekToolsInvalid}
+                        onCheckedChange={(checked) => updateModelExtraParams((params) =>
+                          setDeepSeekWebSearchEnabled(params, checked ? deepSeekSearchTool : null)
+                        )}
+                      />
+                    </div>
+                  </FormRow>
+                )}
                 {deepSeekExtraParamsError && (
                   <p role="alert" className="text-xs text-destructive">
                     额外参数配置冲突：{deepSeekExtraParamsError}

@@ -30,6 +30,7 @@ from src.config.shared_models import read_effective_config
 from src.config.model_configs import APIProvider, TaskConfig
 from src.llm_models.exceptions import RespNotOkException, RespParseException
 from src.llm_models.model_client import ensure_client_type_loaded
+from src.llm_models.model_client.anthropic_client import build_anthropic_endpoint, build_anthropic_http_options
 from src.llm_models.model_client.base_client import BaseClient, SpeechAudio, client_registry
 from src.llm_models.model_client.openai_client import STEP_TTS_DEFAULT_VOICES, OpenaiClient
 from src.llm_models.openai_compat import build_openai_compatible_client_config, normalize_openai_base_url
@@ -54,6 +55,10 @@ MODEL_FETCHER_CONFIG = {
     },
     # OpenAI Responses API 与 Chat Completions 共用模型列表格式
     "openai_responses": {
+        "endpoint": "/models",
+        "parser": "openai",
+    },
+    "anthropic": {
         "endpoint": "/models",
         "parser": "openai",
     },
@@ -331,7 +336,7 @@ def _parse_openai_response(data: Dict) -> List[Dict]:
     return [
         {
             "id": model["id"],
-            "name": model.get("name") or model["id"],
+            "name": model.get("name") or model.get("display_name") or model["id"],
             "owned_by": model.get("owned_by", ""),
         }
         for model in data["data"]
@@ -361,6 +366,24 @@ def _parse_gemini_response(data: Dict) -> List[Dict]:
                     }
                 )
     return models
+
+
+def _provider_models_url(base_url: str, endpoint: str, client_type: str) -> str | httpx.URL:
+    if client_type != "anthropic":
+        return f"{base_url}{endpoint}"
+
+    base = httpx.URL(base_url)
+    if (
+        endpoint == "/models"
+        and base.scheme == "https"
+        and base.host == "api.deepseek.com"
+        and base.port is None
+        and base.path.rstrip("/") in {"/anthropic", "/anthropic/v1"}
+    ):
+        # DeepSeek 的 Messages 模型共用官方 /models 接口。
+        return base.copy_with(path="/models")
+
+    return build_anthropic_endpoint(base_url, endpoint)
 
 
 async def _fetch_models_from_provider(
@@ -399,7 +422,7 @@ async def _fetch_models_from_provider(
     except ValueError as e:
         raise HTTPException(status_code=400, detail=str(e)) from e
 
-    url = f"{base_url}{endpoint}"
+    url = _provider_models_url(base_url, endpoint, client_type)
 
     # 根据客户端类型设置请求头
     headers = {}
@@ -411,10 +434,10 @@ async def _fetch_models_from_provider(
             params["key"] = api_key
     else:
         provider = APIProvider(
-            name="webui-openai-compatible-fetcher",
+            name="webui-model-fetcher",
             base_url=base_url,
             api_key=api_key,
-            client_type="openai",
+            client_type=client_type,
             auth_type=auth_type,
             auth_header_name=auth_header_name,
             auth_header_prefix=auth_header_prefix,
@@ -422,14 +445,15 @@ async def _fetch_models_from_provider(
             default_headers=default_headers or {},
             default_query=default_query or {},
         )
-        client_config = build_openai_compatible_client_config(provider)
-        headers.update(client_config.default_headers)
-        params.update(client_config.default_query)
-        # build_openai_compatible_client_config 在“默认 Bearer”场景下，
-        # 会把 api_key 留在 client_config.api_key 中交给 OpenAI SDK 自行注入 Authorization 头，
-        # 而不会写入 default_headers。这里我们用 httpx 直接发请求，需要手动补上鉴权头/参数。
-        if client_config.api_key and "Authorization" not in headers:
-            headers["Authorization"] = f"Bearer {client_config.api_key}"
+        if client_type == "anthropic":
+            headers, params = build_anthropic_http_options(provider)
+        else:
+            client_config = build_openai_compatible_client_config(provider)
+            headers.update(client_config.default_headers)
+            params.update(client_config.default_query)
+            # httpx 不像 OpenAI SDK 自动注入默认 Bearer 认证头。
+            if client_config.api_key and "Authorization" not in headers:
+                headers["Authorization"] = f"Bearer {client_config.api_key}"
 
     try:
         # 复用共享 SSLContext，避免每次获取模型列表都重新加载整套 CA 证书（实测约 5s/次）
@@ -868,7 +892,7 @@ async def get_models_by_url(
     api_key: str = Query("", description="API Key（无鉴权服务可留空）"),
     parser: str = Query("openai", description="响应解析器类型 (openai | gemini)"),
     endpoint: str = Query("/models", description="获取模型列表的端点"),
-    client_type: str = Query("openai", description="客户端类型 (openai | openai_responses | gemini)"),
+    client_type: str = Query("openai", description="客户端类型"),
     auth_type: str = Query("bearer", description="鉴权方式 (bearer | header | query | none)"),
     auth_header_name: str = Query("Authorization", description="Header 鉴权名称"),
     auth_header_prefix: str = Query("Bearer", description="Header 鉴权前缀"),
@@ -973,12 +997,18 @@ async def _test_provider_connection(
                 if client_type == "gemini":
                     # Gemini 使用 URL 参数传递 API Key
                     params["key"] = api_key
+                elif client_type == "anthropic":
+                    headers, params = build_anthropic_http_options(
+                        APIProvider(
+                            name="webui-connection-test", base_url=base_url, api_key=api_key, client_type=client_type
+                        )
+                    )
                 else:
                     # OpenAI 兼容格式使用 Authorization 头
                     headers["Authorization"] = f"Bearer {api_key}"
 
                 # 尝试获取模型列表
-                models_url = f"{base_url}/models"
+                models_url = _provider_models_url(base_url, "/models", client_type)
                 response = await client.get(models_url, headers=headers, params=params)
 
                 if response.status_code == 200:
@@ -1002,7 +1032,7 @@ async def _test_provider_connection(
 async def test_provider_connection(
     base_url: str = Query(..., description="提供商的基础 URL"),
     api_key: Optional[str] = Query(None, description="API Key（可选，用于验证 Key 有效性）"),
-    client_type: str = Query("openai", description="客户端类型 (openai | openai_responses | gemini)"),
+    client_type: str = Query("openai", description="客户端类型"),
 ):
     """测试指定厂商地址，支持本机与内网服务。"""
     return await _test_provider_connection(

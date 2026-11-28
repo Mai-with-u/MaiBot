@@ -1,13 +1,23 @@
-export type DeepSeekClientType = 'openai' | 'openai_responses'
+export type DeepSeekClientType = 'openai' | 'openai_responses' | 'anthropic'
 export type DeepSeekReasoningEffort = 'low' | 'high' | 'max'
 
 const DEEPSEEK_REASONING_EFFORTS = new Set<DeepSeekReasoningEffort>(['low', 'high', 'max'])
 const DEEPSEEK_RESPONSES_EFFORTS = new Set([...DEEPSEEK_REASONING_EFFORTS, 'none'])
+const DEEPSEEK_MESSAGES_EFFORTS = new Map<string, DeepSeekReasoningEffort>([
+  ['minimal', 'low'],
+  ['low', 'low'],
+  ['medium', 'high'],
+  ['high', 'high'],
+  ['xhigh', 'high'],
+  ['max', 'max'],
+  ['ultra', 'max'],
+])
 type DeepSeekSearchTool = 'deepseek_web_search' | 'web_search'
 const DEEPSEEK_WEB_SEARCH_TYPES = new Set(['deepseek_web_search', 'web_search', 'web_search_2025_08_26'])
 const FLASH_MODELS = new Set(['deepseek-flash', 'deepseek-v4-flash', 'deepseek-v4-flash-vision-exp'])
 
 export function getDeepSeekSearchTool(model: string, client: DeepSeekClientType): DeepSeekSearchTool | null {
+  if (client === 'anthropic') return null
   if (FLASH_MODELS.has(model.trim())) return 'deepseek_web_search'
   if (model.trim() === 'deepseek-v4-pro' && client === 'openai_responses') return 'web_search'
   return null
@@ -45,6 +55,11 @@ export function getDeepSeekReasoningEffort(
   params: Record<string, unknown>,
   clientType: DeepSeekClientType
 ): DeepSeekReasoningEffort {
+  if (clientType === 'anthropic') {
+    const effort = isRecord(params.output_config) ? params.output_config.effort : undefined
+    return typeof effort === 'string' ? DEEPSEEK_MESSAGES_EFFORTS.get(effort) ?? 'high' : 'high'
+  }
+
   const value =
     clientType === 'openai_responses'
       ? isRecord(params.reasoning)
@@ -57,11 +72,35 @@ export function getDeepSeekReasoningEffort(
     : 'high'
 }
 
+function setMessagesThinking(
+  params: Record<string, unknown>,
+  effort: DeepSeekReasoningEffort | undefined
+): Record<string, unknown> {
+  const nextParams = withoutKeys(params, ['reasoning', 'reasoning_effort'])
+  const thinking = isRecord(nextParams.thinking) ? nextParams.thinking : {}
+  const outputConfig = isRecord(nextParams.output_config) ? { ...nextParams.output_config } : {}
+  nextParams.thinking = { ...thinking, type: effort ? 'enabled' : 'disabled' }
+  if (effort) {
+    outputConfig.effort = effort
+  } else {
+    delete outputConfig.effort
+  }
+  if (Object.keys(outputConfig).length) {
+    nextParams.output_config = outputConfig
+  } else {
+    delete nextParams.output_config
+  }
+  return nextParams
+}
+
 export function setDeepSeekThinkingEnabled(
   params: Record<string, unknown>,
   clientType: DeepSeekClientType,
   enabled: boolean
 ): Record<string, unknown> {
+  if (clientType === 'anthropic') {
+    return setMessagesThinking(params, enabled ? getDeepSeekReasoningEffort(params, clientType) : undefined)
+  }
   if (clientType === 'openai_responses') {
     const nextParams = withoutKeys(params, ['thinking', 'reasoning_effort'])
     const reasoning = isRecord(nextParams.reasoning) ? nextParams.reasoning : {}
@@ -93,6 +132,7 @@ export function setDeepSeekReasoningEffort(
   clientType: DeepSeekClientType,
   effort: DeepSeekReasoningEffort
 ): Record<string, unknown> {
+  if (clientType === 'anthropic') return setMessagesThinking(params, effort)
   if (clientType === 'openai_responses') {
     const nextParams = withoutKeys(params, ['thinking', 'reasoning_effort'])
     const reasoning = isRecord(nextParams.reasoning) ? nextParams.reasoning : {}
@@ -150,6 +190,23 @@ export function validateDeepSeekExtraParams(
       const effort = params.reasoning.effort
       if (effort !== undefined && !DEEPSEEK_RESPONSES_EFFORTS.has(String(effort))) {
         return 'reasoning.effort 只能是 none、low、high 或 max'
+      }
+    }
+  } else if (clientType === 'anthropic') {
+    if ('reasoning' in params || 'reasoning_effort' in params) {
+      return 'Anthropic Messages 客户端请使用 output_config.effort'
+    }
+    if (params.thinking !== undefined) {
+      if (!isRecord(params.thinking)) return 'thinking 必须是对象'
+      if (!['enabled', 'disabled', 'adaptive'].includes(String(params.thinking.type))) {
+        return 'thinking.type 只能是 enabled、disabled 或 adaptive'
+      }
+    }
+    if (params.output_config !== undefined) {
+      if (!isRecord(params.output_config)) return 'output_config 必须是对象'
+      const effort = params.output_config.effort
+      if (effort !== undefined && (typeof effort !== 'string' || !DEEPSEEK_MESSAGES_EFFORTS.has(effort))) {
+        return 'output_config.effort 无效，可使用 low、high 或 max'
       }
     }
   } else {
