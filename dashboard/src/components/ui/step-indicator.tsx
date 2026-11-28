@@ -1,8 +1,11 @@
 import { Check } from 'lucide-react'
-import { Fragment } from 'react'
+import { motion } from 'motion/react'
+import { Fragment, useId } from 'react'
 
+import { MotionIconSwap } from '@/components/motion'
 import { Button } from '@/components/ui/button'
 import { Separator } from '@/components/ui/separator'
+import { useMotion } from '@/lib/motion'
 import { cn } from '@/lib/utils'
 
 /** 只读进度导航：复用按钮的主题材质，不允许跳过尚未保存的步骤。 */
@@ -17,6 +20,9 @@ export function StepIndicator({
   currentSubstep?: string
   label: string
 }) {
+  const { style, enabled, transitions } = useMotion()
+  const substepIndicatorId = useId()
+  const modernSteps = style === 'modern' && enabled
   const active = steps[currentStep]
   const activeSubstep = active?.substeps?.findIndex((step) => step.id === currentSubstep) ?? -1
   return (
@@ -25,8 +31,18 @@ export function StepIndicator({
         {steps.map((step, index) => (
           <Fragment key={step.id}>
             {index > 0 && (
-              <li aria-hidden="true" className="max-w-28 min-w-3 flex-1">
+              <li aria-hidden="true" className="relative max-w-28 min-w-3 flex-1">
                 <Separator variant="groove" />
+                {modernSteps && (
+                  <motion.span
+                    aria-hidden="true"
+                    initial={false}
+                    animate={{ scaleX: index <= currentStep ? 1 : 0 }}
+                    transition={transitions.normal}
+                    style={{ transformOrigin: 'left center' }}
+                    className="bg-primary pointer-events-none absolute inset-x-0 top-1/2 h-[2px] -translate-y-1/2 rounded-full"
+                  />
+                )}
               </li>
             )}
             <li
@@ -41,11 +57,15 @@ export function StepIndicator({
                 }
                 className="pointer-events-none shrink-0"
               >
-                <span aria-hidden="true">{index < currentStep ? <Check /> : index + 1}</span>
+                <span aria-hidden="true">
+                  <MotionIconSwap iconKey={index < currentStep ? 'done' : `num-${index}`}>
+                    {index < currentStep ? <Check /> : index + 1}
+                  </MotionIconSwap>
+                </span>
               </Button>
               <span
                 className={cn(
-                  'text-center text-xs font-semibold sm:text-base',
+                  'text-center text-xs font-semibold transition-colors sm:text-base',
                   index !== currentStep && 'text-muted-foreground'
                 )}
               >
@@ -62,14 +82,32 @@ export function StepIndicator({
               key={step.id}
               aria-current={step.id === currentSubstep ? 'step' : undefined}
               className={cn(
-                'flex items-center gap-1.5 border-b-2 border-transparent px-1 pb-1',
-                index === activeSubstep ? 'border-primary font-semibold' : 'text-muted-foreground'
+                'relative flex items-center gap-1.5 border-b-2 border-transparent px-1 pb-1 transition-colors',
+                index === activeSubstep
+                  ? modernSteps
+                    ? 'font-semibold'
+                    : 'border-primary font-semibold'
+                  : 'text-muted-foreground'
               )}
             >
-              {index < activeSubstep ? <Check className="size-3.5" aria-hidden /> : (
-                <span className="font-mono tabular-nums" aria-hidden>{currentStep + 1}.{index + 1}</span>
-              )}
+              <MotionIconSwap iconKey={index < activeSubstep ? 'sub-done' : `sub-${index}`}>
+                {index < activeSubstep ? (
+                  <Check className="size-3.5" aria-hidden />
+                ) : (
+                  <span className="font-mono tabular-nums" aria-hidden>
+                    {currentStep + 1}.{index + 1}
+                  </span>
+                )}
+              </MotionIconSwap>
               {step.label}
+              {modernSteps && index === activeSubstep && (
+                <motion.span
+                  layoutId={`step-sub-line-${substepIndicatorId}`}
+                  aria-hidden="true"
+                  transition={transitions.snappy}
+                  className="bg-primary pointer-events-none absolute inset-x-0 -bottom-[2px] h-[2px] rounded-full"
+                />
+              )}
             </li>
           ))}
         </ol>

@@ -15,12 +15,26 @@ import {
   Sun,
 } from 'lucide-react'
 import { motion } from 'motion/react'
-import { useContext, useEffect, useRef, useState, type ReactElement } from 'react'
+import {
+  useContext,
+  useEffect,
+  useRef,
+  useState,
+  type FocusEvent as ReactFocusEvent,
+  type PointerEvent as ReactPointerEvent,
+  type ReactElement,
+} from 'react'
 import { useTranslation } from 'react-i18next'
 
 import { SidebarUpdateButton } from '@/components/layout/SidebarUpdateButton'
 import type { MenuItem } from '@/components/layout/types'
-import { MotionCollapse } from '@/components/motion'
+import {
+  ModernGlideHighlight,
+  ModernMorphTooltip,
+  MotionCollapse,
+  MotionIconSwap,
+  type MorphTooltipTarget,
+} from '@/components/motion'
 import { DropdownMenu, DropdownMenuContent, DropdownMenuItem, DropdownMenuTrigger } from '@/components/ui/dropdown-menu'
 import { PromptWarningDot } from '@/components/ui/prompt-warning-dot'
 import { ScrollArea } from '@/components/ui/scroll-area'
@@ -189,10 +203,13 @@ export function ObservationSidebar({
   const [settingsOpen, setSettingsOpen] = useState(loadSettingsOpen)
   const [toolsOpen, setToolsOpen] = useState(false)
   const [settingsLayout, setSettingsLayout] = useState(loadSettingsLayout)
-  const { enabled: motionEnabled, transitions } = useMotion()
+  const { style: motionStyle, enabled: motionEnabled, transitions } = useMotion()
+  const modernSidebarGlide = motionStyle === 'modern' && motionEnabled
   const [settingsPage, setSettingsPage] = useState(0)
   const [settingsPageDirection, setSettingsPageDirection] = useState(1)
+  const [hoveredKeyTooltip, setHoveredKeyTooltip] = useState<MorphTooltipTarget | null>(null)
   const settingsSection = useRef<HTMLElement>(null)
+  const keysListRef = useRef<HTMLUListElement>(null)
   const { data: promptCatalog } = useQuery(
     {
       ...promptCatalogQueryOptions,
@@ -305,6 +322,13 @@ export function ObservationSidebar({
     if (lockChanged) reportLayoutRef.current()
   }, [collapsed, homeLocked])
 
+  useEffect(() => {
+    if (!modernSidebarGlide) return
+    const clearOnScroll = () => setHoveredKeyTooltip(null)
+    window.addEventListener('scroll', clearOnScroll, true)
+    return () => window.removeEventListener('scroll', clearOnScroll, true)
+  }, [modernSidebarGlide])
+
   const toggleSettings = () => {
     setSettingsOpen((current) => {
       try {
@@ -357,7 +381,9 @@ export function ObservationSidebar({
         title={actualTheme === 'dark' ? t('header.switchToLight') : t('header.switchToDark')}
         onClick={(event) => toggleThemeWithTransition(actualTheme === 'dark' ? 'light' : 'dark', setTheme, event)}
       >
-        {actualTheme === 'dark' ? <Sun aria-hidden="true" /> : <Moon aria-hidden="true" />}
+        <MotionIconSwap iconKey={actualTheme === 'dark' ? 'sun' : 'moon'}>
+          {actualTheme === 'dark' ? <Sun aria-hidden="true" /> : <Moon aria-hidden="true" />}
+        </MotionIconSwap>
         {collapsed && <span>{actualTheme === 'dark' ? t('header.switchToLight') : t('header.switchToDark')}</span>}
       </button>)}
       <KeyTooltip label={collapsed ? t('common.search') : `${t('common.search')} · Ctrl K`} side={collapsed ? 'right' : 'bottom'}>
@@ -407,7 +433,9 @@ export function ObservationSidebar({
           title={collapsed ? t('observation.expandSidebar') : t('observation.collapseSidebar')}
           onClick={onToggleCollapsed}
         >
-          {collapsed ? <PanelLeftOpen aria-hidden="true" /> : <PanelLeftClose aria-hidden="true" />}
+          <MotionIconSwap iconKey={collapsed ? 'expand' : 'collapse'}>
+            {collapsed ? <PanelLeftOpen aria-hidden="true" /> : <PanelLeftClose aria-hidden="true" />}
+          </MotionIconSwap>
         </button>
         <Separator variant={dividerVariant} className="absolute inset-x-0 bottom-0" />
       </div>
@@ -488,14 +516,32 @@ export function ObservationSidebar({
             >
               <nav aria-label={t('observation.settingsBlock')}>
                 <motion.ul
+                  ref={keysListRef}
                   key={settingsPaginated ? currentSettingsPage : 'unpaged'}
                   data-observation-keys="true"
                   data-paginated={settingsPaginated || undefined}
+                  data-modern-sidebar-glide={modernSidebarGlide ? 'true' : undefined}
+                  className={modernSidebarGlide ? 'relative' : undefined}
                   style={settingsPaginated ? { gridTemplateRows: `repeat(${settingsLayout.rows}, 3.125rem)` } : undefined}
                   initial={!motionEnabled || !settingsPaginated ? false : { opacity: 0, x: settingsPageDirection * 12 }}
                   animate={{ opacity: 1, x: 0 }}
                   transition={transitions.fast}
+                  onPointerLeave={modernSidebarGlide ? () => setHoveredKeyTooltip(null) : undefined}
+                  onBlur={
+                    modernSidebarGlide
+                      ? (event) => {
+                          if (!event.currentTarget.contains(event.relatedTarget as Node | null)) {
+                            setHoveredKeyTooltip(null)
+                          }
+                        }
+                      : undefined
+                  }
                 >
+                  <ModernGlideHighlight
+                    containerRef={keysListRef}
+                    itemSelector="[data-observation-key='true']"
+                    className="rounded-lg bg-foreground/[0.05] dark:bg-foreground/[0.08]"
+                  />
                   {visibleSettingsItems.map((item) => {
                     const Icon = item.icon
                     const label = item.literalLabel ? item.label : t(item.label)
@@ -503,6 +549,7 @@ export function ObservationSidebar({
                     const active = isItemActive(item, pathname)
                     // Bot 还在加载或没有运行时，依赖 Bot 的键不可点；管理与 WebUI 设置照常可用
                     const disabled = !botAvailable && !isBotIndependentPath(item.path)
+                    const tooltipLabel = disabled ? t('observation.keyNeedsBot', { label }) : label
                     const keyContent = (
                       <>
                         <Icon className="h-5 w-5" />
@@ -512,43 +559,86 @@ export function ObservationSidebar({
                         )}
                       </>
                     )
+                    const morphHandlers = modernSidebarGlide
+                      ? {
+                          onPointerEnter: (event: ReactPointerEvent<HTMLElement>) => {
+                            if (event.pointerType === 'mouse') {
+                              setHoveredKeyTooltip({
+                                id: item.path,
+                                label: tooltipLabel,
+                                anchor: event.currentTarget,
+                              })
+                            }
+                          },
+                          onFocus: (event: ReactFocusEvent<HTMLElement>) => {
+                            if (event.currentTarget.matches(':focus-visible')) {
+                              setHoveredKeyTooltip({
+                                id: item.path,
+                                label: tooltipLabel,
+                                anchor: event.currentTarget,
+                              })
+                            }
+                          },
+                          onClick: () => setHoveredKeyTooltip(null),
+                        }
+                      : undefined
+                    const keyElement = disabled ? (
+                      <span
+                        role="link"
+                        aria-disabled="true"
+                        aria-label={label}
+                        tabIndex={0}
+                        data-observation-key="true"
+                        data-disabled="true"
+                        data-active="false"
+                        data-tour={item.tourId}
+                        {...morphHandlers}
+                      >
+                        {keyContent}
+                      </span>
+                    ) : (
+                      <Link
+                        to={item.path}
+                        aria-label={label}
+                        data-observation-key="true"
+                        data-active={active ? 'true' : 'false'}
+                        data-tour={item.tourId}
+                        aria-current={active ? 'page' : undefined}
+                        className={modernSidebarGlide ? 'relative isolate' : undefined}
+                        {...morphHandlers}
+                      >
+                        {modernSidebarGlide && active && (
+                          <motion.span
+                            layoutId="modern-sidebar-active-pill"
+                            aria-hidden="true"
+                            transition={transitions.snappy}
+                            className="pointer-events-none absolute inset-0 -z-10 rounded-lg bg-primary/10 ring-1 ring-primary/20 shadow-[0_1px_2px_hsl(var(--foreground)/0.06)] dark:bg-primary/15"
+                          />
+                        )}
+                        {keyContent}
+                      </Link>
+                    )
                     return (
                       <li key={item.path}>
-                        {/* 键帽里的名字放不下时截断，悬停显示完整名称 */}
-                        <KeyTooltip
-                          label={disabled ? t('observation.keyNeedsBot', { label }) : label}
-                          side={collapsed ? 'right' : 'bottom'}
-                        >
-                          {disabled ? (
-                            <span
-                              role="link"
-                              aria-disabled="true"
-                              aria-label={label}
-                              tabIndex={0}
-                              data-observation-key="true"
-                              data-disabled="true"
-                              data-active="false"
-                              data-tour={item.tourId}
-                            >
-                              {keyContent}
-                            </span>
-                          ) : (
-                            <Link
-                              to={item.path}
-                              aria-label={label}
-                              data-observation-key="true"
-                              data-active={active ? 'true' : 'false'}
-                              data-tour={item.tourId}
-                              aria-current={active ? 'page' : undefined}
-                            >
-                              {keyContent}
-                            </Link>
-                          )}
-                        </KeyTooltip>
+                        {/* 现代风格由单一 ModernMorphTooltip 连续变形跟随；其余风格沿用 KeyTooltip。 */}
+                        {modernSidebarGlide ? (
+                          keyElement
+                        ) : (
+                          <KeyTooltip
+                            label={tooltipLabel}
+                            side={collapsed ? 'right' : 'bottom'}
+                          >
+                            {keyElement}
+                          </KeyTooltip>
+                        )}
                       </li>
                     )
                   })}
                 </motion.ul>
+                <ModernMorphTooltip
+                  target={modernSidebarGlide ? hoveredKeyTooltip : null}
+                  side={collapsed ? 'right' : 'bottom'}
+                />
               </nav>
             </ScrollArea>
           )

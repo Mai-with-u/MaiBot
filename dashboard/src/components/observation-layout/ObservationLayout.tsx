@@ -27,6 +27,7 @@ import { isElectron } from '@/lib/runtime'
 import { cn } from '@/lib/utils'
 import { useMenuSections } from '@/components/layout/use-menu-sections'
 import type { MenuItem, MenuSection } from '@/components/layout/types'
+import { MOBILE_GLASS_CLASS } from '@/components/layout/mobile-glass'
 import { MobileNavContext } from '@/components/layout/mobile-nav-context'
 import { MobileRouteHeader } from '@/components/layout/MobileRouteHeader'
 import { MobilePageHeader } from '@/components/layout/MobilePageHeader'
@@ -185,6 +186,7 @@ export function ObservationLayout({ children }: { children: ReactNode }) {
         <div
           data-dashboard-shell="true"
           data-observation-shell="true"
+          data-mobile-mode={!isDesktop ? 'true' : 'false'}
           data-dashboard-page-background={pageBg.type}
           className={cn(
             'relative isolate flex h-[100dvh] overflow-hidden',
@@ -222,8 +224,12 @@ export function ObservationLayout({ children }: { children: ReactNode }) {
                 {!isDesktop && pathname === '/' && <MobilePageHeader
                   title={t('home.mobile.title')}
                   trailing={<Link to="/settings" aria-label={t('home.mobile.openSettings')}
-                    className="bg-muted text-foreground flex h-11 w-11 shrink-0 items-center justify-center rounded-full">
-                    <Settings aria-hidden="true" className="h-[22px] w-[22px]" />
+                    data-mobile-header-button="true"
+                    className={cn(
+                      'text-foreground flex h-11 w-11 shrink-0 items-center justify-center rounded-full',
+                      MOBILE_GLASS_CLASS
+                    )}>
+                    <Settings aria-hidden="true" className="h-[22px] w-[22px]" strokeWidth={1.7} />
                   </Link>}
                   className="px-4 pt-3 pb-2"
                 />}

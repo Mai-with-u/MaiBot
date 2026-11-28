@@ -2,7 +2,7 @@
 (() => {
   'use strict';
   const invoke = (command, payload) => window.__TAURI_INTERNALS__.invoke(command, payload);
-  const methods = ['ready', 'send', 'history', 'todos', 'todo_image', 'add_todo', 'update_todo', 'done_todo',
+  const methods = ['ready', 'send', 'history', 'todos', 'todo_image', 'skin_asset', 'add_todo', 'update_todo', 'done_todo',
     'open_exploration_records', 'exploration_tasks', 'explore', 'fit', 'region',
     'drag_begin', 'drag_move', 'drag_end', 'clicked', 'screen_action', 'refresh_buttons',
     'click_button', 'copy_panel_content', 'exit_client', 'refresh', 'window_control',
@@ -15,7 +15,7 @@
   window.desktopPetBridge = Object.freeze({
     api: Object.freeze(Object.fromEntries(methods.map(method => [method,
       (...args) => invoke('pet_call', { method, args })]))),
-    login: Object.freeze(Object.fromEntries(['profile', 'fit', 'discover', 'connect', 'cancel'].map(method => [method,
+    login: Object.freeze(Object.fromEntries(['profile', 'fit', 'discover', 'connect', 'cancel', 'credential_status', 'forget_credentials'].map(method => [method,
       (...args) => invoke('login_call', { method, args })]))),
     onCommand(callback) { receiver = callback; return () => { receiver = null; }; },
     commandResult: (id, result, error) => invoke('page_result', { id, result: result ?? null, error: error ?? null }),

@@ -74,7 +74,9 @@ export function SpeechPreviewButton({ model, voice, provider, draftKey }: Props)
         <Icon className={status === 'loading' ? 'animate-spin' : ''} />
         {status === 'loading' ? '生成中' : status === 'playing' ? '停止' : '试听'}
       </Button>
-      <audio ref={audio} onEnded={() => setStatus('idle')} />
+      <audio ref={audio} onEnded={() => setStatus('idle')}>
+        <track kind="captions" />
+      </audio>
       {error && <p role="alert" className="mt-1 max-w-52 text-xs text-destructive">{error}</p>}
     </div>
   )

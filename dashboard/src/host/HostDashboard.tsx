@@ -58,7 +58,15 @@ function BotError({ error }: { error: string }) {
   return (
     <Alert variant="destructive" className="min-w-0 overflow-hidden p-2.5 text-xs">
       <AlertDescription className="min-w-0 space-y-2">
-        <pre tabIndex={0} className="max-h-60 overflow-auto whitespace-pre-wrap break-all font-mono text-xs [overflow-wrap:anywhere]">{error}</pre>
+        <div
+          role="textbox"
+          aria-readonly="true"
+          aria-label="错误详情"
+          tabIndex={0}
+          className="max-h-60 overflow-auto whitespace-pre-wrap break-all font-mono text-xs [overflow-wrap:anywhere]"
+        >
+          {error}
+        </div>
         <Button size="sm" variant="outline" onClick={() => void copy()}>
           <Copy className="size-3.5" />
           {t(copied ? 'errorBoundary.copiedToClipboard' : 'errorBoundary.copyError')}

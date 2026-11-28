@@ -580,8 +580,9 @@ it('在归属详情中按来源查看素材，编辑时保留正在修改的版�
       onScopeChange={(next) => { if (next) { switchScope(next); setSelected(next) } }} onChanged={vi.fn()} />
   }
   render(<QueryClientProvider client={new QueryClient()}><Detail /></QueryClientProvider>)
-  const index = within(await screen.findByRole('navigation', { name: '作用域索引' }))
-  const globalScope = await index.findByRole('button', { name: '通用词库' })
+  const globalScope = await screen.findByRole('button', { name: '通用词库' })
+  const index = within(screen.getByRole('navigation', { name: '作用域索引' }))
+  expect(index.getByRole('button', { name: '通用词库' })).toBe(globalScope)
   expect(index.getByRole('button', { name: '测试群' })).toHaveAttribute('aria-pressed', 'true')
   expect(screen.getByRole('textbox', { name: '含义' })).toHaveValue('含义1')
   await user.click(globalScope)

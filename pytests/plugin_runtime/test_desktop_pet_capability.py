@@ -1,5 +1,5 @@
 from types import SimpleNamespace
-from unittest.mock import AsyncMock
+from unittest.mock import AsyncMock, Mock
 import asyncio
 import json
 
@@ -196,6 +196,7 @@ async def test_only_internal_owner_reply_is_displayed(monkeypatch):
             "additional_config": {"platform_io_target_user_id": target}, "group_info": group,
         }, "raw_message": [{"type": "text", "data": "你好"}]}
     await service.notify_reply(message("webui", "owner"))
+    await service.notify_reply(message("qq", "owner"))
     await service.notify_reply(message("internal", "someone"))
     await service.notify_reply(message("internal", "owner", {"group_id": "g"}))
     assert not service._notifications
@@ -235,3 +236,35 @@ async def test_spawn_failure_is_observable_and_does_not_crash_host(monkeypatch):
     await service._run()
     assert service.status()["error"] == "cannot spawn"
     assert not service.status()["running"] and not service.status()["ready"]
+
+
+@pytest.mark.asyncio
+async def test_only_owner_chat_updates_thinking_and_caption(monkeypatch):
+    from src.desktop_pet import chat_tools
+
+    service = DesktopPetService()
+    service._ready = True
+    service._closing = False
+    command = AsyncMock()
+    update = Mock()
+    owner = SimpleNamespace(platform="internal", group_id=None, user_id="owner")
+    other = SimpleNamespace(platform="qq", group_id="123", user_id="owner")
+    sessions = {"owner-private": owner, "qq-group": other}
+    monkeypatch.setattr(chat_tools.chat_manager, "get_session_by_session_id", sessions.get)
+    monkeypatch.setattr(service, "_command", command)
+    monkeypatch.setattr(service._thinking_caption, "update", update)
+    monkeypatch.setattr(pet_module, "caption_enabled", lambda: True)
+
+    await service.notify_thinking("qq-group")
+    service.observe_stage({"session_id": "qq-group", "stage": "生成"})
+    assert not service.status()["thinking"]
+    assert not service._notifications
+    update.assert_not_called()
+
+    await service.notify_thinking("owner-private")
+    stage = {"session_id": "owner-private", "stage": "生成"}
+    service.observe_stage(stage)
+    await asyncio.gather(*service._notifications)
+    assert service.status()["thinking"]
+    command.assert_awaited_once_with({"type": "thinking"})
+    update.assert_called_once_with(stage)

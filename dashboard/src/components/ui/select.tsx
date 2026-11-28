@@ -4,7 +4,7 @@ import * as React from 'react'
 import * as SelectPrimitive from '@radix-ui/react-select'
 import { Check, ChevronDown, ChevronUp } from 'lucide-react'
 
-import { MotionFloating } from '@/components/motion'
+import { ModernGlideHighlight, MotionFloating } from '@/components/motion'
 import { cn } from '@/lib/utils'
 import { controlSizeClassNames, type ControlSize } from './control-size'
 
@@ -67,51 +67,61 @@ SelectScrollDownButton.displayName = SelectPrimitive.ScrollDownButton.displayNam
 const SelectContent = React.forwardRef<
   React.ElementRef<typeof SelectPrimitive.Content>,
   React.ComponentPropsWithoutRef<typeof SelectPrimitive.Content>
->(({ className, children, position = 'popper', style, onWheel, onTouchMove, ...props }, ref) => (
-  <SelectPrimitive.Portal>
-    <SelectPrimitive.Content
-      ref={ref}
-      position={position}
-      style={{
-        maxHeight: 'min(var(--radix-select-content-available-height, 20rem), 20rem)',
-        ...style,
-      }}
-      asChild
-      {...props}
-    >
-      <MotionFloating
-        variant="select"
-        data-dashboard-select-content="true"
-        className={cn(
-          'border-border relative z-[100] min-w-[8rem] origin-[var(--radix-select-content-transform-origin)] overflow-hidden rounded-md border bg-white text-gray-900 shadow-lg dark:bg-gray-900 dark:text-gray-100',
-          position === 'popper' &&
-            'data-[side=bottom]:translate-y-1 data-[side=left]:-translate-x-1 data-[side=right]:translate-x-1 data-[side=top]:-translate-y-1',
-          className
-        )}
-        onWheel={(event) => {
-          onWheel?.(event)
-          event.stopPropagation()
+>(({ className, children, position = 'popper', style, onWheel, onTouchMove, ...props }, ref) => {
+  const viewportRef = React.useRef<HTMLDivElement | null>(null)
+
+  return (
+    <SelectPrimitive.Portal>
+      <SelectPrimitive.Content
+        ref={ref}
+        position={position}
+        style={{
+          maxHeight: 'min(var(--radix-select-content-available-height, 20rem), 20rem)',
+          ...style,
         }}
-        onTouchMove={(event) => {
-          onTouchMove?.(event)
-          event.stopPropagation()
-        }}
+        asChild
+        {...props}
       >
-        <SelectScrollUpButton />
-        <SelectPrimitive.Viewport
+        <MotionFloating
+          variant="select"
+          data-dashboard-select-content="true"
           className={cn(
-            'p-1',
+            'border-border relative z-[100] min-w-[8rem] origin-[var(--radix-select-content-transform-origin)] overflow-hidden rounded-md border bg-white text-gray-900 shadow-lg dark:bg-gray-900 dark:text-gray-100',
             position === 'popper' &&
-              'h-[var(--radix-select-trigger-height)] w-full min-w-[var(--radix-select-trigger-width)]'
+              'data-[side=bottom]:translate-y-1 data-[side=left]:-translate-x-1 data-[side=right]:translate-x-1 data-[side=top]:-translate-y-1',
+            className
           )}
+          onWheel={(event) => {
+            onWheel?.(event)
+            event.stopPropagation()
+          }}
+          onTouchMove={(event) => {
+            onTouchMove?.(event)
+            event.stopPropagation()
+          }}
         >
-          {children}
-        </SelectPrimitive.Viewport>
-        <SelectScrollDownButton />
-      </MotionFloating>
-    </SelectPrimitive.Content>
-  </SelectPrimitive.Portal>
-))
+          <SelectScrollUpButton />
+          <SelectPrimitive.Viewport
+            ref={viewportRef}
+            className={cn(
+              'relative p-1',
+              position === 'popper' &&
+                'h-[var(--radix-select-trigger-height)] w-full min-w-[var(--radix-select-trigger-width)]'
+            )}
+          >
+            <ModernGlideHighlight
+              containerRef={viewportRef}
+              itemSelector="[role='option']"
+              highlightedSelector="[data-highlighted]"
+            />
+            {children}
+          </SelectPrimitive.Viewport>
+          <SelectScrollDownButton />
+        </MotionFloating>
+      </SelectPrimitive.Content>
+    </SelectPrimitive.Portal>
+  )
+})
 SelectContent.displayName = SelectPrimitive.Content.displayName
 
 const SelectLabel = React.forwardRef<

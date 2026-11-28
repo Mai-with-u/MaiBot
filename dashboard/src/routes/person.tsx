@@ -334,8 +334,8 @@ export function PersonManagementPage() {
             <SelectItem value="false">未认识</SelectItem>
           </SelectContent>
         </Select>
-        {grouped && <label className="flex cursor-pointer items-center gap-1.5 whitespace-nowrap text-xs">
-          <Checkbox checked={list.filters.linkedOnly} onCheckedChange={value => list.setFilter('linkedOnly', value === true)} />
+        {grouped && <label htmlFor="person-linked-only" className="flex cursor-pointer items-center gap-1.5 whitespace-nowrap text-xs">
+          <Checkbox id="person-linked-only" checked={list.filters.linkedOnly} onCheckedChange={value => list.setFilter('linkedOnly', value === true)} />
           仅多账号个体
         </label>}
       </div>

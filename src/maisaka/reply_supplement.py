@@ -23,6 +23,7 @@ from src.core.tooling import ToolAvailabilityContext
 from src.plugin_runtime.host.reply_extensions import build_reply_extensions_schema
 from src.llm_models.model_client.base_client import ResponseRequest
 from src.llm_models.payload_content.context_item import ContextItemBuilder, RoleType
+from src.llm_models.request_privacy import request_snapshots_suppressed
 from src.llm_models.request_snapshot import serialize_tool_options_snapshot
 from src.maisaka.builtin_tool.context import BuiltinToolRuntimeContext, PostProcessedReplyMessage
 from src.maisaka.builtin_tool.reply_voice import VoiceMode, voice_attachment_schema
@@ -315,7 +316,7 @@ async def _generate_reply_supplement_once(
         "prompt_cache_miss_tokens": result.prompt_cache_miss_tokens,
         "prompt_cache_reported": result.prompt_cache_reported,
     }
-    if global_config.debug.save_maisaka_reasoning:
+    if global_config.debug.save_maisaka_reasoning and not request_snapshots_suppressed():
         await asyncio.to_thread(
             PromptCLIVisualizer.build_prompt_preview_access, list(request.context_items),
             category="reply_supplement", chat_id=session_id, request_kind="reply_supplement",

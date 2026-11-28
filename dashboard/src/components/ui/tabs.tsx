@@ -3,25 +3,47 @@
 import * as React from 'react'
 import * as TabsPrimitive from '@radix-ui/react-tabs'
 
-import { MotionTabContent } from '@/components/motion'
+import { ModernTabIndicator, MotionTabContent } from '@/components/motion'
 import { cn } from '@/lib/utils'
 
 const Tabs = TabsPrimitive.Root
 
+function assignRef<T>(ref: React.ForwardedRef<T>, value: T) {
+  if (typeof ref === 'function') {
+    ref(value)
+  } else if (ref) {
+    ref.current = value
+  }
+}
+
 const TabsList = React.forwardRef<
   React.ElementRef<typeof TabsPrimitive.List>,
   React.ComponentPropsWithoutRef<typeof TabsPrimitive.List>
->(({ className, ...props }, ref) => (
-  <TabsPrimitive.List
-    ref={ref}
-    data-dashboard-tabs-list="true"
-    className={cn(
-      'bg-muted text-muted-foreground inline-flex h-9 items-center justify-center rounded-lg p-1',
-      className
-    )}
-    {...props}
-  />
-))
+>(({ className, children, ...props }, ref) => {
+  const listRef = React.useRef<HTMLDivElement | null>(null)
+  const setRefs = React.useCallback(
+    (node: HTMLDivElement | null) => {
+      listRef.current = node
+      assignRef(ref, node)
+    },
+    [ref]
+  )
+
+  return (
+    <TabsPrimitive.List
+      ref={setRefs}
+      data-dashboard-tabs-list="true"
+      className={cn(
+        'bg-muted text-muted-foreground relative inline-flex h-9 items-center justify-center rounded-lg p-1',
+        className
+      )}
+      {...props}
+    >
+      <ModernTabIndicator listRef={listRef} />
+      {children}
+    </TabsPrimitive.List>
+  )
+})
 TabsList.displayName = TabsPrimitive.List.displayName
 
 const TabsTrigger = React.forwardRef<

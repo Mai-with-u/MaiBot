@@ -1,5 +1,5 @@
 from types import SimpleNamespace
-from unittest.mock import AsyncMock
+from unittest.mock import AsyncMock, Mock
 
 import pytest
 
@@ -123,3 +123,29 @@ async def test_route_rpc_does_not_discover_accounts(monkeypatch):
     internal = manager.accept_inbound.call_args.args[0].session_message
     assert internal.account_id == "bot-1"
     assert internal.message_info.additional_config == {}
+
+
+def test_real_platform_message_still_updates_private_contact_identity(monkeypatch):
+    from src.chat.message_receive.chat_manager import BotChatSession, ChatManager
+    from src.common.utils.utils_session import SessionUtils
+
+    manager = ChatManager()
+    monkeypatch.setattr(manager, "_save_session", Mock())
+    session_id = SessionUtils.calculate_session_id("qq", user_id="12345", account_id="98765")
+    session = BotChatSession(session_id, "qq", user_id="12345", user_nickname="旧昵称", account_id="98765")
+    manager.sessions[session.session_id] = session
+    message = SimpleNamespace(
+        platform="qq",
+        account_id="98765",
+        scope=None,
+        session_id="",
+        message_info=SimpleNamespace(
+            group_info=None,
+            user_info=SimpleNamespace(user_id="12345", user_nickname="新昵称", user_cardname="新名片"),
+        ),
+    )
+
+    manager.register_message(message)
+
+    assert session.user_nickname == "新昵称"
+    assert session.user_cardname == "新名片"

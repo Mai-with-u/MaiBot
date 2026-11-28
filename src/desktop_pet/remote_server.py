@@ -19,6 +19,7 @@ import time
 from src.common.runtime_loop import get_main_loop, run_on_main_loop
 
 from .attachments import MAX_IMAGE_BYTES
+from .skins import SkinAssets
 
 PROTOCOL_VERSION = 1
 HEARTBEAT_INTERVAL = 20
@@ -62,7 +63,9 @@ def validate_hello(event: Dict[str, Any]) -> Tuple[str, Dict[str, bool]]:
     capabilities = event.get("capabilities")
     if not isinstance(capabilities, dict) or type(capabilities.get("screen_read")) is not bool:
         raise ValueError("客户端必须明确声明 screen_read 能力")
-    return client_id, {"screen_read": capabilities["screen_read"]}
+    return client_id, {"screen_read": capabilities["screen_read"],
+                       "skin_assets": capabilities.get("skin_assets") is True,
+                       "skin_loading": capabilities.get("skin_loading") is True}
 
 
 def _text_field(payload: Dict[str, Any], name: str, *, limit: int, empty: bool = False) -> str:
@@ -186,6 +189,7 @@ class RemotePeer:
         self._closed = False
         self._requests = 0
         self._image_requests = 0
+        self.skin_assets: SkinAssets = {}
 
     async def _on_socket_loop(self, operation: Callable[[], Awaitable[T]]) -> T:
         if self._loop.is_closed() or not self._loop.is_running():

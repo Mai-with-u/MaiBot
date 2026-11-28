@@ -2,17 +2,26 @@ import { act, fireEvent, render, screen, waitFor } from '@testing-library/react'
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest'
 
 import { PluginCustomPage } from '@/components/plugin-custom-page'
+import { invalidateCustomPageDocuments } from '@/lib/plugin-webui'
 import type { CustomPage } from '@/lib/plugin-webui'
 
 const mocks = vi.hoisted(() => ({
   get: vi.fn(),
+  post: vi.fn(),
   invoke: vi.fn(),
   upload: vi.fn(),
+  refresh: vi.fn(),
+  navigate: vi.fn(),
   i18n: { language: 'en' },
 }))
-vi.mock('@/lib/http', () => ({ backendApi: { get: mocks.get } }))
-vi.mock('@/lib/plugin-webui', () => ({
+vi.mock('@tanstack/react-router', () => ({
+  useNavigate: () => mocks.navigate,
+}))
+vi.mock('@/lib/http', () => ({ backendApi: { get: mocks.get, post: mocks.post } }))
+vi.mock('@/lib/plugin-webui', async (importOriginal) => ({
+  ...(await importOriginal<typeof import('@/lib/plugin-webui')>()),
   invokePluginWebUI: mocks.invoke,
+  refreshPluginWebUI: mocks.refresh,
   uploadPluginWebUI: mocks.upload,
 }))
 vi.mock('react-i18next', () => ({
@@ -44,9 +53,9 @@ class TestPort {
 }
 const channels: Array<{ port1: TestPort; port2: TestPort }> = []
 
-async function start(target = page) {
-  const view = render(<PluginCustomPage pluginId="test.plugin" page={target} pages={[target]} />)
-  const iframe = (await screen.findByTitle('Custom page')) as HTMLIFrameElement
+async function start(target = page, pages: CustomPage[] = [target]) {
+  const view = render(<PluginCustomPage pluginId="test.plugin" page={target} pages={pages} />)
+  const iframe = (await screen.findByTitle(target.title)) as HTMLIFrameElement
   const nonce = JSON.parse(iframe.srcdoc.match(/nonce: ("[^"]+")/)![1])
   act(() =>
     window.dispatchEvent(
@@ -57,7 +66,7 @@ async function start(target = page) {
       })
     )
   )
-  return { ...view, iframe, port: channels[0].port1 }
+  return { ...view, iframe, port: channels.at(-1)!.port1 }
 }
 
 describe('custom page bridge lifecycle', () => {
@@ -86,6 +95,7 @@ describe('custom page bridge lifecycle', () => {
   })
   beforeEach(() => {
     channels.length = 0
+    invalidateCustomPageDocuments()
     vi.stubGlobal(
       'MessageChannel',
       class {
@@ -96,10 +106,16 @@ describe('custom page bridge lifecycle', () => {
         }
       }
     )
+    mocks.get.mockReset()
     mocks.get.mockResolvedValue({ document: '<h1>Plugin content</h1>', revision: 'revision' })
+    mocks.post.mockReset()
+    mocks.post.mockResolvedValue({ success: true })
+    mocks.invoke.mockReset()
     mocks.invoke.mockResolvedValue({ count: 3 })
-    mocks.invoke.mockClear()
     mocks.upload.mockReset()
+    mocks.refresh.mockReset()
+    mocks.refresh.mockResolvedValue(undefined)
+    mocks.navigate.mockReset()
   })
   afterEach(() => vi.unstubAllGlobals())
 
@@ -327,5 +343,72 @@ describe('custom page bridge lifecycle', () => {
       id: 3,
       error: 'Error: Concurrency limit reached',
     })
+  })
+
+  it('uses SPA router navigation for declared plugin pages without hard reload', async () => {
+    const schedulePage: CustomPage = { ...page, id: 'schedule', title: 'Schedule' }
+    const { port } = await start(page, [page, schedulePage])
+
+    await act(async () =>
+      port.onmessage?.({ data: { id: 1, kind: 'navigate', name: 'schedule', args: {} } })
+    )
+    expect(port.postMessage).toHaveBeenCalledWith({ id: 1, result: null })
+    expect(mocks.navigate).toHaveBeenCalledWith({
+      to: '/extensions/$pluginId/$pageId',
+      params: { pluginId: 'test.plugin', pageId: 'schedule' },
+      search: {},
+    })
+
+    await act(async () =>
+      port.onmessage?.({
+        data: { id: 2, kind: 'navigate', name: 'schedule', args: { date: '2026-11-29' } },
+      })
+    )
+    expect(port.postMessage).toHaveBeenCalledWith({ id: 2, result: null })
+    expect(mocks.navigate).toHaveBeenLastCalledWith({
+      to: '/extensions/$pluginId/$pageId',
+      params: { pluginId: 'test.plugin', pageId: 'schedule' },
+      search: { state: { date: '2026-11-29' } },
+    })
+  })
+
+  it('caches custom page document by revision and invalidates on revision change or manual reload', async () => {
+    const first = await start()
+    expect(mocks.get).toHaveBeenCalledTimes(1)
+    first.unmount()
+
+    // Remounting with the same document_revision renders from cache immediately without refetching.
+    const second = render(<PluginCustomPage pluginId="test.plugin" page={page} pages={[page]} />)
+    expect(screen.getByTitle('Custom page')).toBeInTheDocument()
+    expect(mocks.get).toHaveBeenCalledTimes(1)
+
+    // Manual reload clears the plugin cache and refetches even when document_revision stays the same.
+    mocks.get.mockResolvedValueOnce({ document: '<h1>Reloaded</h1>', revision: 'revision' })
+    fireEvent.click(screen.getByRole('button', { name: 'pluginWebUI.customReload' }))
+    await waitFor(() => expect(mocks.get).toHaveBeenCalledTimes(2))
+    expect(mocks.post).toHaveBeenCalledWith(
+      '/api/webui/plugins/runtime/webui/test.plugin/reload',
+      {}
+    )
+    expect(mocks.refresh).toHaveBeenCalledWith(true)
+    await waitFor(() =>
+      expect((screen.getByTitle('Custom page') as HTMLIFrameElement).srcdoc).toContain(
+        '<h1>Reloaded</h1>'
+      )
+    )
+    second.unmount()
+
+    // A new document_revision bypasses the stale entry and fetches the updated revision.
+    mocks.get.mockResolvedValueOnce({ document: '<h1>Rev 2</h1>', revision: 'revision-2' })
+    render(
+      <PluginCustomPage
+        pluginId="test.plugin"
+        page={{ ...page, document_revision: 'revision-2' }}
+        pages={[{ ...page, document_revision: 'revision-2' }]}
+      />
+    )
+    const updatedFrame = (await screen.findByTitle('Custom page')) as HTMLIFrameElement
+    expect(mocks.get).toHaveBeenCalledTimes(3)
+    expect(updatedFrame.srcdoc).toContain('<h1>Rev 2</h1>')
   })
 })

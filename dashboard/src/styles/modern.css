@@ -166,6 +166,14 @@
     0 0 0 1px hsl(var(--input));
 }
 
+/* 分段选择接入现代滑行药丸后，选中态背景交由底层弹簧滑块承载。 */
+:root[data-dashboard-style='modern']
+  [data-dashboard-segmented-control='true'][data-modern-segmented-glide='true']
+  > .dashboard-button[aria-pressed='true'] {
+  background: transparent;
+  box-shadow: none;
+}
+
 /* 其他可切换的描边按钮：选中时浅主色底 + 主色边，不再只是换成同样很浅的灰。 */
 :root[data-dashboard-style='modern']
   .dashboard-button--outline[aria-pressed='true']:not([data-dashboard-segmented-control='true'] > *) {
@@ -179,7 +187,16 @@
 :root[data-dashboard-style='modern']
   [data-dashboard-tabs-list='true']:not(
     [data-dashboard-folder-tabs] > *) {
+  position: relative;
   box-shadow: inset 0 0 0 1px hsl(var(--border));
+}
+
+:root[data-dashboard-style='modern']
+  [data-dashboard-tabs-list='true']:not(
+    [data-dashboard-folder-tabs] > *)
+  > [data-dashboard-tabs-trigger='true'] {
+  position: relative;
+  z-index: 1;
 }
 
 :root[data-dashboard-style='modern']
@@ -192,8 +209,17 @@
     0 0 0 1px hsl(var(--input));
 }
 
+/* 现代风格 Tab 接入弹簧滑块后，激活项自身背景透明，由底层 ModernTabIndicator 滑行承载。 */
+:root[data-dashboard-style='modern']
+  [data-dashboard-tabs-list='true'][data-modern-tab-glide='pill']
+  > [data-dashboard-tabs-trigger='true'][data-state='active'] {
+  background-color: transparent;
+  box-shadow: none;
+}
+
 /* 设置页的分类标签：一条底线 + 主色下划线，和页面内容的分组标签区分开。 */
 :root[data-dashboard-style='modern'] [data-dashboard-tabs-list='true']:has(> [data-dashboard-settings-tabs='true']) {
+  position: relative;
   border-radius: 0;
   padding: 0;
   background: transparent;
@@ -201,6 +227,8 @@
 }
 
 :root[data-dashboard-style='modern'] [data-dashboard-settings-tabs='true'] {
+  position: relative;
+  z-index: 1;
   border-radius: 0;
   min-height: 2.75rem;
   color: hsl(var(--muted-foreground));
@@ -211,11 +239,202 @@
   color: hsl(var(--foreground));
 }
 
-:root[data-dashboard-style='modern'] [data-dashboard-settings-tabs='true'][data-state='active'] {
+:root[data-dashboard-style='modern']
+  [data-dashboard-tabs-list='true']:not([data-dashboard-folder-tabs] > *)
+  > [data-dashboard-settings-tabs='true'][data-state='active'] {
   background: transparent;
   color: hsl(var(--foreground));
   font-weight: 600;
   box-shadow: inset 0 -2px 0 hsl(var(--primary));
+}
+
+:root[data-dashboard-style='modern']
+  [data-dashboard-tabs-list='true']:not([data-dashboard-folder-tabs] > *)[data-modern-tab-glide='underline']
+  > [data-dashboard-settings-tabs='true'][data-state='active'] {
+  box-shadow: none;
+}
+
+/* ---------- 现代主题动效 UI 增强（DesignBookmark Motion 风格） ---------- */
+
+/* 1. 液体跟随高亮菜单容器：由 ModernGlideHighlight 接管悬停/选中底板 */
+:root[data-dashboard-style='modern'] [data-modern-glide-container='true'] {
+  position: relative;
+}
+
+:root[data-dashboard-style='modern']
+  [data-modern-glide-container='true']
+  :is([role='menuitem'], [role='menuitemcheckbox'], [role='menuitemradio'], [role='option'], [cmdk-item]) {
+  position: relative;
+  z-index: 1;
+}
+
+:root[data-dashboard-style='modern']
+  [data-modern-glide-container='true']
+  :is([role='menuitem']:focus, [role='menuitemcheckbox']:focus, [role='menuitemradio']:focus, [role='option']:hover, [role='option']:focus, [cmdk-item][data-selected='true']) {
+  background-color: transparent;
+}
+
+/* 2. Toggle Switch 果冻弹性拨杆：按压微拉伸 + 弹性过冲滑行 */
+:root[data-dashboard-style='modern'][data-motion-enabled='true'] [data-dashboard-switch='true'] {
+  transition:
+    background-color var(--motion-duration-fast) var(--motion-ease),
+    box-shadow var(--motion-duration-fast) var(--motion-ease);
+}
+
+:root[data-dashboard-style='modern'][data-motion-enabled='true']
+  [data-dashboard-switch-thumb='true'] {
+  transition:
+    transform 240ms cubic-bezier(0.34, 1.56, 0.64, 1),
+    width 140ms var(--motion-ease),
+    margin-left 140ms var(--motion-ease);
+}
+
+:root[data-dashboard-style='modern'][data-motion-enabled='true']
+  [data-dashboard-switch='true']:not(:disabled):active
+  [data-dashboard-switch-thumb='true'] {
+  width: calc(var(--switch-thumb) + 4px);
+}
+
+:root[data-dashboard-style='modern'][data-motion-enabled='true']
+  [data-dashboard-switch='true'][data-state='checked']:not(:disabled):active
+  [data-dashboard-switch-thumb='true'] {
+  margin-left: -4px;
+}
+
+/* 3. Jelly Slider 弹性滑块：悬停与拖动时滑轨轻亮、拖块弹性放大并附主色光晕 */
+:root[data-dashboard-style='modern'][data-motion-enabled='true']
+  [data-dashboard-slider]
+  [data-dashboard-slider-track='true'] {
+  transition:
+    background-color var(--motion-duration-fast) var(--motion-ease),
+    transform var(--motion-duration-fast) var(--motion-ease);
+}
+
+:root[data-dashboard-style='modern'][data-motion-enabled='true']
+  [data-dashboard-slider]:hover
+  [data-dashboard-slider-track='true'],
+:root[data-dashboard-style='modern'][data-motion-enabled='true']
+  [data-dashboard-slider][data-slider-dragging='true']
+  [data-dashboard-slider-track='true'] {
+  transform: scaleY(1.18);
+}
+
+:root[data-dashboard-style='modern'][data-motion-enabled='true']
+  [data-dashboard-slider-thumb='true'] {
+  transition:
+    transform 220ms cubic-bezier(0.34, 1.56, 0.64, 1),
+    box-shadow var(--motion-duration-fast) var(--motion-ease),
+    border-color var(--motion-duration-fast) var(--motion-ease);
+}
+
+:root[data-dashboard-style='modern'][data-motion-enabled='true']
+  [data-dashboard-slider-thumb='true']:hover {
+  transform: scale(1.12);
+  box-shadow: 0 0 0 4px hsl(var(--primary) / 0.16), 0 2px 6px hsl(var(--foreground) / 0.16);
+}
+
+:root[data-dashboard-style='modern'][data-motion-enabled='true']
+  [data-dashboard-slider][data-slider-dragging='true']
+  [data-dashboard-slider-thumb='true'] {
+  transform: scaleX(var(--slider-jelly-x, 1.14)) scaleY(var(--slider-jelly-y, 0.92));
+  box-shadow: 0 0 0 6px hsl(var(--primary) / 0.22), 0 4px 12px hsl(var(--primary) / 0.25);
+}
+
+/* 4. 现代侧栏激活键滑行底板：开启滑块时键位本身背景透明，由弹簧背板承载 */
+:root[data-dashboard-style='modern'][data-motion-enabled='true']
+  [data-observation-keys='true'][data-modern-sidebar-glide='true']
+  [data-observation-key='true'] {
+  position: relative;
+  z-index: 1;
+}
+
+:root[data-dashboard-style='modern'][data-motion-enabled='true']
+  [data-observation-keys='true'][data-modern-sidebar-glide='true']
+  [data-observation-key='true'][data-active='true'] {
+  background: transparent;
+  box-shadow: none;
+}
+
+/* 5. Springy Input：现代输入框/多行文本框克制聚焦结构描边，无外扩散光晕 */
+:root[data-dashboard-style='modern'][data-motion-enabled='true']
+  :is([data-dashboard-input='true'], textarea) {
+  transition:
+    border-color var(--motion-duration-fast) var(--motion-ease),
+    box-shadow var(--motion-duration-fast) var(--motion-ease),
+    background-color var(--motion-duration-fast) var(--motion-ease);
+}
+
+:root[data-dashboard-style='modern'][data-motion-enabled='true']
+  :is([data-dashboard-input='true'], textarea):focus {
+  border-color: hsl(var(--primary) / 0.65);
+  box-shadow: 0 0 0 3px hsl(var(--primary) / 0.12);
+}
+
+/* 6. 现代 Checkbox 勾选瞬间轻量弹性微缩 */
+@keyframes modern-checkbox-squish {
+  0% {
+    transform: scale(1);
+  }
+  45% {
+    transform: scale(0.9);
+  }
+  100% {
+    transform: scale(1);
+  }
+}
+
+:root[data-dashboard-style='modern'][data-motion-enabled='true']
+  [data-dashboard-checkbox='true'][data-state='checked'] {
+  animation: modern-checkbox-squish 220ms cubic-bezier(0.34, 1.56, 0.64, 1);
+}
+
+/* 7. AI 思考逐字流光波纹（Kokonut UI Thinking text 风格，克制单色明暗波浪） */
+@keyframes modern-thinking-wave {
+  0%,
+  100% {
+    opacity: 0.48;
+  }
+  50% {
+    opacity: 1;
+  }
+}
+
+:root[data-dashboard-style='modern'][data-motion-enabled='true']
+  [data-modern-thinking-char='true'] {
+  animation: modern-thinking-wave 1.6s ease-in-out infinite;
+}
+
+/* 8. 现代通知卡片层次与悬停反馈（Notification stack 风格） */
+:root[data-dashboard-style='modern'][data-motion-enabled='true'] [data-dashboard-toast='true'] {
+  box-shadow:
+    0 10px 28px -8px hsl(var(--foreground) / 0.16),
+    0 0 0 1px hsl(var(--border));
+  transition:
+    transform var(--motion-duration-fast) var(--motion-ease),
+    box-shadow var(--motion-duration-fast) var(--motion-ease),
+    opacity var(--motion-duration-fast) var(--motion-ease);
+}
+
+:root[data-dashboard-style='modern'][data-motion-enabled='true']
+  [data-dashboard-toast='true']:hover {
+  transform: translateY(-1px);
+  box-shadow:
+    0 14px 32px -10px hsl(var(--foreground) / 0.2),
+    0 0 0 1px hsl(var(--border));
+}
+
+@media (prefers-reduced-motion: reduce) {
+  :root[data-dashboard-style='modern'] [data-dashboard-switch-thumb='true'],
+  :root[data-dashboard-style='modern'] [data-dashboard-slider-thumb='true'],
+  :root[data-dashboard-style='modern'] [data-dashboard-slider-track='true'],
+  :root[data-dashboard-style='modern'] [data-dashboard-checkbox='true'],
+  :root[data-dashboard-style='modern'] [data-modern-thinking-char='true'],
+  :root[data-dashboard-style='modern'] [data-dashboard-toast='true'],
+  :root[data-dashboard-style='modern'] :is([data-dashboard-input='true'], textarea) {
+    animation: none !important;
+    transition: none !important;
+    transform: none !important;
+  }
 }
 
 /* 选项卡片：选中加粗主色边和对勾，未选显示空心圆。 */

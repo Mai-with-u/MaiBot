@@ -3,7 +3,6 @@
 from typing import Any, Dict, List
 import base64
 
-
 def render_history_events(events: List[Dict[str, Any]]) -> List[Dict[str, Any]]:
     """只适配聊天流浏览的消息事件展示，查询和分页由共享事件账本负责。"""
     from src.webui.routers.system import _resolve_monitor_media_file

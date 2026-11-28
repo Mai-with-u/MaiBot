@@ -239,59 +239,65 @@ export function RelationshipGraph({
       </div>
       <div
         ref={viewport}
-        className="relative min-h-0 flex-1 touch-none overflow-hidden"
-        style={{ cursor: dragging ? 'grabbing' : 'grab' }}
-        onPointerDown={(event) => {
-          if (event.button !== 0 && event.button !== 1) return
-          if (event.button === 0 && (event.target as HTMLElement).closest('button')) return
-          event.preventDefault()
-          drag.current = { x: event.clientX, y: event.clientY }
-          setDragging(true)
-          event.currentTarget.setPointerCapture(event.pointerId)
-        }}
-        onMouseDown={(event) => {
-          if (event.button === 1) event.preventDefault()
-        }}
-        onAuxClick={(event) => {
-          if (event.button === 1) event.preventDefault()
-        }}
-        onPointerMove={(event) => {
-          if (!drag.current) return
-          const dx = event.clientX - drag.current.x
-          const dy = event.clientY - drag.current.y
-          drag.current = { x: event.clientX, y: event.clientY }
-          setView((current) => ({ ...current, x: current.x + dx, y: current.y + dy }))
-        }}
-        onPointerUp={() => {
-          drag.current = null
-          setDragging(false)
-        }}
-        onPointerCancel={() => {
-          drag.current = null
-          setDragging(false)
-        }}
-        onLostPointerCapture={() => {
-          drag.current = null
-          setDragging(false)
-        }}
-        onKeyDown={(event) => {
-          if (event.target !== event.currentTarget) return
-          const moves: Record<string, [number, number]> = {
-            ArrowLeft: [40, 0],
-            ArrowRight: [-40, 0],
-            ArrowUp: [0, 40],
-            ArrowDown: [0, -40],
-          }
-          const move = moves[event.key]
-          if (move) {
-            event.preventDefault()
-            setView((current) => ({ ...current, x: current.x + move[0], y: current.y + move[1] }))
-          }
-        }}
         role="region"
         aria-label="相通关系图"
-        tabIndex={0}
+        className="relative min-h-0 flex-1 touch-none overflow-hidden"
       >
+        <div
+          role="grid"
+          aria-roledescription="可拖拽缩放画布"
+          aria-label="相通关系图交互画布"
+          tabIndex={0}
+          className="relative h-full w-full"
+          style={{ cursor: dragging ? 'grabbing' : 'grab' }}
+          onPointerDown={(event) => {
+            if (event.button !== 0 && event.button !== 1) return
+            if (event.button === 0 && (event.target as HTMLElement).closest('button')) return
+            event.preventDefault()
+            drag.current = { x: event.clientX, y: event.clientY }
+            setDragging(true)
+            event.currentTarget.setPointerCapture(event.pointerId)
+          }}
+          onMouseDown={(event) => {
+            if (event.button === 1) event.preventDefault()
+          }}
+          onAuxClick={(event) => {
+            if (event.button === 1) event.preventDefault()
+          }}
+          onPointerMove={(event) => {
+            if (!drag.current) return
+            const dx = event.clientX - drag.current.x
+            const dy = event.clientY - drag.current.y
+            drag.current = { x: event.clientX, y: event.clientY }
+            setView((current) => ({ ...current, x: current.x + dx, y: current.y + dy }))
+          }}
+          onPointerUp={() => {
+            drag.current = null
+            setDragging(false)
+          }}
+          onPointerCancel={() => {
+            drag.current = null
+            setDragging(false)
+          }}
+          onLostPointerCapture={() => {
+            drag.current = null
+            setDragging(false)
+          }}
+          onKeyDown={(event) => {
+            if (event.target !== event.currentTarget) return
+            const moves: Record<string, [number, number]> = {
+              ArrowLeft: [40, 0],
+              ArrowRight: [-40, 0],
+              ArrowUp: [0, 40],
+              ArrowDown: [0, -40],
+            }
+            const move = moves[event.key]
+            if (move) {
+              event.preventDefault()
+              setView((current) => ({ ...current, x: current.x + move[0], y: current.y + move[1] }))
+            }
+          }}
+        >
         <div
           className="relative origin-top-left select-none"
           style={{
@@ -488,6 +494,7 @@ export function RelationshipGraph({
                 </Button>
               )
             })}
+          </div>
         </div>
       </div>
     </div>

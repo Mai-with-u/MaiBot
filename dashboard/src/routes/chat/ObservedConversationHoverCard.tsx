@@ -53,7 +53,7 @@ export function ObservedConversationHoverCard({
           onPointerLeave={() => schedule(false)}
           onFocus={() => schedule(true)}
           onBlur={(event) => { if (!event.currentTarget.contains(event.relatedTarget)) schedule(false) }}
-          onClick={() => { clearTimer(); setOpen(false) }}
+          onClickCapture={() => { clearTimer(); setOpen(false) }}
         >
           {children}
         </div>

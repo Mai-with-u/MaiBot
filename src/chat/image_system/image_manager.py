@@ -47,6 +47,10 @@ def _is_vlm_task_configured() -> bool:
 vlm = LLMServiceClient(task_name="vlm", request_type="image")
 
 
+class ImageDescriptionNotConfiguredError(ValueError):
+    """没有配置可生成图片描述的模型。"""
+
+
 class ImageManager:
     """图片描述管理器。"""
 
@@ -430,7 +434,7 @@ class ImageManager:
             logger.info(f"未配置 VLM 模型，跳过图片识别: {mai_image.file_hash}")
             return mai_image
 
-        desc = await self._generate_image_description(image_bytes, mai_image.image_format)
+        desc = await self.describe_image(image_bytes, mai_image.image_format)
         mai_image.description = desc
         mai_image.vlm_processed = True
         if not self.update_image_description(mai_image):
@@ -499,13 +503,16 @@ class ImageManager:
         if fixed_counter:
             logger.info(f"Cleaned mistaken registration state on {fixed_counter} image records")
 
-    async def _generate_image_description(self, image_bytes: bytes, image_format: str) -> str:
-        prompt_template = prompt_manager.get_prompt("image_description")
+    async def describe_image(self, image_bytes: bytes, image_format: str, *, prompt_suffix: str = "") -> str:
+        """生成描述，不读取或写入聊天图片缓存。"""
+        if not _is_vlm_task_configured():
+            raise ImageDescriptionNotConfiguredError("未配置 VLM 图片识别模型")
+        prompt_template = await asyncio.to_thread(prompt_manager.get_prompt, "image_description")
         prompt = await prompt_manager.render_prompt(prompt_template)
-        image_base64 = base64.b64encode(image_bytes).decode("utf-8")
+        image_base64 = (await asyncio.to_thread(base64.b64encode, image_bytes)).decode("utf-8")
 
         generation_result = await vlm.generate_response_for_image(
-            prompt,
+            prompt + prompt_suffix,
             image_base64,
             image_format,
         )

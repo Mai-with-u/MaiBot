@@ -31,7 +31,7 @@ gtk = "0.18"
 [target.'cfg(windows)'.dependencies]
 webview2-com = "0.39"
 windows-core = "0.62"
-win32 = { package = "windows", version = "0.62", features = ["Win32_Graphics_Gdi"] }
+win32 = { package = "windows", version = "0.62", features = ["Win32_Graphics_Gdi", "Win32_Security_Cryptography"] }
 
 [profile.release]
 codegen-units = 1

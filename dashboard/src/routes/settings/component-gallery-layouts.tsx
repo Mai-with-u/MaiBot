@@ -48,9 +48,17 @@ import {
 } from '@/components/ui/management'
 import { Markdown } from '@/components/ui/markdown'
 import { OrderControls } from '@/components/ui/order-controls'
+import {
+  RelationshipGraph,
+  type RelationshipEdge,
+  type RelationshipNode,
+} from '@/components/ui/relationship-graph'
+import { regionOutline } from '@/components/ui/relationship-regions'
 import { ScrollArea } from '@/components/ui/scroll-area'
 import { SelectionListItem } from '@/components/ui/selection-list-item'
+import { SortableCardGrid } from '@/components/ui/sortable-card-grid'
 import { Tabs, TabsContent } from '@/components/ui/tabs'
+import { VirtualList } from '@/components/ui/virtual-list'
 import { ZoomableChart } from '@/components/ui/zoomable-chart'
 
 import type { ComponentExample } from './component-gallery-types'
@@ -311,6 +319,71 @@ function SelectionExample() {
   )
 }
 
+const sampleRelationshipNodes: RelationshipNode[] = [
+  { id: 'group-a', label: '相通组 A', description: '2 个聊天', column: 0, colors: ['#3b82f6'] },
+  { id: 'chat-1', label: '开发群', description: 'QQ 群聊', column: 1, colors: ['#3b82f6'] },
+  { id: 'chat-2', label: '测试群', description: 'QQ 群聊', column: 1, colors: ['#3b82f6'] },
+]
+
+const sampleRelationshipEdges: RelationshipEdge[] = [
+  { from: 'group-a', to: 'chat-1', color: '#3b82f6' },
+  { from: 'group-a', to: 'chat-2', color: '#3b82f6' },
+]
+
+function RelationshipGraphExample() {
+  const [selectedId, setSelectedId] = useState<string>('group-a')
+  return (
+    <div className="flex h-72 flex-col">
+      <RelationshipGraph
+        nodes={sampleRelationshipNodes}
+        edges={sampleRelationshipEdges}
+        columns={['相通组', '聊天']}
+        selectedId={selectedId}
+        onSelect={setSelectedId}
+      />
+    </div>
+  )
+}
+
+const sampleRegionPath = regionOutline([
+  { x: 12, y: 12, width: 84, height: 48 },
+  { x: 64, y: 36, width: 84, height: 48 },
+])
+
+function SortableCardGridExample() {
+  const [order, setOrder] = useState(['one', 'two', 'three', 'four'])
+  const labels: Record<string, string> = {
+    one: '卡片一',
+    two: '卡片二',
+    three: '卡片三',
+    four: '卡片四',
+  }
+  return (
+    <SortableCardGrid
+      label="可排序卡片示例"
+      items={order.map((id) => ({ id, label: labels[id] }))}
+      onReorder={setOrder}
+    />
+  )
+}
+
+const virtualListItems = Array.from({ length: 40 }, (_, index) => ({
+  id: `item-${index + 1}`,
+  label: `虚拟列表项 ${index + 1}`,
+}))
+
+function VirtualListExample() {
+  return (
+    <VirtualList
+      className="h-40 rounded border"
+      items={virtualListItems}
+      getKey={(item) => item.id}
+      estimateSize={() => 36}
+      renderItem={(item) => <p className="border-b px-3 py-2 text-sm">{item.label}</p>}
+    />
+  )
+}
+
 export const layoutExamples: ComponentExample[] = [
   {
     file: 'accent-panel',
@@ -394,6 +467,37 @@ export const layoutExamples: ComponentExample[] = [
     preview: <OrderExample />,
   },
   {
+    file: 'relationship-graph',
+    name: 'RelationshipGraph',
+    category: '图表',
+    description: '分栏与总览相通关系图，支持滚轮缩放、拖拽平移和关联高亮。',
+    preview: <RelationshipGraphExample />,
+  },
+  {
+    file: 'relationship-regions',
+    name: 'regionOutline / RegionRect',
+    category: '辅助模块',
+    description: '合并相交矩形区域的外轮廓路径生成工具。',
+    preview: (
+      <svg
+        width="160"
+        height="96"
+        viewBox="0 0 160 96"
+        role="img"
+        aria-label="相交矩形外轮廓示例"
+        className="rounded border"
+      >
+        <path
+          d={sampleRegionPath}
+          fill="currentColor"
+          fillOpacity="0.12"
+          stroke="currentColor"
+          strokeWidth="2"
+        />
+      </svg>
+    ),
+  },
+  {
     file: 'scroll-area',
     name: 'ScrollArea / ScrollBar',
     category: '布局',
@@ -414,6 +518,20 @@ export const layoutExamples: ComponentExample[] = [
     category: '基础',
     description: '带选中、禁用状态的列表行。',
     preview: <SelectionExample />,
+  },
+  {
+    file: 'sortable-card-grid',
+    name: 'SortableCardGrid',
+    category: '布局',
+    description: '支持鼠标、触屏和键盘拖拽排序的卡片网格。',
+    preview: <SortableCardGridExample />,
+  },
+  {
+    file: 'virtual-list',
+    name: 'VirtualList',
+    category: '布局',
+    description: '仅挂载可视区域附近行的虚拟滚动长列表。',
+    preview: <VirtualListExample />,
   },
   {
     file: 'zoomable-chart',

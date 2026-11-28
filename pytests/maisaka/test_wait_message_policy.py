@@ -7,7 +7,7 @@ from src.chat.debounce import MessageDebouncer
 from src.core.tooling import ToolAvailabilityContext
 from src.maisaka.builtin_tool import get_builtin_tools
 from src.maisaka.builtin_tool.wait import handle_tool
-from src.maisaka.reasoning_engine import MaisakaReasoningEngine
+from src.maisaka.reasoning_engine import CycleRuntimeState, MaisakaReasoningEngine
 from src.maisaka.scenes.group.scheduling import GroupTurnScheduler
 
 
@@ -58,7 +58,8 @@ def test_wait_replaces_stop_in_ordinary_chat(is_group_chat: bool) -> None:
 
 
 @pytest.mark.asyncio
-async def test_untimed_wait_ends_ordinary_planner_turn() -> None:
+@pytest.mark.parametrize("private_screen", [False, True])
+async def test_untimed_wait_ends_ordinary_planner_turn(private_screen: bool) -> None:
     engine = object.__new__(MaisakaReasoningEngine)
     engine._turn_passive_replyer = False
     runtime = SimpleNamespace(
@@ -70,8 +71,8 @@ async def test_untimed_wait_ends_ordinary_planner_turn() -> None:
     )
     engine._runtime = runtime
     engine._emit_planner_progress = AsyncMock()
-    response = SimpleNamespace(tool_calls=[SimpleNamespace(func_name="wait", args={})])
-    state = SimpleNamespace()
+    response = SimpleNamespace(tool_calls=[SimpleNamespace(func_name="wait", args={})], private_screen=private_screen)
+    state = CycleRuntimeState()
 
     assert await engine._handle_planner_response_actions(
         response=response, cycle_detail=None, state=state, planner_extra_lines=[]
@@ -79,6 +80,7 @@ async def test_untimed_wait_ends_ordinary_planner_turn() -> None:
     runtime._enter_stop_state.assert_called_once_with()
     assert state.cycle_end == engine._cycle_end_for_pause_tool("wait:end")
     assert runtime._chat_history == []
+    assert state.private_screen_tool_names == (["wait"] if private_screen else [])
 
 
 @pytest.mark.asyncio

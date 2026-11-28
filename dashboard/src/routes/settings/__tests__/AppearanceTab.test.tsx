@@ -207,10 +207,16 @@ describe('AppearanceTab 主题模式与界面风格', () => {
     const user = userEvent.setup()
     render(<AppearanceTab />)
 
-    expect(screen.getByRole('tab', { name: /systemDesc/ })).toHaveAttribute('aria-selected', 'true')
-    expect(screen.getByRole('tab', { name: /darkDesc/ })).toHaveAttribute('aria-selected', 'false')
+    expect(screen.getByRole('radio', { name: 'settings.appearance.system' })).toHaveAttribute(
+      'aria-checked',
+      'true'
+    )
+    expect(screen.getByRole('radio', { name: 'settings.appearance.dark' })).toHaveAttribute(
+      'aria-checked',
+      'false'
+    )
 
-    await user.click(screen.getByRole('tab', { name: /darkDesc/ }))
+    await user.click(screen.getByRole('radio', { name: 'settings.appearance.dark' }))
     expect(themeState.setTheme).toHaveBeenCalledWith('dark')
   })
 
@@ -262,7 +268,7 @@ describe('AppearanceTab 主题模式与界面风格', () => {
     expect(screen.queryByText('settings.appearance.importExportTheme')).not.toBeInTheDocument()
 
     expect(
-      screen.getByRole('button', { name: 'settings.appearance.retroTextureFine' })
+      screen.getByRole('button', { name: 'settings.appearance.retroTextureCoarse' })
     ).toHaveAttribute('aria-pressed', 'true')
     await user.click(
       screen.getByRole('button', { name: 'settings.appearance.retroTextureDots' })
@@ -1159,7 +1165,10 @@ describe('AppearanceTab 未来复古 token 与滑块', () => {
     })
     expect(themeState.updateThemeConfig).toHaveBeenCalledWith({
       styleConfig: {
-        futureRetro: { ...DEFAULT_FUTURE_RETRO_STYLE_CONFIG, paperWarmth: 99 },
+        futureRetro: {
+          ...DEFAULT_FUTURE_RETRO_STYLE_CONFIG,
+          paperWarmth: DEFAULT_FUTURE_RETRO_STYLE_CONFIG.paperWarmth - 1,
+        },
       },
     })
 
@@ -1168,14 +1177,20 @@ describe('AppearanceTab 未来复古 token 与滑块', () => {
     })
     expect(themeState.updateThemeConfig).toHaveBeenCalledWith({
       styleConfig: {
-        futureRetro: { ...DEFAULT_FUTURE_RETRO_STYLE_CONFIG, textureIntensity: 56 },
+        futureRetro: {
+          ...DEFAULT_FUTURE_RETRO_STYLE_CONFIG,
+          textureIntensity: DEFAULT_FUTURE_RETRO_STYLE_CONFIG.textureIntensity + 1,
+        },
       },
     })
 
     fireEvent.keyDown(getLabeledSlider('settings.appearance.retroPanelDepth'), { key: 'ArrowLeft' })
     expect(themeState.updateThemeConfig).toHaveBeenCalledWith({
       styleConfig: {
-        futureRetro: { ...DEFAULT_FUTURE_RETRO_STYLE_CONFIG, panelDepth: 99 },
+        futureRetro: {
+          ...DEFAULT_FUTURE_RETRO_STYLE_CONFIG,
+          panelDepth: DEFAULT_FUTURE_RETRO_STYLE_CONFIG.panelDepth - 1,
+        },
       },
     })
   })

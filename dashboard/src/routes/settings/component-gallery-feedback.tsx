@@ -405,27 +405,23 @@ export const feedbackExamples: ComponentExample[] = [
     file: 'pixel-icon',
     name: 'PixelIcon',
     category: '图标',
-    description: '千禧会话工具栏的彩色像素图标。',
+    description: '千禧会话工具栏的彩色像素图标与新旧对照预览。',
     preview: (
-      <ul className="grid grid-cols-2 gap-x-4 gap-y-2 text-xs">
-        {([
-          ['record', '思考记录'], ['stats', '统计'], ['context', '上下文'], ['subagents', '子代理'],
-          ['schedules', '事项'], ['edit', '编辑'], ['top', '回到顶部'], ['previous', '上条消息'],
-          ['bottom', '回到底部'], ['clear', '清空'],
-        ] as const).map(([name, label]) => (
-          <li key={name} className="flex items-center gap-2">
-            <PixelIcon name={name} />{label}
-          </li>
-        ))}
-      </ul>
+      <div className="space-y-4">
+        <ul className="grid grid-cols-2 gap-x-4 gap-y-2 text-xs">
+          {([
+            ['record', '思考记录'], ['stats', '统计'], ['context', '上下文'], ['subagents', '子代理'],
+            ['schedules', '事项'], ['edit', '编辑'], ['top', '回到顶部'], ['previous', '上条消息'],
+            ['bottom', '回到底部'], ['clear', '清空'],
+          ] as const).map(([name, label]) => (
+            <li key={name} className="flex items-center gap-2">
+              <PixelIcon name={name} />{label}
+            </li>
+          ))}
+        </ul>
+        <PixelIconComparison />
+      </div>
     ),
-  },
-  {
-    file: 'pixel-icon',
-    name: 'PixelIcon · 新旧对照',
-    category: '图标',
-    description: '千禧图标新旧对照，左列为原版，右列为彩色手绘版。',
-    preview: <PixelIconComparison />,
   },
   {
     file: 'millennium-icons',

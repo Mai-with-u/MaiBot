@@ -1,4 +1,4 @@
-import { cleanup, fireEvent, render, screen, waitFor } from '@testing-library/react'
+import { cleanup, fireEvent, render, screen, waitFor, within } from '@testing-library/react'
 import userEvent from '@testing-library/user-event'
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest'
 
@@ -42,6 +42,7 @@ vi.mock('@/lib/prompt-api', () => ({
   getPromptFile: vi.fn(),
   getPromptVersionFile: vi.fn(),
   resetPromptFile: vi.fn(),
+  updateDefaultPromptFile: vi.fn(),
   updatePromptFile: vi.fn(),
 }))
 
@@ -213,12 +214,17 @@ describe('PromptManagementPage', () => {
     await user.click(screen.getByRole('button', { name: /双栏查看|promptCompare.title/ }))
     expect(screen.queryByRole('dialog')).not.toBeInTheDocument()
     await user.click(screen.getByRole('button', { name: /second\.prompt/ }))
-    expect(await screen.findByDisplayValue('second.prompt current')).toHaveAttribute('readonly')
+    const rightPane = screen.getByRole('region', { name: /promptCompare\.right/ })
+    expect(await within(rightPane).findByDisplayValue('second.prompt current')).not.toHaveAttribute(
+      'readonly'
+    )
     expect(screen.getByDisplayValue('unsaved-first')).toBeInTheDocument()
     expect(screen.getByRole('heading', { name: /^第一 Prompt/ })).toBeInTheDocument()
     await user.click(screen.getByRole('tab', { name: /指令片段/ }))
     await user.click(await screen.findByRole('button', { name: /note\.prompt/ }))
-    expect(await screen.findByDisplayValue('note.prompt current')).toHaveAttribute('readonly')
+    expect(await within(rightPane).findByDisplayValue('note.prompt current')).not.toHaveAttribute(
+      'readonly'
+    )
     expect(screen.getByDisplayValue('unsaved-first')).toBeInTheDocument()
     await user.click(screen.getByRole('button', { name: /退出双栏|promptCompare.exit/ }))
     expect(screen.queryByDisplayValue('second.prompt current')).not.toBeInTheDocument()

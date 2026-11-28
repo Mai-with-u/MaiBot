@@ -4,8 +4,17 @@ import * as React from "react"
 import { type DialogProps } from "@radix-ui/react-dialog"
 import { Command as CommandPrimitive } from "cmdk"
 import { Search } from "lucide-react"
+import { ModernGlideHighlight } from "@/components/motion"
 import { cn } from "@/lib/utils"
 import { Dialog, DialogContent } from "@/components/ui/dialog"
+
+function assignRef<T>(ref: React.ForwardedRef<T>, value: T) {
+  if (typeof ref === "function") {
+    ref(value)
+  } else if (ref) {
+    ref.current = value
+  }
+}
 
 const Command = React.forwardRef<
   React.ElementRef<typeof CommandPrimitive>,
@@ -56,13 +65,31 @@ CommandInput.displayName = CommandPrimitive.Input.displayName
 const CommandList = React.forwardRef<
   React.ElementRef<typeof CommandPrimitive.List>,
   React.ComponentPropsWithoutRef<typeof CommandPrimitive.List>
->(({ className, ...props }, ref) => (
-  <CommandPrimitive.List
-    ref={ref}
-    className={cn("max-h-[300px] overflow-y-auto overflow-x-hidden", className)}
-    {...props}
-  />
-))
+>(({ className, children, ...props }, ref) => {
+  const listRef = React.useRef<HTMLDivElement | null>(null)
+  const setRefs = React.useCallback(
+    (node: HTMLDivElement | null) => {
+      listRef.current = node
+      assignRef(ref, node)
+    },
+    [ref]
+  )
+
+  return (
+    <CommandPrimitive.List
+      ref={setRefs}
+      className={cn("relative max-h-[300px] overflow-y-auto overflow-x-hidden", className)}
+      {...props}
+    >
+      <ModernGlideHighlight
+        containerRef={listRef}
+        itemSelector="[cmdk-item]"
+        highlightedSelector="[cmdk-item][data-selected='true']"
+      />
+      {children}
+    </CommandPrimitive.List>
+  )
+})
 
 CommandList.displayName = CommandPrimitive.List.displayName
 

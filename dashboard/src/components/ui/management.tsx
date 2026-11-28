@@ -1,7 +1,9 @@
 import { useId, useRef, useState, type DragEvent, type ReactNode } from 'react'
 import * as RadioGroupPrimitive from '@radix-ui/react-radio-group'
 import { Check, FileArchive, Upload, X } from 'lucide-react'
+import { motion } from 'motion/react'
 
+import { useMotion } from '@/lib/motion'
 import { formatStorageBytes } from '@/lib/storage-size'
 import { cn } from '@/lib/utils'
 import { Button } from './button'
@@ -402,9 +404,14 @@ export function SegmentedControl({
   size = 'sm',
   className,
 }: SegmentedControlProps) {
+  const { style, enabled, transitions } = useMotion()
+  const indicatorId = useId()
+  const modernGlide = style === 'modern' && enabled
+
   return (
     <RadioGroupPrimitive.Root
       data-dashboard-segmented-control="true"
+      data-modern-segmented-glide={modernGlide ? 'true' : undefined}
       className={className}
       value={value ?? ''}
       onValueChange={onValueChange}
@@ -412,18 +419,38 @@ export function SegmentedControl({
       aria-label={ariaLabel}
       orientation="horizontal"
     >
-      {options.map((option) => (
-        <RadioGroupPrimitive.Item
-          key={option.value}
-          asChild
-          value={option.value}
-          disabled={disabled || option.disabled}
-        >
-          <Button type="button" variant="outline" size={size} aria-pressed={value === option.value}>
-            {option.label}
-          </Button>
-        </RadioGroupPrimitive.Item>
-      ))}
+      {options.map((option) => {
+        const selected = value === option.value
+        return (
+          <RadioGroupPrimitive.Item
+            key={option.value}
+            asChild
+            value={option.value}
+            disabled={disabled || option.disabled}
+          >
+            <Button
+              type="button"
+              variant="outline"
+              size={size}
+              aria-pressed={selected}
+              className={modernGlide ? 'relative overflow-visible' : undefined}
+            >
+              {modernGlide && selected && (
+                <motion.span
+                  layoutId={`segmented-pill-${indicatorId}`}
+                  data-segmented-pill="true"
+                  aria-hidden="true"
+                  transition={transitions.snappy}
+                  className="bg-background pointer-events-none absolute inset-0 z-0 rounded-md shadow-[0_1px_2px_hsl(var(--foreground)/0.12),0_0_0_1px_hsl(var(--input))]"
+                />
+              )}
+              <span className={modernGlide ? 'relative z-10 inline-flex items-center gap-1.5' : undefined}>
+                {option.label}
+              </span>
+            </Button>
+          </RadioGroupPrimitive.Item>
+        )
+      })}
     </RadioGroupPrimitive.Root>
   )
 }

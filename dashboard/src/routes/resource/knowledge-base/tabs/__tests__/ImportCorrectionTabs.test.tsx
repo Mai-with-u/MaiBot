@@ -502,7 +502,7 @@ describe('CorrectionTab', () => {
       </Tabs>,
     )
     expect(screen.getByText('加载聊天流')).toBeInTheDocument()
-    expect(screen.getByText('可直接填写，名称会在后端尝试转换为真实 session_id')).toBeInTheDocument()
+    expect(screen.getByPlaceholderText('输入聊天名、群号、QQ号或 session_id')).toBeInTheDocument()
 
     rerender(
       <Tabs defaultValue="correction">
@@ -739,7 +739,7 @@ describe('CorrectionTab', () => {
     const { correction } = renderCorrection({ selectedPlan: plan, selectedPreview: null })
 
     expect(screen.getByText('已执行')).toBeInTheDocument()
-    expect(screen.getByText('记忆段落')).toBeInTheDocument()
+    expect(screen.getByText('记忆内容（段落 / 关系）')).toBeInTheDocument()
     expect(screen.getByText('级联失效 1')).toBeInTheDocument()
     expect(screen.getByText('旧证据 1')).toBeInTheDocument()
     expect(screen.getByText('保护跳过 1')).toBeInTheDocument()

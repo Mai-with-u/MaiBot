@@ -2,9 +2,10 @@
 
 from io import BytesIO
 from pathlib import Path, PurePosixPath
-from typing import Any, Dict, List
+from typing import Any, Dict, List, Tuple
 from PIL import Image
 import base64
+import hashlib
 import json
 import re
 import shutil
@@ -12,6 +13,7 @@ import tempfile
 import zipfile
 
 MAX_BYTES = 32 * 1024 * 1024
+SkinAssets = Dict[str, Tuple[str, bytes]]
 BUNDLED_SKIN_ROOT = Path(__file__).with_name("presets")
 STATES = ("idle", "thinking", "talking", "dragging")
 EVENTS = ("click", "happy", "error", "greeting")
@@ -40,7 +42,7 @@ def _integer(value: Any, low: int, high: int) -> int:
     return value
 
 
-def load_skin(path: Path, *, assets: bool = True) -> Dict[str, Any]:
+def load_skin(path: Path, *, assets: bool = True, asset_blobs: SkinAssets | None = None) -> Dict[str, Any]:
     if path.stat().st_size > 256 * 1024:
         raise ValueError("skin.json 不能超过 256 KiB")
     data = json.loads(path.read_text("utf-8"))
@@ -100,7 +102,11 @@ def load_skin(path: Path, *, assets: bool = True) -> Dict[str, Any]:
             dimensions[filename] = image.size
             mime = Image.MIME[image.format]
             image.verify()
-        if assets:
+        if asset_blobs is not None:
+            digest = hashlib.sha256(raw).hexdigest()
+            asset_blobs[digest] = (mime, raw)
+            resources[filename] = digest
+        elif assets:
             resources[filename] = f"data:{mime};base64," + base64.b64encode(raw).decode("ascii")
         return dimensions[filename]
 
@@ -152,7 +158,7 @@ def load_skin(path: Path, *, assets: bool = True) -> Dict[str, Any]:
             "animations": normalized, "states": states, "events": events, "resources": resources}
 
 
-def find_skin(root: Path, skin_id: str, *, assets: bool = True) -> Dict[str, Any]:
+def find_skin(root: Path, skin_id: str, *, assets: bool = True, asset_blobs: SkinAssets | None = None) -> Dict[str, Any]:
     if skin_id == "builtin":
         return json.loads(json.dumps(BUILTIN))
     matches = []
@@ -166,7 +172,7 @@ def find_skin(root: Path, skin_id: str, *, assets: bool = True) -> Dict[str, Any
                 continue
     if len(matches) != 1:
         raise ValueError(f"皮肤 {skin_id} 不存在或 ID 重复")
-    return load_skin(matches[0], assets=assets)
+    return load_skin(matches[0], assets=assets, asset_blobs=asset_blobs)
 
 
 def list_skins(root: Path) -> Dict[str, Any]:

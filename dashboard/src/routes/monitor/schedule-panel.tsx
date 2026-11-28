@@ -97,8 +97,8 @@ export function ScheduleInspectorView({ sessionId }: { sessionId: string | null 
           value={query}
           onChange={(event) => setQuery(event.target.value)}
         />
-        <label className="flex w-fit cursor-pointer items-center gap-2 text-xs">
-          <Checkbox checked={includeCompleted} onCheckedChange={(checked) => setIncludeCompleted(checked === true)} />
+        <label htmlFor="schedule-include-completed" className="flex w-fit cursor-pointer items-center gap-2 text-xs">
+          <Checkbox id="schedule-include-completed" checked={includeCompleted} onCheckedChange={(checked) => setIncludeCompleted(checked === true)} />
           显示已完成和已取消
         </label>
       </div>

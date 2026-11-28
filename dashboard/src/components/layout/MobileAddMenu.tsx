@@ -7,7 +7,7 @@ import {
   DropdownMenuTrigger,
 } from '@/components/ui/dropdown-menu'
 import { cn } from '@/lib/utils'
-import { MOBILE_GLASS_CLASS } from './mobile-glass'
+import { MOBILE_GLASS_CLASS, MOBILE_GLASS_MENU_CLASS } from './mobile-glass'
 
 export interface MobileAddMenuItem {
   label: string
@@ -41,7 +41,7 @@ export function MobileAddMenu({ label, items }: MobileAddMenuProps) {
         align="end"
         sideOffset={8}
         data-mobile-add-menu="true"
-        className={cn('w-60 rounded-3xl border-0 p-1.5', MOBILE_GLASS_CLASS)}
+        className={cn('w-60 rounded-3xl border-0 p-1.5', MOBILE_GLASS_MENU_CLASS)}
       >
         {items.map((item) => (
           <DropdownMenuItem

@@ -11,7 +11,7 @@ class WaitTimeoutTrigger:
     tool_call_id: str
 
 
-TurnTrigger = Union[Literal["message", "proactive"], WaitTimeoutTrigger]
+TurnTrigger = Union[Literal["message", "proactive", "desktop_pet_screen"], WaitTimeoutTrigger]
 
 
 @dataclass(frozen=True)
