@@ -1302,7 +1302,9 @@ async def handle_chat_message(
     return next_user_name
 
 
-async def relay_plugin_chat_message(plugin_id: str, content: str, *, images: Optional[List[Dict[str, str]]] = None) -> str:
+async def relay_plugin_chat_message(
+    plugin_id: str, content: str, *, images: Optional[List[Dict[str, str]]] = None,
+) -> str:
     """把插件界面（如桌宠）里主人说的话投递到内部统一聊天，并同步给在线的网页聊天室。
 
     消息记录插件来源，不具备任何受保护命令权限。

@@ -298,7 +298,6 @@ class ChatManager:
 
     def _update_session_identity(self, session: BotChatSession, message: "SessionMessage") -> bool:
         """用真实入站消息补齐聊天流展示身份，群聊不保存最近发言人的用户信息。"""
-
         changed = False
         group_info = message.message_info.group_info
         user_info = message.message_info.user_info

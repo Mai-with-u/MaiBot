@@ -1,8 +1,9 @@
-/* 声明式皮肤播放器。资源在切换前全部解码，播放状态由窗口确认。 */
+/* 声明式皮肤播放器；远端皮肤首帧就绪后切换，其余帧按需加载。 */
 (() => {
   const stage = document.getElementById('stage');
   const pet = document.getElementById('pet');
   const builtin = document.getElementById('builtin-pet');
+  const loading = document.getElementById('skin-loading');
   const canvas = document.getElementById('skin-canvas');
   const ctx = canvas.getContext('2d');
   const previousCanvas = document.createElement('canvas');
@@ -12,6 +13,9 @@
   let hitRects = [];
   const transitionDuration = 160;
   let skin = null, images = {}, active = null, visible = true, switching = 0;
+  let loadImage, pixelRatio = 1;
+  let loadingTimer;
+  let loadingDeadline;
   let selected = '', started = performance.now(), flash = null;
   let transitionStarted = null, hasFrame = false;
   const history = new Map();
@@ -29,15 +33,70 @@
     selected = '';
   }
   function info() { return {id: skin?.id || 'builtin', name: skin?.name || '麦麦（内置）', version: skin?.version || '1'}; }
-  async function install(next) {
+  function resizeCanvas() {
+    const {width, height} = skin.canvas;
+    pixelRatio = Math.min(4, window.devicePixelRatio || 1);
+    canvas.width = Math.round(width * pixelRatio);
+    canvas.height = Math.round(height * pixelRatio);
+    previousCanvas.width = canvas.width;
+    previousCanvas.height = canvas.height;
+    transitionStarted = null;
+    hasFrame = false;
+  }
+  function setLoading(pending) {
+    clearTimeout(loadingTimer);
+    clearTimeout(loadingDeadline);
+    if (pending) {
+      loadingDeadline = setTimeout(() => setLoading(false), 30_000);
+      if (loading.hidden) loadingTimer = setTimeout(() => {
+        loading.hidden = false;
+        window.dispatchEvent(new Event('pet-skin-loading'));
+      }, 120);
+    } else if (!loading.hidden) {
+      loading.hidden = true;
+      window.dispatchEvent(new Event('pet-skin-loading'));
+    }
+  }
+  async function install(next, fetchAsset, prefetchAsset) {
     const revision = ++switching;
-    const loaded = {};
-    await Promise.all(Object.entries(next.resources || {}).map(async ([name, src]) => {
-      const image = new Image(); image.src = src; await image.decode(); loaded[name] = image;
-    }));
+    const firstAnimation = next.states?.[state()];
+    const loaded = Object.create(null), pending = new Map(), retries = new Map();
+    const requested = new Set();
+    let prefetching;
+    const load = name => {
+      const retry = retries.get(name);
+      if (retry && performance.now() < retry.nextAttemptAt) return Promise.resolve();
+      if (!pending.has(name)) pending.set(name, (async () => {
+        const src = next.resources[name];
+        requested.add(src);
+        const image = new Image();
+        if (prefetching?.digest === src) await prefetching.task;
+        image.src = fetchAsset ? await fetchAsset(src) : src;
+        await image.decode();
+        loaded[name] = image;
+        retries.delete(name);
+      })().catch(error => {
+        const attempts = (retries.get(name)?.attempts || 0) + 1;
+        const delay = Math.min(30_000, 500 * 2 ** (attempts - 1));
+        retries.set(name, {attempts, nextAttemptAt: performance.now() + delay});
+        pending.delete(name);
+        throw error;
+      }));
+      return pending.get(name);
+    };
+    setLoading(next.id !== 'builtin');
+    try {
+      if (fetchAsset && next.id !== 'builtin') {
+        await load(next.animations[firstAnimation].sequence[0].file);
+      } else {
+        await Promise.all(Object.keys(next.resources || {}).map(load));
+      }
+    } finally {
+      if (revision === switching) setLoading(false);
+    }
     if (revision !== switching) throw new Error('皮肤切换已被新请求替代');
     finish('interrupted', 'skin_changed');
-    skin = next; images = loaded; flash = null; selected = '';
+    skin = next; images = loaded; loadImage = fetchAsset ? load : null; flash = null; selected = '';
     transitionStarted = null; hasFrame = false;
     const c = skin.canvas;
     // 底部预留阶段字幕，落脚点固定在窗口底边中点，气泡随皮肤锚点调整，输入区仍由主页面管理。
@@ -46,14 +105,27 @@
     pet.style.bottom = (24 - (c.height - c.anchor[1])) + 'px';
     pet.dataset.skinHitbox = JSON.stringify(c.hitbox);
     stage.style.setProperty('--pet-top', (24 + c.anchor[1] - c.bubble_anchor[1] + 8) + 'px');
-    canvas.width = c.width * 2; canvas.height = c.height * 2;
+    resizeCanvas();
     hitCanvas.width = c.width; hitCanvas.height = c.height;
     hitRects = [];
-    previousCanvas.width = canvas.width; previousCanvas.height = canvas.height;
     canvas.style.width = c.width + 'px'; canvas.style.height = c.height + 'px';
     builtin.style.display = skin.id === 'builtin' ? '' : 'none';
     canvas.style.display = skin.id === 'builtin' ? 'none' : 'block';
+    render(performance.now(), firstAnimation);
     window.dispatchEvent(new Event('pet-skin-changed'));
+    if (prefetchAsset && next.id !== 'builtin') {
+      void (async () => {
+        // Download one at a time without decoding every sprite sheet into memory.
+        for (const digest of new Set(Object.values(next.resources))) {
+          if (revision !== switching) return;
+          if (requested.has(digest)) continue;
+          const task = prefetchAsset(digest).catch(error => console.warn('皮肤后台预加载失败', error));
+          prefetching = {digest, task};
+          await task;
+          prefetching = null;
+        }
+      })();
+    }
     return info();
   }
   function play(owner, name, repeat = 1) {
@@ -74,8 +146,7 @@
     }
     return {...active};
   }
-  function tick(now) {
-    requestAnimationFrame(tick);
+  function render(now, firstAnimation) {
     if (!skin) return;
     const current = state();
     if (active && ['talking', 'dragging'].includes(current)) finish('interrupted', current);
@@ -83,7 +154,7 @@
     if (flash && now >= flash.until) flash = null;
     if (skin.id === 'builtin' || !visible) return;
     const event = ['talking', 'dragging'].includes(current) ? null : flash;
-    const name = active?.animation || event?.name || skin.states[current];
+    const name = firstAnimation || active?.animation || event?.name || skin.states[current];
     const selection = active || event || name;
     if (selected !== selection) {
       // 保存实际显示的画面，连续点击或中途切换也从当前姿势开始过渡。
@@ -97,8 +168,20 @@
     const animation = skin.animations[name];
     const elapsed = now - (active?.started ?? event?.started ?? started);
     let progress = elapsed % animation.duration_ms;
-    let frame = animation.sequence[0];
-    for (const candidate of animation.sequence) { frame = candidate; if (progress < frame.duration_ms) break; progress -= frame.duration_ms; }
+    const frames = animation.sequence;
+    let index = 0;
+    for (; index < frames.length - 1 && progress >= frames[index].duration_ms; index++) {
+      progress -= frames[index].duration_ms;
+    }
+    const frame = frames[index];
+    if (!images[frame.file]) {
+      // Leave the last complete frame visible while a new animation asset is in flight.
+      loadImage?.(frame.file).catch(() => {});
+      return;
+    }
+    const nextFrame = frames[(index + 1) % frames.length];
+    if (!firstAnimation && !images[nextFrame.file]) loadImage?.(nextFrame.file).catch(() => {});
+    if (pixelRatio !== Math.min(4, window.devicePixelRatio || 1)) resizeCanvas();
     const [x,y,w,h] = frame.rect, c = skin.canvas;
     ctx.clearRect(0,0,canvas.width,canvas.height); ctx.save();
     if (transitionStarted !== null && now - transitionStarted >= transitionDuration) transitionStarted = null;
@@ -111,7 +194,7 @@
       ctx.globalCompositeOperation = 'lighter';
       ctx.globalAlpha = blend;
     }
-    ctx.scale(2,2);
+    ctx.scale(canvas.width / c.width, canvas.height / c.height);
     const phase = elapsed / Math.max(600, animation.duration_ms) * Math.PI * 2;
     ctx.translate(c.width / 2, c.height - 4);
     if (animation.motion === 'bob') ctx.translate(0, -2 - 2 * Math.sin(phase));
@@ -130,11 +213,16 @@
     hitRects = window.petAlphaRegion(hitCtx.getImageData(0, 0, c.width, c.height).data, c.width, c.height);
     window.dispatchEvent(new Event('pet-skin-frame'));
   }
+  function tick(now) {
+    requestAnimationFrame(tick);
+    render(now);
+  }
   requestAnimationFrame(tick);
   window.petSkin = {
     install,
+    setLoading,
     hitRegion() { return skin && skin.id !== 'builtin' ? hitRects : null; },
-    cancelInstall() { switching++; },
+    cancelInstall() { switching++; setLoading(false); },
     event(event) {
       if (!skin || skin.id === 'builtin' || active) return;
       const name = skin.events[event];

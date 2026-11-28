@@ -30,6 +30,10 @@ vi.mock('@/hooks/use-toast', () => ({
   useToast: () => ({ toast: toastMock }),
 }))
 
+vi.mock('@/hooks/use-feature-flags', () => ({
+  useFeatureFlags: () => ({ flags: { agent: false, files: false, desktopPet: false }, error: '' }),
+}))
+
 afterEach(() => cleanup())
 
 describe('RenderMessageSegment', () => {
@@ -97,7 +101,6 @@ describe('RenderMessageSegment', () => {
   it.each<[MessageSegment, string]>([
     [{ type: 'face', data: 123 }, 'chat.media.face:123'],
     [{ type: 'music', data: '' }, 'chat.media.music'],
-    [{ type: 'file', data: '报告.pdf' }, 'chat.media.file:报告.pdf'],
     [{ type: 'forward', data: '' }, 'chat.media.forward'],
     [{ type: 'unknown', data: '', original_type: 'xml' }, 'chat.media.unknown:xml'],
     // 无 original_type 时退回未知消息文案
@@ -105,6 +108,22 @@ describe('RenderMessageSegment', () => {
   ])('特殊段 %o 显示占位文案 %s', (segment, expected) => {
     render(<RenderMessageSegment segment={segment} />)
     expect(screen.getByText(expected)).toBeInTheDocument()
+  })
+
+  it('文件段通过 FileAttachment 渲染文件名，未开启文件功能时禁用下载按钮', () => {
+    const { rerender } = render(
+      <RenderMessageSegment segment={{ type: 'file', data: '报告.pdf' }} />
+    )
+    const button = screen.getByRole('button', { name: '报告.pdf' })
+    expect(button).toBeDisabled()
+    expect(button).toHaveAttribute('title', 'files.disabled')
+
+    rerender(
+      <RenderMessageSegment
+        segment={{ type: 'file', data: { name: '附件.txt', file_ref: 'ref-1' } }}
+      />
+    )
+    expect(screen.getByRole('button', { name: '附件.txt' })).toBeDisabled()
   })
 
   it('at 段优先显示群名片，并按昵称、用户 ID 逐级降级', () => {

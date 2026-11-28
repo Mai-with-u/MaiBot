@@ -361,7 +361,7 @@ async function openTaskEditor(user: ReturnType<typeof userEvent.setup>, task: st
     await user.click(screen.getByRole('button', { name: /MORE/ }))
   }
   const card = document.querySelector<HTMLElement>(selector)!
-  await user.click(within(card).getByRole('button', { name: /编辑|安排模型|开启/ }))
+  await user.click(within(card).getByRole('button', { name: /编辑|安排模型|设置/ }))
   return screen.findByRole('dialog', { name: new RegExp(title) })
 }
 
@@ -1020,22 +1020,41 @@ describe('ModelConfigPage 特征化', () => {
     expect(screen.queryByRole('heading', { name: 'openai' })).not.toBeInTheDocument()
   })
 
-  it('空厂商添加模型时校验缺失的提供商和必填项', async () => {
+  it('空厂商时禁用添加 LLM 模型入口，编辑缺失提供商的模型时校验必填项', async () => {
     const user = userEvent.setup()
-    const emptyConfig = {
-      models: [],
+    const incompleteConfig = {
+      models: [
+        { model_type: 'llm', name: 'broken-model', model_identifier: 'broken-id', api_provider: '' },
+      ],
       api_providers: [],
       model_task_config: { embedding: { model_list: [] } },
     }
-    vi.mocked(configApi.getModelConfigCached).mockResolvedValue(emptyConfig as never)
-    vi.mocked(configApi.getModelConfig).mockResolvedValue(emptyConfig as never)
+    vi.mocked(configApi.getModelConfigCached).mockResolvedValue(incompleteConfig as never)
+    vi.mocked(configApi.getModelConfig).mockResolvedValue(incompleteConfig as never)
 
     await renderModelPage()
-    await user.click(screen.getByRole('tab', { name: /^模型库/ }))
-    await openAddModel(user)
+    await openConfigurationTab(user)
+    await user.click(document.querySelector<HTMLButtonElement>('[data-tour="add-model-button"]')!)
+    expect(screen.getByRole('menuitem', { name: '添加 LLM 模型' })).toHaveAttribute(
+      'aria-disabled',
+      'true'
+    )
+    await user.click(screen.getByRole('menuitem', { name: '其他模型' }))
+    expect(await screen.findByRole('menuitem', { name: '嵌入模型' })).toHaveAttribute(
+      'aria-disabled',
+      'true'
+    )
+    expect(screen.getByRole('menuitem', { name: '语音识别模型' })).not.toHaveAttribute(
+      'aria-disabled',
+      'true'
+    )
+    await user.keyboard('{Escape}')
 
+    await user.click(within(getModelTable()).getByRole('button', { name: '编辑模型 broken-model' }))
     const dialog = await screen.findByRole('dialog')
-    expect(within(dialog).getByRole('heading', { name: '添加 LLM 模型' })).toBeInTheDocument()
+    expect(within(dialog).getByRole('heading', { name: '编辑模型' })).toBeInTheDocument()
+    await user.clear(within(dialog).getByRole('textbox', { name: /^名称/ }))
+    await user.clear(within(dialog).getByLabelText(/模型标识符/))
     await user.click(within(dialog).getByRole('button', { name: '保存' }))
 
     expect(within(dialog).getByText('请输入模型名称')).toBeInTheDocument()
@@ -1140,6 +1159,7 @@ describe('ModelConfigPage 特征化', () => {
     const user = userEvent.setup()
     const invalidConfig = {
       ...baseConfig(),
+      _warnings: ['replyer 引用了不存在的模型: ghost-model'],
       model_task_config: {
         replyer: { model_list: ['ghost-model'] },
         embedding: { model_list: ['old-embed-model'] },
@@ -1149,13 +1169,23 @@ describe('ModelConfigPage 特征化', () => {
     vi.mocked(configApi.getModelConfig).mockResolvedValue(invalidConfig as never)
 
     await renderModelPage()
-    expect(screen.getByText('检测到无效的模型引用')).toBeInTheDocument()
+    expect(screen.getByText('模型配置需要修正')).toBeInTheDocument()
     expect(screen.getByText(/引用了不存在的模型: ghost-model/)).toBeInTheDocument()
 
     await user.click(screen.getByRole('button', { name: '一键清理' }))
-    await waitFor(() => expect(screen.queryByText('检测到无效的模型引用')).not.toBeInTheDocument())
+    await waitFor(() => expect(screen.queryByRole('button', { name: '一键清理' })).not.toBeInTheDocument())
     expect(toastMock).toHaveBeenCalledWith(
       expect.objectContaining({ title: '清理完成', description: '已删除所有无效的模型引用' })
+    )
+    await waitFor(
+      () => {
+        expect(configApi.updateModelConfigSection).toHaveBeenCalledWith(
+          'model_task_config',
+          expect.objectContaining({ replyer: { model_list: [] } })
+        )
+        expect(screen.queryByText('模型配置需要修正')).not.toBeInTheDocument()
+      },
+      { timeout: 4000 }
     )
   })
 

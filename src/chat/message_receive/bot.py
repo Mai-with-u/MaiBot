@@ -961,7 +961,8 @@ class ChatBot:
             # 已注册命令优先进入命令链；普通消息仍需先通过聊天过滤。
             text = message.processed_plain_text or ""
             pm_command = (
-                await match_pm_command(get_command_text(message)) if is_command_target_allowed(message) else None
+                await match_pm_command(get_command_text(message))
+                if is_command_target_allowed(message) else None
             )
             if pm_command and message.session_id:
                 disabled_commands = global_announcement_manager.get_disabled_chat_commands(message.session_id)
@@ -990,13 +991,7 @@ class ChatBot:
             from src.desktop_pet.service import desktop_pet_service
 
             desktop_pet_service.notify_user_message(platform, user_id, is_group=group_info is not None)
-            _ = await chat_manager.get_or_create_session(
-                platform,
-                user_id,
-                group_id,
-                account_id=account_id,
-                scope=scope,
-            )  # 确保会话存在
+            await chat_manager.get_or_create_session(platform, user_id, group_id, account_id=account_id, scope=scope)
 
             from src.files.service import get_file_service
 

@@ -21,35 +21,42 @@ const TooltipContent = React.forwardRef<
     motionRef.current = motion
   }, [motion])
 
-  const nodeRef = React.useRef<HTMLDivElement | null>(null)
+  const animatedNodeRef = React.useRef<HTMLDivElement | null>(null)
   const controlsRef = React.useRef<ReturnType<typeof animate> | null>(null)
 
   React.useEffect(
     () => () => {
       controlsRef.current?.stop()
       controlsRef.current = null
+      animatedNodeRef.current = null
     },
     []
   )
 
   const composedRef = React.useCallback(
     (node: HTMLDivElement | null) => {
-      const previousNode = nodeRef.current
-      nodeRef.current = node
+      if (node) {
+        // Radix Popper 重算定位时会轮换内联 ref 回调，导致 React 对同一 DOM 节点先传 null 再传 node；
+        // 仅在真正挂载新节点时播放入场动画，避免提示气泡连闪两下。
+        if (animatedNodeRef.current !== node) {
+          animatedNodeRef.current = node
+          controlsRef.current?.stop()
+          controlsRef.current = null
 
-      if (node !== previousNode) {
+          if (motionRef.current.enabled) {
+            const { overlayScale, overlayY } = motionRef.current.profile.distances
+            const offset = Math.max(2, Math.round(overlayY * 0.6))
+            controlsRef.current = animate(
+              node,
+              { opacity: [0, 1], scale: [overlayScale, 1], y: [offset, 0] },
+              motionRef.current.transitions.overlay
+            )
+          }
+        }
+      } else if (animatedNodeRef.current && !animatedNodeRef.current.isConnected) {
         controlsRef.current?.stop()
         controlsRef.current = null
-
-        if (node && motionRef.current.enabled) {
-          const { overlayScale, overlayY } = motionRef.current.profile.distances
-          const offset = Math.max(2, Math.round(overlayY * 0.6))
-          controlsRef.current = animate(
-            node,
-            { opacity: [0, 1], scale: [overlayScale, 1], y: [offset, 0] },
-            motionRef.current.transitions.overlay
-          )
-        }
+        animatedNodeRef.current = null
       }
 
       if (typeof ref === "function") {

@@ -12,7 +12,7 @@ it('QQ 号和纯数字 OpenID 经路由解析仍完整保留字符串', () => {
 })
 it('兼容旧链接的数字 QQ 号，拒绝丢失精度的数字', () => {
   expect(migrationUserId(123456789)).toBe('123456789')
-  expect(migrationUserId(12345678901234567890)).toBeUndefined()
+  expect(migrationUserId(Number('12345678901234567890'))).toBeUndefined()
 })
 
 it('返回映射页的状态只序列化一次', () => {

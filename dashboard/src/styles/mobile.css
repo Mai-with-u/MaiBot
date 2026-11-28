@@ -1,8 +1,10 @@
 /*
- * 原版风格的手机端（lg 以下）：iOS Liquid Glass 克制版。
- * 内容一律是纯色实底：中性浅灰页面 + 白色大圆角卡片，无描边、无投影；
- * 玻璃只出现在悬浮层（标签栏、搜索、弹层）上，由组件自己的类名负责。
- * 桌面端完全不受这里的规则影响。
+ * 现代风格手机模式（lg 以下，即底部导航栏出现时）：
+ * 参考 FlClash (prism_ui) 的双层体系：
+ * 1. 悬浮控制与弹层使用多层次光学液态玻璃（方向性上下弧面高光 + 极细暗色外框 + 高饱和提亮折射 + 悬浮透镜）；
+ * 2. 页面内部全部统一为四阶色调材质（画布 → 24px 大圆角卡片 → 胶囊/圆角控件块 → 抬升滑块）与 0.5px 细分隔线，
+ *    消除桌面端直角方框与多层嵌套感。
+ * 桌面端（>= 1024px）以及千禧、未来复古风格均不受这里的现代手机规则影响。
  */
 
 :root[data-dashboard-style='modern'] {
@@ -11,8 +13,16 @@
   --m-fill: #efeff1;
   --m-ink: #1d1d1f;
   --m-muted: #6e6e73;
-  --m-hairline: rgb(0 0 0 / 0.1);
+  --m-hairline: rgb(0 0 0 / 0.09);
+  --m-hairline-soft: rgb(0 0 0 / 0.055);
   --m-ok: #34c759;
+
+  /* 四阶色调层级：沿用当前主题配色并拉出清晰的层次（对应 prism_ui SurfaceLevel） */
+  --m-surface-page: color-mix(in srgb, hsl(var(--muted)) 56%, #f2f2f7);
+  --m-surface-card: hsl(var(--card));
+  --m-surface-block: color-mix(in srgb, hsl(var(--foreground)) 5.5%, var(--m-surface-card));
+  --m-surface-elevated: #ffffff;
+  --m-surface-press: color-mix(in srgb, hsl(var(--foreground)) 9%, var(--m-surface-card));
 }
 
 :root[data-dashboard-style='modern'].dark {
@@ -21,104 +31,333 @@
   --m-fill: #2c2c2e;
   --m-ink: #f5f5f7;
   --m-muted: #98989d;
-  --m-hairline: rgb(255 255 255 / 0.12);
+  --m-hairline: hsl(var(--foreground) / 0.11);
+  --m-hairline-soft: hsl(var(--foreground) / 0.07);
   --m-ok: #30d158;
+
+  /* 夜间逐阶提亮而不回退，保留当前配色的温暖/冷色氛围 */
+  --m-surface-page: hsl(var(--background));
+  --m-surface-card: color-mix(in srgb, hsl(var(--card)) 88%, hsl(var(--foreground)) 5%);
+  --m-surface-block: color-mix(in srgb, hsl(var(--foreground)) 8.5%, var(--m-surface-card));
+  --m-surface-elevated: color-mix(in srgb, hsl(var(--foreground)) 17%, var(--m-surface-card));
+  --m-surface-press: color-mix(in srgb, hsl(var(--foreground)) 12%, var(--m-surface-card));
 }
 
-/*
- * 液态玻璃（iOS 26 Liquid Glass 的网页近似）。
- * 放在 utilities 层里，与之前的 Tailwind 工具类处于同一层级，各风格的皮肤规则照旧可以覆盖它。
- * - 底色很淡，主要靠背后内容的模糊与提饱和显出材质；
- * - 一圈 0.5px 亮边，上沿和左沿更亮，像光从上方打在玻璃边缘；
- * - 内侧柔光表现厚度，外投影只有一层很轻的漫射。
- * - 按下时整体略微放大，接近原生按钮的弹性反馈。
- */
+/* ============================================================================
+ * 一、FlClash (prism_ui) 风格液态玻璃材质体系
+ * - .m-glass：悬浮控制层（底部导航栏、返回键、搜索圆键、页头按钮、实时条）
+ * - .m-glass-menu：悬浮菜单与弹层（下拉菜单、选择器、气泡，高可读性磨砂）
+ * - .m-glass-lens：导航栏按压拖拽时抬升的清澈放大液态透镜（_GlassLens）
+ * ============================================================================ */
+
 @layer utilities {
+  :where(.m-glass, .m-glass-menu, .m-glass-mobile) {
+    position: relative;
+  }
+
   .m-glass,
+  .m-glass-menu,
   .m-glass-mobile {
-    --m-glass-tint: rgb(255 255 255 / 0.62);
-    --m-glass-tint-edge: rgb(255 255 255 / 0.42);
-    --m-glass-rim: rgb(255 255 255 / 0.95);
-    --m-glass-rim-soft: rgb(255 255 255 / 0.45);
-    --m-glass-edge: rgb(0 0 0 / 0.07);
-    --m-glass-glow: rgb(255 255 255 / 0.35);
-    --m-glass-shadow: 0 8px 28px rgb(0 0 0 / 0.1), 0 1px 4px rgb(0 0 0 / 0.05);
+    --m-glass-filter: blur(16px) saturate(215%) brightness(1.06);
+    --m-glass-menu-filter: blur(22px) saturate(210%) brightness(1.04);
+    --m-glass-bg: linear-gradient(
+      180deg,
+      rgb(255 255 255 / 0.68) 0%,
+      rgb(250 251 254 / 0.36) 48%,
+      rgb(255 255 255 / 0.56) 100%
+    );
+    --m-glass-menu-bg: linear-gradient(
+      180deg,
+      rgb(255 255 255 / 0.84) 0%,
+      rgb(252 252 254 / 0.74) 52%,
+      rgb(255 255 255 / 0.8) 100%
+    );
+    --m-glass-rim-top: rgb(255 255 255 / 0.98);
+    --m-glass-rim-corner: rgb(255 255 255 / 0.72);
+    --m-glass-rim-side: rgb(255 255 255 / 0.14);
+    --m-glass-rim-corner-b: rgb(255 255 255 / 0.5);
+    --m-glass-rim-bottom: rgb(255 255 255 / 0.76);
+    --m-glass-outer-line: rgb(0 0 0 / 0.085);
+    --m-glass-tail-top: rgb(255 255 255 / 0.68);
+    --m-glass-tail-bottom: rgb(255 255 255 / 0.4);
+    --m-glass-shadow:
+      0 10px 30px -4px rgb(0 0 0 / 0.12),
+      0 2px 7px -1px rgb(0 0 0 / 0.06);
+    --m-glass-press-glow: rgb(255 255 255 / 0.52);
+    --m-dock-platter-bg: color-mix(in srgb, hsl(var(--foreground)) 8.5%, rgb(255 255 255 / 0.35));
+    --m-dock-platter-shadow:
+      inset 0 1px 0 rgb(255 255 255 / 0.68),
+      0 1px 3px rgb(0 0 0 / 0.06);
+    --m-lens-bg: linear-gradient(
+      180deg,
+      rgb(255 255 255 / 0.44) 0%,
+      rgb(255 255 255 / 0.18) 50%,
+      rgb(255 255 255 / 0.34) 100%
+    );
+    --m-lens-shadow:
+      0 0 0 0.75px rgb(0 0 0 / 0.09),
+      inset 0 2px 5px rgb(255 255 255 / 0.8),
+      inset 0 -2px 4px rgb(255 255 255 / 0.45),
+      0 8px 22px -2px rgb(0 0 0 / 0.15);
   }
 
   .dark .m-glass,
+  .dark .m-glass-menu,
   .dark .m-glass-mobile {
-    --m-glass-tint: rgb(44 44 48 / 0.62);
-    --m-glass-tint-edge: rgb(44 44 48 / 0.44);
-    --m-glass-rim: rgb(255 255 255 / 0.32);
-    --m-glass-rim-soft: rgb(255 255 255 / 0.12);
-    --m-glass-edge: rgb(0 0 0 / 0.35);
-    --m-glass-glow: rgb(255 255 255 / 0.06);
-    --m-glass-shadow: 0 8px 28px rgb(0 0 0 / 0.45), 0 1px 4px rgb(0 0 0 / 0.3);
+    --m-glass-filter: blur(16px) saturate(245%) brightness(1.26) contrast(1.05);
+    --m-glass-menu-filter: blur(24px) saturate(210%) brightness(1.22) contrast(1.04);
+    --m-glass-bg: linear-gradient(
+      180deg,
+      color-mix(in srgb, hsl(var(--card)) 48%, rgb(255 255 255 / 0.09)) 0%,
+      color-mix(in srgb, hsl(var(--card)) 30%, rgb(18 18 22 / 0.34)) 50%,
+      color-mix(in srgb, hsl(var(--card)) 44%, rgb(255 255 255 / 0.05)) 100%
+    );
+    --m-glass-menu-bg: linear-gradient(
+      180deg,
+      color-mix(in srgb, hsl(var(--card)) 74%, rgb(255 255 255 / 0.07)) 0%,
+      color-mix(in srgb, hsl(var(--card)) 64%, rgb(16 16 20 / 0.62)) 52%,
+      color-mix(in srgb, hsl(var(--card)) 72%, rgb(255 255 255 / 0.04)) 100%
+    );
+    --m-glass-rim-top: rgb(255 255 255 / 0.54);
+    --m-glass-rim-corner: rgb(255 255 255 / 0.3);
+    --m-glass-rim-side: rgb(255 255 255 / 0.04);
+    --m-glass-rim-corner-b: rgb(255 255 255 / 0.22);
+    --m-glass-rim-bottom: rgb(255 255 255 / 0.36);
+    --m-glass-outer-line: rgb(0 0 0 / 0.56);
+    --m-glass-tail-top: rgb(255 255 255 / 0.18);
+    --m-glass-tail-bottom: rgb(255 255 255 / 0.09);
+    --m-glass-shadow:
+      0 12px 34px -4px rgb(0 0 0 / 0.52),
+      0 2px 8px -2px rgb(0 0 0 / 0.34);
+    --m-glass-press-glow: rgb(255 255 255 / 0.16);
+    --m-dock-platter-bg: color-mix(in srgb, rgb(255 255 255 / 0.11) 70%, hsl(var(--card)) 30%);
+    --m-dock-platter-shadow:
+      inset 0 1px 0 rgb(255 255 255 / 0.22),
+      inset 0 -0.5px 0 rgb(255 255 255 / 0.08),
+      0 1px 4px rgb(0 0 0 / 0.26);
+    --m-lens-bg: linear-gradient(
+      180deg,
+      rgb(255 255 255 / 0.1) 0%,
+      rgb(255 255 255 / 0.015) 50%,
+      rgb(255 255 255 / 0.07) 100%
+    );
+    --m-lens-shadow:
+      0 0 0 0.75px rgb(0 0 0 / 0.5),
+      inset 0 2px 6px rgb(255 255 255 / 0.26),
+      inset 0 -2px 5px rgb(255 255 255 / 0.14),
+      0 10px 26px -2px rgb(0 0 0 / 0.45);
   }
 
   .m-glass {
-    -webkit-backdrop-filter: blur(22px) saturate(180%);
-    backdrop-filter: blur(22px) saturate(180%);
+    -webkit-backdrop-filter: var(--m-glass-filter);
+    backdrop-filter: var(--m-glass-filter);
     background-color: transparent;
-    background-image: linear-gradient(
-      160deg,
-      var(--m-glass-tint) 0%,
-      var(--m-glass-tint-edge) 55%,
-      var(--m-glass-tint) 100%
-    );
+    background-image: var(--m-glass-bg);
     box-shadow:
-      inset 0 0 0 0.5px var(--m-glass-edge),
-      inset 0 1px 0 var(--m-glass-rim),
-      inset 1px 0 0 var(--m-glass-rim-soft),
-      inset -1px 0 0 var(--m-glass-rim-soft),
-      inset 0 -1px 0 var(--m-glass-rim-soft),
-      inset 0 0 14px var(--m-glass-glow),
+      0 0 0 0.75px var(--m-glass-outer-line),
+      inset 0 2.5px 6px -1px var(--m-glass-tail-top),
+      inset 0 -2px 5px -1px var(--m-glass-tail-bottom),
       var(--m-glass-shadow);
-    transition: scale 0.25s cubic-bezier(0.34, 1.56, 0.64, 1);
+    transition:
+      scale 0.26s cubic-bezier(0.34, 1.56, 0.64, 1),
+      box-shadow var(--motion-duration-fast) var(--motion-ease),
+      filter var(--motion-duration-fast) var(--motion-ease);
+  }
+
+  .m-glass-menu {
+    -webkit-backdrop-filter: var(--m-glass-menu-filter);
+    backdrop-filter: var(--m-glass-menu-filter);
+    background-color: transparent;
+    background-image: var(--m-glass-menu-bg);
+    box-shadow:
+      0 0 0 0.75px var(--m-glass-outer-line),
+      inset 0 2px 5px -1px var(--m-glass-tail-top),
+      inset 0 -1.5px 4px -1px var(--m-glass-tail-bottom),
+      var(--m-glass-shadow);
   }
 
   :is(button, a).m-glass:active {
     scale: 1.06;
+    filter: brightness(1.06);
   }
 
   @media (max-width: 1023.98px) {
     .m-glass-mobile {
-      -webkit-backdrop-filter: blur(22px) saturate(180%);
-      backdrop-filter: blur(22px) saturate(180%);
+      -webkit-backdrop-filter: var(--m-glass-menu-filter);
+      backdrop-filter: var(--m-glass-menu-filter);
       background-color: transparent;
-      background-image: linear-gradient(
-        160deg,
-        var(--m-glass-tint) 0%,
-        var(--m-glass-tint-edge) 55%,
-        var(--m-glass-tint) 100%
-      );
+      background-image: var(--m-glass-menu-bg);
       box-shadow:
-        inset 0 0 0 0.5px var(--m-glass-edge),
-        inset 0 1px 0 var(--m-glass-rim),
-        inset 1px 0 0 var(--m-glass-rim-soft),
-        inset -1px 0 0 var(--m-glass-rim-soft),
-        inset 0 -1px 0 var(--m-glass-rim-soft),
-        inset 0 0 14px var(--m-glass-glow),
+        0 0 0 0.75px var(--m-glass-outer-line),
+        inset 0 2px 5px -1px var(--m-glass-tail-top),
+        inset 0 -1.5px 4px -1px var(--m-glass-tail-bottom),
         var(--m-glass-shadow);
     }
   }
 }
 
+/* 方向性光学高光环（liquid_glass.frag normal.y² 规律）：
+   上下弧边与四角呈现锐利镜面折射高光，左右垂直端自然衰减近隐形；
+   仅作用于 modern 主题，避免干扰千禧/未来复古的键帽或纸面样式。 */
+:root[data-dashboard-style='modern'] :is(.m-glass, .m-glass-menu)::before {
+  content: '';
+  position: absolute;
+  inset: 0;
+  z-index: 2;
+  border-radius: inherit;
+  padding: 1.25px;
+  pointer-events: none;
+  background: conic-gradient(
+    from 0deg at 50% 50%,
+    var(--m-glass-rim-top) 0deg,
+    var(--m-glass-rim-corner) 40deg,
+    var(--m-glass-rim-side) 90deg,
+    var(--m-glass-rim-corner-b) 140deg,
+    var(--m-glass-rim-bottom) 180deg,
+    var(--m-glass-rim-corner-b) 220deg,
+    var(--m-glass-rim-side) 270deg,
+    var(--m-glass-rim-corner) 320deg,
+    var(--m-glass-rim-top) 360deg
+  );
+  -webkit-mask:
+    linear-gradient(#000 0 0) content-box,
+    linear-gradient(#000 0 0);
+  -webkit-mask-composite: xor;
+  mask:
+    linear-gradient(#000 0 0) content-box,
+    linear-gradient(#000 0 0);
+  mask-composite: exclude;
+}
+
 @media (max-width: 1023.98px) {
-  /* ---------- 页面与卡片 ---------- */
+  :root[data-dashboard-style='modern'] .m-glass-mobile::before {
+    content: '';
+    position: absolute;
+    inset: 0;
+    z-index: 2;
+    border-radius: inherit;
+    padding: 1.25px;
+    pointer-events: none;
+    background: conic-gradient(
+      from 0deg at 50% 50%,
+      var(--m-glass-rim-top) 0deg,
+      var(--m-glass-rim-corner) 40deg,
+      var(--m-glass-rim-side) 90deg,
+      var(--m-glass-rim-corner-b) 140deg,
+      var(--m-glass-rim-bottom) 180deg,
+      var(--m-glass-rim-corner-b) 220deg,
+      var(--m-glass-rim-side) 270deg,
+      var(--m-glass-rim-corner) 320deg,
+      var(--m-glass-rim-top) 360deg
+    );
+    -webkit-mask:
+      linear-gradient(#000 0 0) content-box,
+      linear-gradient(#000 0 0);
+    -webkit-mask-composite: xor;
+    mask:
+      linear-gradient(#000 0 0) content-box,
+      linear-gradient(#000 0 0);
+    mask-composite: exclude;
+  }
+}
 
-  :root[data-dashboard-style='modern'] [data-dashboard-main='true'].bg-background {
-    background-color: var(--m-page);
+/* 导航栏静息底板与抬升放大液态透镜（FlClash NavigationDock _Lens / _GlassLens） */
+:root[data-dashboard-style='modern'] .m-dock-platter {
+  background: var(--m-dock-platter-bg);
+  box-shadow: var(--m-dock-platter-shadow);
+}
+
+:root[data-dashboard-style='modern'] .m-glass-lens {
+  -webkit-backdrop-filter: blur(4px) saturate(230%) brightness(1.14);
+  backdrop-filter: blur(4px) saturate(230%) brightness(1.14);
+  background-image: var(--m-lens-bg);
+  box-shadow: var(--m-lens-shadow);
+}
+
+:root[data-dashboard-style='modern'].dark .m-glass-lens {
+  -webkit-backdrop-filter: blur(4px) saturate(260%) brightness(1.3);
+  backdrop-filter: blur(4px) saturate(260%) brightness(1.3);
+}
+
+/* 悬浮透镜边缘带极轻微的棱镜色散高光（呼应 liquid_glass.frag dispersion） */
+:root[data-dashboard-style='modern'] .m-glass-lens::before {
+  content: '';
+  position: absolute;
+  inset: 0;
+  border-radius: inherit;
+  padding: 1.4px;
+  pointer-events: none;
+  background: conic-gradient(
+    from 0deg at 50% 50%,
+    rgb(255 255 255 / 0.92) 0deg,
+    rgb(190 232 255 / 0.58) 44deg,
+    rgb(255 255 255 / 0.14) 90deg,
+    rgb(255 224 186 / 0.52) 136deg,
+    rgb(255 255 255 / 0.78) 180deg,
+    rgb(255 224 186 / 0.48) 224deg,
+    rgb(255 255 255 / 0.14) 270deg,
+    rgb(190 232 255 / 0.62) 316deg,
+    rgb(255 255 255 / 0.92) 360deg
+  );
+  -webkit-mask:
+    linear-gradient(#000 0 0) content-box,
+    linear-gradient(#000 0 0);
+  -webkit-mask-composite: xor;
+  mask:
+    linear-gradient(#000 0 0) content-box,
+    linear-gradient(#000 0 0);
+  mask-composite: exclude;
+}
+
+:root[data-dashboard-style='modern'].dark .m-glass-lens::before {
+  background: conic-gradient(
+    from 0deg at 50% 50%,
+    rgb(255 255 255 / 0.74) 0deg,
+    rgb(174 226 255 / 0.42) 44deg,
+    rgb(255 255 255 / 0.08) 90deg,
+    rgb(255 214 170 / 0.36) 136deg,
+    rgb(255 255 255 / 0.56) 180deg,
+    rgb(255 214 170 / 0.32) 224deg,
+    rgb(255 255 255 / 0.08) 270deg,
+    rgb(174 226 255 / 0.44) 316deg,
+    rgb(255 255 255 / 0.74) 360deg
+  );
+}
+
+/* ============================================================================
+ * 二、现代主题手机模式（<= 1023.98px，与底部菜单出现条件完全一致）
+ *     全站表面、卡片、列表、按钮、控件与浮层统一为 FlClash / iOS 语言
+ * ============================================================================ */
+
+@media (max-width: 1023.98px) {
+  /* ---------- 1. 画布与全局圆角/表面令牌 ---------- */
+
+  :root[data-dashboard-style='modern'] {
+    --surface-frame-bg: var(--m-surface-card);
+    --surface-data-bg: var(--m-surface-card);
+    --surface-line: var(--m-hairline);
+    --surface-radius: 24px;
+    --surface-data-stroke: 1px;
+    --surface-separator-stroke: 0.5px;
+    --surface-frame-shadow: none;
+    --surface-data-shadow: none;
+    --list-hover-bg: var(--m-surface-press);
+
+    --board-gap: 0.875rem;
+    --board-module-bg: var(--m-surface-card);
+    --board-module-border: 1px solid var(--m-hairline-soft);
+    --board-module-radius: 24px;
+    --board-module-shadow: none;
+    --board-module-padding: 1rem 1.125rem;
+    --board-rule: 0.5px solid var(--m-hairline);
   }
 
-
-  /* 首页卡片外壳的「厚度」投影在手机上去掉，卡片平铺在灰底上 */
-  :root[data-dashboard-style='modern'] [data-plugin-market-card='true'] {
-    border-radius: 24px;
-    box-shadow: none !important;
+  :root[data-dashboard-style='modern'] [data-observation-shell='true'],
+  :root[data-dashboard-style='modern'] [data-dashboard-main='true'] {
+    background-color: var(--m-surface-page);
   }
 
-  /* 聊天会话列表与对话页是白底，铺满到标签栏下方 */
+  /* 聊天会话列表与对话页保持通透纯底，铺满到标签栏下方 */
   :root[data-dashboard-style='modern']
     [data-dashboard-main='true']:has(
       [data-mobile-chat-list='true'],
@@ -129,20 +368,166 @@
 
   /* 页面大标题：34px 粗体，紧凑字距 */
   :root[data-dashboard-style='modern'] [data-mobile-large-title='true'] {
-    color: var(--m-ink);
+    color: hsl(var(--foreground));
     font-size: 34px;
     font-weight: 700;
-    letter-spacing: -0.02em;
+    letter-spacing: -0.025em;
     line-height: 1.15;
   }
 
+  /* ---------- 2. 统一页面容器：消除方框与“框套框” ---------- */
+
+  /* 常规 Card 与插件市场卡片统一为 24px 无投影大圆角卡片 */
+  :root[data-dashboard-style='modern'] [data-dashboard-card='true'],
+  :root[data-dashboard-style='modern'] [data-plugin-market-card='true'] {
+    background-color: var(--m-surface-card);
+    border: 1px solid var(--m-hairline-soft);
+    border-radius: 24px;
+    box-shadow: none;
+  }
+
+  /* 独立 PageFrame（如黑白名单设置、迁移工作区面板等）改为柔和 24px 大圆角卡片 */
+  :root[data-dashboard-style='modern']
+    [data-dashboard-page-frame='true']:not([data-dashboard-section-panel='true']) {
+    background: var(--m-surface-card);
+    border: 1px solid var(--m-hairline-soft);
+    border-radius: 24px;
+    box-shadow: none;
+  }
+
+  /* SectionPanel：解散外层桌面粗框，改为 FlClash ListHeader + 单层 24px 分组卡片 */
+  :root[data-dashboard-style='modern'] [data-dashboard-section-panel='true'] {
+    background: transparent;
+    border: 0;
+    border-radius: 0;
+    box-shadow: none;
+  }
+
+  :root[data-dashboard-style='modern']
+    [data-dashboard-section-panel='true']
+    > [data-section-part='header'] {
+    padding: 0 0.25rem 0.625rem 0.875rem;
+    gap: 0.5rem;
+  }
+
+  :root[data-dashboard-style='modern']
+    [data-dashboard-section-panel='true']
+    > [data-section-part='header']
+    h2 {
+    color: hsl(var(--muted-foreground));
+    font-size: 0.875rem;
+    font-weight: 600;
+    line-height: 1.35;
+  }
+
+  /* 隐藏桌面端 4px 刻槽分隔线 */
+  :root[data-dashboard-style='modern']
+    [data-dashboard-section-panel='true']
+    > [data-dashboard-separator='true'][data-variant='groove'] {
+    display: none;
+  }
+
+  /* 若 SectionPanel 内直接放 DataPanel，由 DataPanel 自己承担单层 24px 卡片，避免双重套框 */
+  :root[data-dashboard-style='modern']
+    [data-dashboard-section-panel='true']
+    > [data-section-part='body']:has(> [data-dashboard-data-panel='true']) {
+    padding: 0;
+    background: transparent;
+    border: 0;
+  }
+
+  /* 若 SectionPanel 内没有直接 DataPanel，则由 body 自己成为单层 24px 卡片 */
+  :root[data-dashboard-style='modern']
+    [data-dashboard-section-panel='true']
+    > [data-section-part='body']:not(:has(> [data-dashboard-data-panel='true'])) {
+    padding: 1rem;
+    background-color: var(--m-surface-card);
+    border: 1px solid var(--m-hairline-soft);
+    border-radius: 24px;
+  }
+
+  /* DataPanel：顶层或解散后的 SectionPanel 内是 24px 主卡片 */
+  :root[data-dashboard-style='modern'] [data-dashboard-data-panel='true'] {
+    background-color: var(--m-surface-card);
+    border: 1px solid var(--m-hairline-soft);
+    border-radius: 24px;
+    box-shadow: none;
+    overflow: hidden;
+  }
+
+  /* 真正嵌套在 Card / PageFrame 内部的 DataPanel：按 FlClash SurfaceLevel 抬高一档色调并收圆角 */
+  :root[data-dashboard-style='modern']
+    :is(
+      [data-dashboard-card='true'],
+      [data-dashboard-page-frame='true']:not([data-dashboard-section-panel='true'])
+    )
+    [data-dashboard-data-panel='true'] {
+    background-color: var(--m-surface-block);
+    border-color: var(--m-hairline-soft);
+    border-radius: 18px;
+  }
+
+  /* ---------- 3. 分组列表行与状态指示（呼应管理页和 FlClash ListRow） ---------- */
+
+  :root[data-dashboard-style='modern'] [data-dashboard-resource-row='true'] {
+    padding: 0.9375rem 1rem;
+    gap: 0.75rem;
+    transition: background-color var(--motion-duration-fast) var(--motion-ease);
+  }
+
+  :root[data-dashboard-style='modern']
+    [data-dashboard-resource-row='true']
+    + [data-dashboard-resource-row='true'] {
+    border-top: 0.5px solid var(--m-hairline);
+  }
+
+  :root[data-dashboard-style='modern'] [data-dashboard-resource-row='true'][data-interactive='true']:hover {
+    transform: none;
+    background-color: var(--m-surface-press);
+  }
+
+  :root[data-dashboard-style='modern']
+    [data-dashboard-resource-row='true'][data-interactive='true']:active {
+    transform: none;
+    background-color: var(--m-surface-press);
+  }
+
+  :root[data-dashboard-style='modern'] [data-resource-part='icon'] {
+    width: 3rem;
+    height: 3rem;
+    border: 0;
+    border-radius: 14px;
+    background-color: var(--m-surface-block);
+    overflow: hidden;
+  }
+
+  :root[data-dashboard-style='modern'] [data-resource-part='title'] {
+    font-size: 1rem;
+    font-weight: 600;
+    line-height: 1.35;
+  }
+
+  :root[data-dashboard-style='modern'] [data-resource-part='description'] {
+    font-size: 0.8125rem;
+    line-height: 1.48;
+  }
+
+  :root[data-dashboard-style='modern'] [data-resource-part='actions'] {
+    gap: 0.625rem;
+  }
+
+  /* 所有状态灯与状态点在现代手机端统一为圆点，不再出现方形像素点 */
+  :root[data-dashboard-style='modern'] [data-status-dot='true'],
+  :root[data-dashboard-style='modern'] [data-section-part='leading'] > span {
+    border-radius: 9999px;
+  }
+
   :root[data-dashboard-style='modern'] [data-dashboard-feature-status='true'] {
-    color: var(--m-ink);
+    color: hsl(var(--foreground));
     font-size: 14px;
     font-weight: 400;
   }
 
-  /* index.css 里状态灯用 !important 画成主题色方块，这里提高优先级改回绿色圆点 */
   :root[data-dashboard-style='modern']
     [data-dashboard-shell='true']
     [data-dashboard-feature-status-light='true'] {
@@ -158,11 +543,496 @@
     background: var(--m-ok) !important;
   }
 
-  /* ---------- 配置表单（麦麦设置、模型等） ---------- */
+  /* 表单行、对话设置、模型库与任务分工统一用 0.5px 细线与柔和圆角 */
+  :root[data-dashboard-style='modern'] [data-form-section-heading],
+  :root[data-dashboard-style='modern'] [data-chat-settings-heading] {
+    border-bottom: 0.5px solid var(--m-hairline);
+    padding-bottom: 0.5rem;
+  }
 
-  /* 分组标题用正文黑，不再整片主题色 */
-  :root[data-dashboard-style='modern'] [data-dashboard-main='true'] [data-dashboard-card-header='true'] .text-primary {
-    color: var(--m-ink);
+  :root[data-dashboard-style='modern'] [data-form-column] + [data-form-column],
+  :root[data-dashboard-style='modern'] [data-chat-settings-column] + [data-chat-settings-column],
+  :root[data-dashboard-style='modern'] [data-capability-switches] {
+    border-color: var(--m-hairline);
+    border-width: 0.5px;
+  }
+
+  :root[data-dashboard-style='modern'] [data-form-row] + [data-form-row],
+  :root[data-dashboard-style='modern'] [data-chat-settings-row] + [data-chat-settings-row],
+  :root[data-dashboard-style='modern'] [data-library-row] + [data-library-row],
+  :root[data-dashboard-style='modern'] [data-task-row],
+  :root[data-dashboard-style='modern'] [data-task-order] > li + li,
+  :root[data-dashboard-style='modern'] .plugin-pages-row + .plugin-pages-row {
+    border-top: 0.5px solid var(--m-hairline);
+  }
+
+  :root[data-dashboard-style='modern'] [data-task-card] {
+    border-radius: 20px;
+  }
+
+  :root[data-dashboard-style='modern'] [data-task-card-foot] {
+    border-top: 0.5px solid var(--m-hairline);
+  }
+
+  :root[data-dashboard-style='modern'] [data-dashboard-selection-card='true'],
+  :root[data-dashboard-style='modern'] [data-dashboard-option-card='true'] {
+    border-radius: 20px;
+    border-color: var(--m-hairline-soft);
+    background-color: var(--m-surface-card);
+  }
+
+  :root[data-dashboard-style='modern'] [data-dashboard-file-dropzone='true'] {
+    border-radius: 22px;
+    border-width: 1.5px;
+    border-color: var(--m-hairline);
+    background-color: var(--m-surface-block);
+  }
+
+  /* ---------- 4. 控件全面统一：FlClash 胶囊与柔和连续圆角 ---------- */
+
+  /* 公共按钮改为 FlClash Tonal / Capsule 胶囊形 */
+  :root[data-dashboard-style='modern']
+    .dashboard-button:not([data-observation-send-group='true'] > *) {
+    border-radius: 9999px;
+  }
+
+  :root[data-dashboard-style='modern'] .dashboard-button--outline {
+    background-color: var(--m-surface-block);
+    border-color: var(--m-hairline-soft);
+    box-shadow: none;
+  }
+
+  :root[data-dashboard-style='modern'] .dashboard-button--outline:hover {
+    background-color: var(--m-surface-elevated);
+  }
+
+  :root[data-dashboard-style='modern'] .dashboard-button--secondary {
+    background-color: var(--m-surface-block);
+    box-shadow: none;
+  }
+
+  /* 分段选择（如黑白名单 群聊/私聊 接收/不接收）：全胶囊轨道 + 胶囊弹簧滑块 */
+  :root[data-dashboard-style='modern'] [data-dashboard-segmented-control='true'] {
+    border-radius: 9999px;
+    background-color: var(--m-surface-block);
+    box-shadow: none;
+    padding: 3px;
+    gap: 2px;
+  }
+
+  :root[data-dashboard-style='modern'] [data-dashboard-segmented-control='true'] > .dashboard-button {
+    border-radius: 9999px;
+    padding-inline: 0.75rem;
+  }
+
+  :root[data-dashboard-style='modern']
+    [data-dashboard-segmented-control='true']
+    [data-segmented-pill='true'],
+  :root[data-dashboard-style='modern']
+    [data-dashboard-segmented-control='true']:not([data-modern-segmented-glide='true'])
+    > .dashboard-button[aria-pressed='true'] {
+    border-radius: 9999px;
+    background-color: var(--m-surface-elevated);
+    box-shadow:
+      0 1px 4px rgb(0 0 0 / 0.14),
+      0 0 0 0.5px var(--m-hairline-soft);
+  }
+
+  /* 常规 Tabs：全胶囊轨道 + 胶囊弹簧滑块 */
+  :root[data-dashboard-style='modern']
+    [data-dashboard-tabs-list='true']:not(
+      [data-dashboard-folder-tabs] > *,
+      :has(> [data-dashboard-settings-tabs='true'])
+    ) {
+    border-radius: 9999px;
+    background-color: var(--m-surface-block);
+    box-shadow: none;
+    padding: 3px;
+  }
+
+  :root[data-dashboard-style='modern']
+    [data-dashboard-tabs-list='true']:not(
+      [data-dashboard-folder-tabs] > *,
+      :has(> [data-dashboard-settings-tabs='true'])
+    )
+    > [data-dashboard-tabs-trigger='true'] {
+    border-radius: 9999px;
+  }
+
+  :root[data-dashboard-style='modern']
+    [data-dashboard-tabs-list='true']:not(
+      [data-dashboard-folder-tabs] > *,
+      :has(> [data-dashboard-settings-tabs='true'])
+    ):not([data-modern-tab-glide='pill'])
+    > [data-dashboard-tabs-trigger='true'][data-state='active'] {
+    background-color: var(--m-surface-elevated);
+    box-shadow:
+      0 1px 4px rgb(0 0 0 / 0.14),
+      0 0 0 0.5px var(--m-hairline-soft);
+  }
+
+  :root[data-dashboard-style='modern'] [data-modern-tab-indicator='pill'] {
+    border-radius: 9999px;
+    background-color: var(--m-surface-elevated);
+    box-shadow:
+      0 1px 4px rgb(0 0 0 / 0.14),
+      0 0 0 0.5px var(--m-hairline-soft);
+  }
+
+  /* WebUI 设置页签（通用 / 机器人管理 / 外观等）：手机模式改为横滑胶囊分段条，去掉桌面下划线与方框 */
+  :root[data-dashboard-style='modern']
+    [data-dashboard-tabs-list='true']:has(> [data-dashboard-settings-tabs='true']) {
+    border-radius: 9999px;
+    padding: 3px;
+    background-color: var(--m-surface-block);
+    box-shadow: none;
+  }
+
+  :root[data-dashboard-style='modern'] [data-dashboard-settings-tabs='true'] {
+    border-radius: 9999px;
+    min-height: 2.375rem;
+    height: 2.375rem;
+    padding-block: 0;
+  }
+
+  :root[data-dashboard-style='modern']
+    [data-dashboard-tabs-list='true']:not([data-dashboard-folder-tabs] > *)
+    > [data-dashboard-settings-tabs='true'][data-state='active'],
+  :root[data-dashboard-style='modern']
+    [data-dashboard-tabs-list='true']:not([data-dashboard-folder-tabs] > *)[data-modern-tab-glide='underline']
+    > [data-dashboard-settings-tabs='true'][data-state='active'] {
+    background-color: var(--m-surface-elevated);
+    color: hsl(var(--foreground));
+    font-weight: 600;
+    box-shadow:
+      0 1px 4px rgb(0 0 0 / 0.14),
+      0 0 0 0.5px var(--m-hairline-soft);
+  }
+
+  :root[data-dashboard-style='modern'] [data-modern-tab-indicator='underline'] {
+    display: none;
+  }
+
+  /* 文件夹标签（麦麦设置、模型管理、学习等）：手机模式转为横向滑动胶囊药丸，不再画桌面文件夹折角 */
+  :root[data-dashboard-style='modern'] [data-dashboard-folder-tabs] {
+    margin-bottom: 0.75rem;
+    padding-left: 0;
+    gap: 0.5rem;
+  }
+
+  :root[data-dashboard-style='modern'] [data-dashboard-folder-tabs] > [data-dashboard-tabs-list='true'] {
+    gap: 0.5rem;
+    padding: 2px;
+  }
+
+  :root[data-dashboard-style='modern'] [data-dashboard-folder-tabs] [data-dashboard-tabs-trigger='true'] {
+    height: 2.375rem !important;
+    padding: 0 1rem !important;
+    margin-bottom: 0 !important;
+    border: 1px solid var(--m-hairline-soft) !important;
+    border-radius: 9999px !important;
+    background-color: var(--m-surface-card);
+    color: hsl(var(--muted-foreground));
+    font-size: 0.875rem;
+    font-weight: 500;
+    box-shadow: none;
+    transition:
+      background-color var(--motion-duration-fast) var(--motion-ease),
+      color var(--motion-duration-fast) var(--motion-ease),
+      border-color var(--motion-duration-fast) var(--motion-ease);
+  }
+
+  :root[data-dashboard-style='modern']
+    [data-dashboard-folder-tabs]
+    [data-dashboard-tabs-trigger='true'][data-state='active'] {
+    height: 2.375rem !important;
+    background-color: hsl(var(--foreground));
+    border-color: transparent !important;
+    color: hsl(var(--background));
+    font-weight: 600;
+  }
+
+  :root[data-dashboard-style='modern']
+    [data-dashboard-folder-tabs]
+    [data-state='active']
+    [data-dashboard-folder-tab-icon] {
+    color: hsl(var(--background));
+  }
+
+  /* Badge 徽标：改为 FlClash TonalChip 胶囊 */
+  :root[data-dashboard-style='modern'] [data-dashboard-badge='true'] {
+    border-radius: 9999px;
+    padding-inline: 0.625rem;
+    border-color: var(--m-hairline-soft);
+  }
+
+  :root[data-dashboard-style='modern'] [data-dashboard-badge='true'][data-badge-variant='outline'] {
+    background-color: var(--m-surface-block);
+    border-color: transparent;
+  }
+
+  /* 输入框、下拉触发器、文本域、开关盒：柔和连续圆角 + 填充底色 */
+  :root[data-dashboard-style='modern']
+    :is(
+      [data-dashboard-input='true'],
+      textarea,
+      [data-dashboard-select-trigger='true'],
+      [data-dashboard-switch-field='true'],
+      [data-dashboard-date-time-trigger='true']
+    ) {
+    border-radius: 14px;
+    background-color: var(--m-surface-block);
+    border-color: var(--m-hairline-soft);
+    box-shadow: none;
+  }
+
+  :root[data-dashboard-style='modern'] [data-manage-search='true'][data-dashboard-input='true'] {
+    border-radius: 9999px;
+  }
+
+  /* Switch 开关：采用接近 iOS / FlClash prism_ui 的舒展触控比例 */
+  :root[data-dashboard-style='modern'] [data-dashboard-switch='true'] {
+    --switch-height: 1.5rem;
+    --switch-width: 2.625rem;
+  }
+
+  :root[data-dashboard-style='modern'] [data-dashboard-switch='true'][data-control-size='lg'] {
+    --switch-height: 1.75rem;
+    --switch-width: 3rem;
+  }
+
+  /* Alert 警告卡片、表格外壳、指标条与状态面板统一大圆角 */
+  :root[data-dashboard-style='modern'] [data-dashboard-alert='true'] {
+    border-radius: 18px;
+    border-color: var(--m-hairline-soft);
+    background-color: var(--m-surface-block);
+  }
+
+  :root[data-dashboard-style='modern'] [data-dashboard-table-wrapper='true'] {
+    border-radius: 20px;
+    border-color: var(--m-hairline-soft);
+  }
+
+  :root[data-dashboard-style='modern'] [data-status-indicator='true'][data-status-variant='panel'] {
+    border-radius: 9999px;
+    background-color: var(--m-surface-card);
+    border-color: var(--m-hairline-soft);
+  }
+
+  :root[data-dashboard-style='modern'] [data-browser-toolbar='true'] {
+    border-bottom: 0.5px solid var(--m-hairline);
+  }
+
+  :root[data-dashboard-style='modern'] [data-dashboard-list-item='true'] {
+    border-radius: 14px;
+  }
+
+  /* ---------- 5. 手机端所有浮层（下拉菜单、选择器、弹窗、底部抽屉、Toast）统一液态玻璃 ---------- */
+
+  :root[data-dashboard-style='modern']
+    :is([data-dashboard-floating-content='true'], [data-dashboard-select-content='true']) {
+    border: 0;
+    border-radius: 24px;
+    -webkit-backdrop-filter: blur(22px) saturate(210%) brightness(1.04);
+    backdrop-filter: blur(22px) saturate(210%) brightness(1.04);
+    background-color: transparent;
+    background-image: linear-gradient(
+      180deg,
+      rgb(255 255 255 / 0.84) 0%,
+      rgb(252 252 254 / 0.74) 52%,
+      rgb(255 255 255 / 0.8) 100%
+    );
+    box-shadow:
+      0 0 0 0.75px rgb(0 0 0 / 0.085),
+      inset 0 2px 5px -1px rgb(255 255 255 / 0.72),
+      inset 0 -1.5px 4px -1px rgb(255 255 255 / 0.42),
+      0 12px 32px -4px rgb(0 0 0 / 0.14),
+      0 2px 8px -2px rgb(0 0 0 / 0.06);
+    color: hsl(var(--popover-foreground));
+  }
+
+  /* 菜单与选择器采用紧凑内边距；内容 Popover 保留 1rem 舒适呼吸感 */
+  :root[data-dashboard-style='modern']
+    :is(
+      [data-dashboard-floating-content='true'][data-motion-floating='menu'],
+      [data-dashboard-select-content='true']
+    ) {
+    padding: 0.375rem;
+  }
+
+  :root[data-dashboard-style='modern']
+    [data-dashboard-floating-content='true'][data-motion-floating='popover'] {
+    padding: 1rem;
+  }
+
+  :root[data-dashboard-style='modern']
+    [data-dashboard-floating-content='true'][data-motion-floating='popover']
+    .rounded-md.border {
+    border-radius: 16px;
+    border-color: var(--m-hairline-soft);
+    background-color: color-mix(in srgb, var(--m-surface-block) 72%, transparent);
+  }
+
+  :root[data-dashboard-style='modern'].dark
+    :is([data-dashboard-floating-content='true'], [data-dashboard-select-content='true']) {
+    -webkit-backdrop-filter: blur(24px) saturate(215%) brightness(1.22) contrast(1.04);
+    backdrop-filter: blur(24px) saturate(215%) brightness(1.22) contrast(1.04);
+    background-image: linear-gradient(
+      180deg,
+      color-mix(in srgb, hsl(var(--card)) 74%, rgb(255 255 255 / 0.07)) 0%,
+      color-mix(in srgb, hsl(var(--card)) 64%, rgb(16 16 20 / 0.62)) 52%,
+      color-mix(in srgb, hsl(var(--card)) 72%, rgb(255 255 255 / 0.04)) 100%
+    );
+    box-shadow:
+      0 0 0 0.75px rgb(0 0 0 / 0.56),
+      inset 0 2px 5px -1px rgb(255 255 255 / 0.16),
+      inset 0 -1.5px 4px -1px rgb(255 255 255 / 0.08),
+      0 14px 36px -4px rgb(0 0 0 / 0.54),
+      0 2px 8px -2px rgb(0 0 0 / 0.34);
+  }
+
+  :root[data-dashboard-style='modern']
+    :is([data-dashboard-floating-content='true'], [data-dashboard-select-content='true']):not(
+      .m-glass,
+      .m-glass-menu,
+      .m-glass-mobile
+    )::before {
+    content: '';
+    position: absolute;
+    inset: 0;
+    z-index: 2;
+    border-radius: inherit;
+    padding: 1.25px;
+    pointer-events: none;
+    background: conic-gradient(
+      from 0deg at 50% 50%,
+      rgb(255 255 255 / 0.94) 0deg,
+      rgb(255 255 255 / 0.66) 40deg,
+      rgb(255 255 255 / 0.14) 90deg,
+      rgb(255 255 255 / 0.45) 140deg,
+      rgb(255 255 255 / 0.72) 180deg,
+      rgb(255 255 255 / 0.45) 220deg,
+      rgb(255 255 255 / 0.14) 270deg,
+      rgb(255 255 255 / 0.66) 320deg,
+      rgb(255 255 255 / 0.94) 360deg
+    );
+    -webkit-mask:
+      linear-gradient(#000 0 0) content-box,
+      linear-gradient(#000 0 0);
+    -webkit-mask-composite: xor;
+    mask:
+      linear-gradient(#000 0 0) content-box,
+      linear-gradient(#000 0 0);
+    mask-composite: exclude;
+  }
+
+  :root[data-dashboard-style='modern'].dark
+    :is([data-dashboard-floating-content='true'], [data-dashboard-select-content='true']):not(
+      .m-glass,
+      .m-glass-menu,
+      .m-glass-mobile
+    )::before {
+    background: conic-gradient(
+      from 0deg at 50% 50%,
+      rgb(255 255 255 / 0.48) 0deg,
+      rgb(255 255 255 / 0.26) 40deg,
+      rgb(255 255 255 / 0.04) 90deg,
+      rgb(255 255 255 / 0.18) 140deg,
+      rgb(255 255 255 / 0.32) 180deg,
+      rgb(255 255 255 / 0.18) 220deg,
+      rgb(255 255 255 / 0.04) 270deg,
+      rgb(255 255 255 / 0.26) 320deg,
+      rgb(255 255 255 / 0.48) 360deg
+    );
+  }
+
+  /* 清除 SelectItem 默认的纯白/深灰实底，让菜单项融入液态玻璃 */
+  :root[data-dashboard-style='modern'] [data-dashboard-select-item='true'] {
+    background-color: transparent;
+    border-radius: 14px;
+    min-height: 2.5rem;
+    padding-inline: 0.75rem 2rem;
+  }
+
+  :root[data-dashboard-style='modern']
+    [data-dashboard-floating-content='true']
+    :is([role='menuitem'], [role='menuitemcheckbox'], [role='menuitemradio']) {
+    border-radius: 14px;
+    min-height: 2.5rem;
+    padding-inline: 0.75rem;
+  }
+
+  /* 弹窗遮罩与底部/居中玻璃弹层（FlClash Sheet / Alert） */
+  :root[data-dashboard-style='modern'] [data-dashboard-dialog-overlay='true'] {
+    background-color: rgb(0 0 0 / 0.34);
+    -webkit-backdrop-filter: blur(4px);
+    backdrop-filter: blur(4px);
+  }
+
+  :root[data-dashboard-style='modern'].dark [data-dashboard-dialog-overlay='true'] {
+    background-color: rgb(0 0 0 / 0.56);
+  }
+
+  :root[data-dashboard-style='modern'] [data-dashboard-dialog-content='true'] {
+    border-color: var(--m-hairline);
+    border-radius: 28px;
+    -webkit-backdrop-filter: blur(26px) saturate(200%) brightness(1.03);
+    backdrop-filter: blur(26px) saturate(200%) brightness(1.03);
+    background-color: hsl(var(--background) / 0.88);
+    box-shadow:
+      0 0 0 0.75px rgb(0 0 0 / 0.08),
+      inset 0 1.5px 0 rgb(255 255 255 / 0.75),
+      0 18px 46px -8px rgb(0 0 0 / 0.22);
+  }
+
+  :root[data-dashboard-style='modern'].dark [data-dashboard-dialog-content='true'] {
+    -webkit-backdrop-filter: blur(28px) saturate(200%) brightness(1.16);
+    backdrop-filter: blur(28px) saturate(200%) brightness(1.16);
+    background-color: color-mix(in srgb, var(--m-surface-card) 86%, transparent);
+    box-shadow:
+      0 0 0 0.75px rgb(0 0 0 / 0.56),
+      inset 0 1.25px 0 rgb(255 255 255 / 0.22),
+      0 18px 46px -8px rgb(0 0 0 / 0.62);
+  }
+
+  @media (max-width: 639.98px) {
+    :root[data-dashboard-style='modern']
+      [data-dashboard-dialog-content='true'][data-dashboard-dialog-side='center'] {
+      border-radius: 32px 32px 0 0;
+    }
+  }
+
+  /* Toast 通知条：FlClash Banner 液态玻璃 */
+  :root[data-dashboard-style='modern'] [data-dashboard-toast='true'] {
+    border: 0;
+    border-radius: 22px;
+    -webkit-backdrop-filter: blur(22px) saturate(210%) brightness(1.04);
+    backdrop-filter: blur(22px) saturate(210%) brightness(1.04);
+    background-color: rgb(255 255 255 / 0.82);
+    box-shadow:
+      0 0 0 0.75px rgb(0 0 0 / 0.08),
+      inset 0 1.25px 0 rgb(255 255 255 / 0.88),
+      0 10px 30px -4px rgb(0 0 0 / 0.14);
+  }
+
+  :root[data-dashboard-style='modern'].dark [data-dashboard-toast='true'] {
+    -webkit-backdrop-filter: blur(24px) saturate(215%) brightness(1.2);
+    backdrop-filter: blur(24px) saturate(215%) brightness(1.2);
+    background-color: color-mix(in srgb, var(--m-surface-card) 74%, transparent);
+    box-shadow:
+      0 0 0 0.75px rgb(0 0 0 / 0.54),
+      inset 0 1.25px 0 rgb(255 255 255 / 0.24),
+      0 12px 34px -4px rgb(0 0 0 / 0.52);
+  }
+
+  /* ---------- 6. 配置表单与专用视图细节（麦麦设置、模型、表达审核等） ---------- */
+
+  /* 分组标题用正文色，不再整片主题色 */
+  :root[data-dashboard-style='modern']
+    [data-dashboard-main='true']
+    [data-dashboard-card-header='true']
+    .text-primary {
+    color: hsl(var(--foreground));
   }
 
   :root[data-dashboard-style='modern'] [data-config-field-path] [data-dashboard-card-title='true'] {
@@ -174,44 +1044,52 @@
     background-color: transparent;
   }
 
-  /* 字段之间用 0.5px 细线分隔，像 iOS 的分组列表 */
-  :root[data-dashboard-style='modern'] [data-config-field-path] [data-dynamic-field] + [data-dynamic-field],
+  /* 字段之间用 0.5px 细线分隔，像 iOS / FlClash 的分组列表 */
+  :root[data-dashboard-style='modern']
+    [data-config-field-path]
+    [data-dynamic-field]
+    + [data-dynamic-field],
   :root[data-dashboard-style='modern'] [data-config-field-path] [data-config-row] + [data-config-row] {
     border-top: 0.5px solid var(--m-hairline);
     padding-top: 10px;
   }
 
   :root[data-dashboard-style='modern'] [data-mobile-pill-nav='true'] button[data-active='false'] {
-    background-color: var(--m-card);
+    background-color: var(--m-surface-card);
   }
 
-  /* 长文本编辑弹层：灰底上一张白卡片 */
+  /* 长文本编辑弹层 */
   :root[data-dashboard-style='modern'] [data-mobile-text-sheet='true'] {
-    background-color: var(--m-page);
+    background-color: var(--m-surface-page);
   }
 
-  /* 模型管理：选中的厂商用黑底，不再整块主题色 */
+  /* 模型管理：选中的厂商用高对比前景色，不再整块主题色 */
   :root[data-dashboard-style='modern'] [data-model-config-page='true'] .bg-primary {
-    background-color: var(--m-ink);
-    color: var(--m-card);
+    background-color: hsl(var(--foreground));
+    color: hsl(var(--background));
   }
 
   /* ---------- 表达方式卡片审核 ---------- */
 
   :root[data-dashboard-style='modern'] [data-quick-review-card] {
-    border: 0;
+    border: 1px solid var(--m-hairline-soft);
     border-radius: 30px;
     box-shadow: 0 20px 50px rgb(0 0 0 / 0.1);
     padding: 28px;
   }
 
-  :root[data-dashboard-style='modern'] [data-quick-review-card] [data-quick-review-situation='true'] {
+  :root[data-dashboard-style='modern']
+    [data-quick-review-card]
+    [data-quick-review-situation='true'] {
     background: none;
     border: 0;
     padding: 0;
   }
 
-  :root[data-dashboard-style='modern'] [data-quick-review-card] [data-quick-review-situation='true'] p {
+  :root[data-dashboard-style='modern']
+    [data-quick-review-card]
+    [data-quick-review-situation='true']
+    p {
     font-size: 22px;
     font-weight: 600;
     letter-spacing: -0.01em;
@@ -230,24 +1108,62 @@
   }
 
   :root[data-dashboard-style='modern'] [data-quick-review-action='reject'] {
-    -webkit-backdrop-filter: blur(28px) saturate(1.8);
-    backdrop-filter: blur(28px) saturate(1.8);
+    -webkit-backdrop-filter: blur(22px) saturate(210%);
+    backdrop-filter: blur(22px) saturate(210%);
     background: rgb(252 252 253 / 0.72);
-    box-shadow: inset 0 0 0 0.5px rgb(0 0 0 / 0.07), 0 10px 30px rgb(0 0 0 / 0.07);
+    box-shadow:
+      0 0 0 0.75px rgb(0 0 0 / 0.08),
+      inset 0 1.25px 0 rgb(255 255 255 / 0.9),
+      0 10px 30px rgb(0 0 0 / 0.08);
     color: #ff3b30;
   }
 
   :root[data-dashboard-style='modern'] [data-quick-review-action='approve'] {
-    background: var(--m-ink);
+    background: hsl(var(--foreground));
     box-shadow: 0 10px 24px rgb(0 0 0 / 0.18);
-    color: var(--m-card);
+    color: hsl(var(--background));
   }
 
-  /* 主按钮与选中项用黑色：麦麦橙只留给选中标签和状态点 */
+  /* 首页手机端：快速对话条统一为 24px 卡片并自然随内容流排列（不遮挡看板卡片），存储占用行不截断右侧数值 */
+  :root[data-dashboard-style='modern'] [data-observation-composer='true'] {
+    position: static;
+    border-radius: 24px;
+    background-color: var(--m-surface-card);
+    border: 1px solid var(--m-hairline-soft);
+    box-shadow: none;
+    padding: 0.75rem;
+  }
+
+  :root[data-dashboard-style='modern'] [data-observation-composer-input='true'] {
+    border-radius: 9999px;
+    background-color: var(--m-surface-block);
+    border-color: var(--m-hairline-soft);
+    padding-inline: 1rem;
+  }
+
+  :root[data-dashboard-style='modern']
+    [data-observation-send-group='true']
+    > [data-observation-send='true'] {
+    border-radius: 9999px 0 0 9999px;
+  }
+
+  :root[data-dashboard-style='modern']
+    [data-observation-send-group='true']
+    > [data-observation-mode-tail='true'] {
+    border-radius: 0 9999px 9999px 0;
+  }
+
+  :root[data-dashboard-style='modern'] [data-observation-disk-row='true'] {
+    grid-template-columns: 2.25rem minmax(0, 1fr) auto;
+    gap: 0.375rem;
+  }
+
+  /* 主按钮与选中项用高对比前景色：主题主色留给选中标签、开关与状态点 */
   :root[data-dashboard-style='modern'] [data-dashboard-main='true'] .bg-primary,
-  :root[data-dashboard-style='modern'] [data-dashboard-dialog-content='true'] .bg-primary {
-    background-color: var(--m-ink);
-    color: var(--m-card);
+  :root[data-dashboard-style='modern'] [data-dashboard-dialog-content='true'] .bg-primary,
+  :root[data-dashboard-style='modern'] [data-dashboard-floating-content='true'] .bg-primary {
+    background-color: hsl(var(--foreground));
+    color: hsl(var(--background));
   }
 }
 

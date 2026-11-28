@@ -38,34 +38,39 @@ const AlertDialogContent = React.forwardRef<
     motionRef.current = motion
   }, [motion])
 
-  const nodeRef = React.useRef<HTMLDivElement | null>(null)
+  const animatedNodeRef = React.useRef<HTMLDivElement | null>(null)
   const controlsRef = React.useRef<ReturnType<typeof animate> | null>(null)
 
   React.useEffect(
     () => () => {
       controlsRef.current?.stop()
       controlsRef.current = null
+      animatedNodeRef.current = null
     },
     []
   )
 
   const composedRef = React.useCallback(
     (node: HTMLDivElement | null) => {
-      const previousNode = nodeRef.current
-      nodeRef.current = node
+      if (node) {
+        if (animatedNodeRef.current !== node) {
+          animatedNodeRef.current = node
+          controlsRef.current?.stop()
+          controlsRef.current = null
 
-      if (node !== previousNode) {
+          if (motionRef.current.enabled) {
+            const { dialogScale, dialogY } = motionRef.current.profile.distances
+            controlsRef.current = animate(
+              node,
+              { opacity: [0, 1], scale: [dialogScale, 1], y: [dialogY, 0] },
+              motionRef.current.transitions.dialog
+            )
+          }
+        }
+      } else if (animatedNodeRef.current && !animatedNodeRef.current.isConnected) {
         controlsRef.current?.stop()
         controlsRef.current = null
-
-        if (node && motionRef.current.enabled) {
-          const { dialogScale, dialogY } = motionRef.current.profile.distances
-          controlsRef.current = animate(
-            node,
-            { opacity: [0, 1], scale: [dialogScale, 1], y: [dialogY, 0] },
-            motionRef.current.transitions.dialog
-          )
-        }
+        animatedNodeRef.current = null
       }
 
       if (typeof ref === "function") {

@@ -1,5 +1,24 @@
 export { MotionProvider, type MotionProviderProps } from './MotionProvider'
 export {
+  ModernGlideHighlight,
+  ModernMorphTooltip,
+  ModernTabIndicator,
+  MotionHoldButton,
+  MotionIconSwap,
+  MotionNumber,
+  MotionRollText,
+  MotionThinkingText,
+  type ModernGlideHighlightProps,
+  type ModernMorphTooltipProps,
+  type ModernTabIndicatorProps,
+  type MorphTooltipTarget,
+  type MotionHoldButtonProps,
+  type MotionIconSwapProps,
+  type MotionNumberProps,
+  type MotionRollTextProps,
+  type MotionThinkingTextProps,
+} from './modern-primitives'
+export {
   MotionCollapse,
   MotionDialogSurface,
   MotionFadeIn,

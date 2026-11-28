@@ -51,6 +51,7 @@ from src.maisaka.context.messages import (
     SessionBackedMessage,
 )
 from src.maisaka.display.prompt_cli_renderer import PromptCLIVisualizer
+from src.llm_models.request_privacy import request_snapshots_suppressed
 from src.maisaka.scenes.base import ChatScene
 from src.maisaka.scenes.factory import get_scene, get_session_scene
 from src.maisaka.visual.deferred_images import defer_context_image_encoding
@@ -678,7 +679,7 @@ class BaseMaisakaReplyGenerator(ChatReplyPromptMixin):
         self, result: ReplyGenerationResult, *, stream_id: Optional[str], reply_reason: str
     ) -> None:
         """在持久化边界统一收集图片，返回给监控的数据不携带大块图片编码。"""
-        if not global_config.debug.save_maisaka_reasoning:
+        if not global_config.debug.save_maisaka_reasoning or request_snapshots_suppressed():
             return
         if result.request_messages or result.output_items:
             # 同一次保存收集请求和输出图片，监控结果只保留已提交保存的图片引用。
@@ -708,7 +709,7 @@ class BaseMaisakaReplyGenerator(ChatReplyPromptMixin):
         duration_ms: float,
     ) -> None:
         """独立保存每个阶段的模型输入与输出，保留翻译失败或 Hook 重试前的记录。"""
-        if not global_config.debug.save_maisaka_reasoning:
+        if not global_config.debug.save_maisaka_reasoning or request_snapshots_suppressed():
             return
         preview = await asyncio.to_thread(
             PromptCLIVisualizer.build_prompt_preview_access,

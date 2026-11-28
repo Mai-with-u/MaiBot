@@ -666,8 +666,8 @@ export function MemoryEpisodeManager({
                     />
                   </div>
                 </div>
-                <label className="flex items-center gap-2 text-sm">
-                  <Checkbox checked={rebuildAll} onCheckedChange={(checked) => setRebuildAll(checked === true)} />
+                <label htmlFor="episode-rebuild-all" className="flex items-center gap-2 text-sm">
+                  <Checkbox id="episode-rebuild-all" checked={rebuildAll} onCheckedChange={(checked) => setRebuildAll(checked === true)} />
                   重新生成全部可用来源
                 </label>
                 <Button onClick={() => void submitRebuild()} disabled={actionLoading}>

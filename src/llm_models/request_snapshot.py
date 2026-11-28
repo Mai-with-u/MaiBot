@@ -16,6 +16,7 @@ from src.common.paths import get_instance_root
 from src.common.logger import get_logger
 from src.common.operation_timing import log_operation, timed_operation
 from src.config.model_configs import APIProvider, ModelInfo
+from .request_privacy import request_snapshots_suppressed
 from src.llm_models.model_client.base_client import (
     APIResponse,
     AudioTranscriptionRequest,
@@ -842,6 +843,8 @@ def save_failed_request_snapshot(
     trace_context: RequestTraceContext | None = None,
 ) -> Path | None:
     """首次失败保存固定快照，后续失败只追加事件。"""
+    if request_snapshots_suppressed():
+        return None
     from src.maisaka.display.prompt_preview_logger import PromptPreviewLogger
 
     try:

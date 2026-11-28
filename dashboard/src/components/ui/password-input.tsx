@@ -1,6 +1,7 @@
 import { forwardRef, useState } from 'react'
 import type { ComponentPropsWithoutRef } from 'react'
 
+import { MotionRollText } from '@/components/motion'
 import { Button } from '@/components/ui/button'
 import { Input } from '@/components/ui/input'
 import { cn } from '@/lib/utils'
@@ -33,7 +34,9 @@ export const PasswordInput = forwardRef<HTMLInputElement, PasswordInputProps>(
           className="absolute top-1/2 right-2 -translate-y-1/2"
           onClick={() => setVisible((value) => !value)}
         >
-          {visible ? hideLabel : showLabel}
+          <MotionRollText textKey={visible ? 'hide' : 'show'}>
+            {visible ? hideLabel : showLabel}
+          </MotionRollText>
         </Button>
       </div>
     )

@@ -1,8 +1,12 @@
+import type { ReactNode } from 'react'
+
+import { QueryClient, QueryClientProvider } from '@tanstack/react-query'
 import { fireEvent, render, screen, waitFor, within } from '@testing-library/react'
 import { beforeEach, describe, expect, it, vi } from 'vitest'
 
 import { PluginStats } from '../plugin-stats'
 
+import { getPluginFeedback, type PluginFeedbackPage } from '@/lib/plugin-feedback'
 import {
   dislikePlugin,
   getPluginReviewIdentity,
@@ -21,6 +25,10 @@ vi.mock('@/hooks/use-toast', () => ({
   useToast: () => ({ toast: toastMock }),
 }))
 
+vi.mock('@/lib/plugin-feedback', () => ({
+  getPluginFeedback: vi.fn(),
+}))
+
 vi.mock('@/lib/plugin-stats', () => ({
   getPluginReviewIdentity: vi.fn(),
   getPluginStats: vi.fn(),
@@ -29,6 +37,26 @@ vi.mock('@/lib/plugin-stats', () => ({
   dislikePlugin: vi.fn(),
   ratePlugin: vi.fn(),
 }))
+
+function makeFeedbackPage(overrides: Partial<PluginFeedbackPage> = {}): PluginFeedbackPage {
+  return {
+    plugin_id: 'demo-plugin',
+    snapshot_at: 0,
+    items: [],
+    total: 0,
+    next_offset: null,
+    ...overrides,
+  }
+}
+
+function renderWithQuery(ui: ReactNode) {
+  const queryClient = new QueryClient({
+    defaultOptions: { queries: { retry: false } },
+  })
+  return render(
+    <QueryClientProvider client={queryClient}>{ui}</QueryClientProvider>
+  )
+}
 
 function makeStats(overrides: Partial<PluginStatsData> = {}): PluginStatsData {
   return {
@@ -62,6 +90,7 @@ function getStarButtons(dialog: HTMLElement): HTMLElement[] {
 
 describe('PluginStats', () => {
   beforeEach(() => {
+    vi.mocked(getPluginFeedback).mockResolvedValue(makeFeedbackPage())
     vi.mocked(getPluginReviewIdentity).mockResolvedValue({ username: '麦麦' })
     vi.mocked(getPluginStats).mockResolvedValue(makeStats())
     vi.mocked(getPluginUserState).mockResolvedValue(makeUserState())
@@ -71,7 +100,7 @@ describe('PluginStats', () => {
     vi.mocked(getPluginStats).mockReturnValue(new Promise(() => {}))
     vi.mocked(getPluginUserState).mockReturnValue(new Promise(() => {}))
 
-    render(<PluginStats pluginId="demo-plugin" />)
+    renderWithQuery(<PluginStats pluginId="demo-plugin" />)
 
     expect(screen.getAllByText('-')).toHaveLength(2)
   })
@@ -79,7 +108,7 @@ describe('PluginStats', () => {
   it('统计数据为 null 时不渲染任何内容', async () => {
     vi.mocked(getPluginStats).mockResolvedValue(null)
 
-    const { container } = render(<PluginStats pluginId="demo-plugin" />)
+    const { container } = renderWithQuery(<PluginStats pluginId="demo-plugin" />)
 
     await waitFor(() => {
       expect(container).toBeEmptyDOMElement()
@@ -87,7 +116,7 @@ describe('PluginStats', () => {
   })
 
   it('compact 模式只展示下载量、评分与点赞数', async () => {
-    render(<PluginStats pluginId="demo-plugin" compact />)
+    renderWithQuery(<PluginStats pluginId="demo-plugin" compact />)
 
     expect(await screen.findByText((1234).toLocaleString())).toBeInTheDocument()
     expect(screen.getByText('4.2')).toBeInTheDocument()
@@ -101,7 +130,7 @@ describe('PluginStats', () => {
       makeUserState({ liked: true, rating: 4, comment: '好用' })
     )
 
-    render(<PluginStats pluginId="demo-plugin" />)
+    renderWithQuery(<PluginStats pluginId="demo-plugin" />)
 
     expect(await screen.findByText('下载量')).toBeInTheDocument()
     expect(screen.getByText('9 条评分')).toBeInTheDocument()
@@ -111,31 +140,58 @@ describe('PluginStats', () => {
     expect(screen.getByRole('button', { name: '修改评价' })).toBeInTheDocument()
   })
 
-  it('评分与评论分区展示：评论归入「最近评论」，纯评分归入「最近评分」', async () => {
+  it('评分与评论分区展示：评论由独立反馈服务加载至「最近评论」，纯评分归入「最近评分」', async () => {
+    vi.mocked(getPluginFeedback).mockResolvedValue(
+      makeFeedbackPage({
+        total: 2,
+        items: [
+          {
+            id: 'r1',
+            username: '测试用户',
+            rating: null,
+            comment: '非常好用',
+            created_at: '2026-01-02T00:00:00Z',
+            updated_at: '2026-01-02T00:00:00Z',
+            reply: null,
+          },
+          {
+            id: 'r2',
+            username: null,
+            rating: 4,
+            comment: '还不错',
+            created_at: '2026-01-04T00:00:00Z',
+            updated_at: '2026-01-04T00:00:00Z',
+            reply: null,
+          },
+        ],
+      })
+    )
     vi.mocked(getPluginStats).mockResolvedValue(
       makeStats({
         recent_ratings: [
-          { user_id: 'u1', username: '测试用户', rating: null, comment: '非常好用', created_at: '2026-01-02T00:00:00Z' },
+          { user_id: 'u1', username: '测试用户', rating: null, comment: '重复评论不进纯评分', created_at: '2026-01-02T00:00:00Z' },
           { user_id: 'u2', rating: 5, created_at: '2026-01-03T00:00:00Z' },
-          { user_id: 'u3', rating: 4, comment: '还不错', created_at: '2026-01-04T00:00:00Z' },
+          { user_id: 'u3', rating: 4, comment: '带评分支不进纯评分', created_at: '2026-01-04T00:00:00Z' },
         ],
       })
     )
 
-    render(<PluginStats pluginId="demo-plugin" />)
+    renderWithQuery(<PluginStats pluginId="demo-plugin" />)
 
     // 两个分区同时存在，旧的合并标题「最近评价」不再出现
     expect(await screen.findByText('最近评论')).toBeInTheDocument()
     expect(screen.getByText('最近评分')).toBeInTheDocument()
     expect(screen.queryByText('最近评价')).not.toBeInTheDocument()
 
-    // 评论分区展示评论正文和用户名。
-    expect(screen.getByText('非常好用')).toBeInTheDocument()
+    // 评论分区展示评论正文和用户名；recent_ratings 里带 comment 的条目不进入「最近评分」。
+    expect(await screen.findByText('非常好用')).toBeInTheDocument()
     expect(screen.getByText('还不错')).toBeInTheDocument()
     expect(screen.getByText('测试用户')).toBeInTheDocument()
+    expect(screen.queryByText('重复评论不进纯评分')).not.toBeInTheDocument()
+    expect(screen.queryByText('带评分支不进纯评分')).not.toBeInTheDocument()
   })
 
-  it('只有纯评分条目时仅渲染「最近评分」，不渲染「最近评论」', async () => {
+  it('只有纯评分条目时渲染「最近评分」，「最近评论」显示空态', async () => {
     vi.mocked(getPluginStats).mockResolvedValue(
       makeStats({
         recent_ratings: [
@@ -145,10 +201,11 @@ describe('PluginStats', () => {
       })
     )
 
-    render(<PluginStats pluginId="demo-plugin" />)
+    renderWithQuery(<PluginStats pluginId="demo-plugin" />)
 
     expect(await screen.findByText('最近评分')).toBeInTheDocument()
-    expect(screen.queryByText('最近评论')).not.toBeInTheDocument()
+    expect(screen.getByText('最近评论')).toBeInTheDocument()
+    expect(await screen.findByText('暂无评论。')).toBeInTheDocument()
     // 纯评分条目没有评论正文，也不应出现「仅评论」标注
     expect(screen.queryByText('仅评论')).not.toBeInTheDocument()
   })
@@ -162,7 +219,7 @@ describe('PluginStats', () => {
       dislikes: 1,
     })
 
-    render(<PluginStats pluginId="demo-plugin" />)
+    renderWithQuery(<PluginStats pluginId="demo-plugin" />)
 
     fireEvent.click(await screen.findByRole('button', { name: '点赞' }))
 
@@ -177,7 +234,7 @@ describe('PluginStats', () => {
   it('点赞失败时弹出 destructive 提示', async () => {
     vi.mocked(likePlugin).mockResolvedValue({ success: false, error: '后端错误' })
 
-    render(<PluginStats pluginId="demo-plugin" />)
+    renderWithQuery(<PluginStats pluginId="demo-plugin" />)
 
     fireEvent.click(await screen.findByRole('button', { name: '点赞' }))
 
@@ -199,7 +256,7 @@ describe('PluginStats', () => {
       dislikes: 2,
     })
 
-    render(<PluginStats pluginId="demo-plugin" />)
+    renderWithQuery(<PluginStats pluginId="demo-plugin" />)
 
     fireEvent.click(await screen.findByRole('button', { name: '点踩' }))
 
@@ -212,7 +269,7 @@ describe('PluginStats', () => {
   })
 
   it('对话框中默认状态下提交按钮禁用', async () => {
-    render(<PluginStats pluginId="demo-plugin" />)
+    renderWithQuery(<PluginStats pluginId="demo-plugin" />)
 
     fireEvent.click(await screen.findByRole('button', { name: '评价' }))
 
@@ -230,7 +287,7 @@ describe('PluginStats', () => {
       comment_count: 10,
     })
 
-    render(<PluginStats pluginId="demo-plugin" />)
+    renderWithQuery(<PluginStats pluginId="demo-plugin" />)
 
     fireEvent.click(await screen.findByRole('button', { name: '评价' }))
     const dialog = await screen.findByRole('dialog')
@@ -260,7 +317,7 @@ describe('PluginStats', () => {
       user_comment: '很好用',
     })
 
-    render(<PluginStats pluginId="demo-plugin" />)
+    renderWithQuery(<PluginStats pluginId="demo-plugin" />)
 
     fireEvent.click(await screen.findByRole('button', { name: '评价' }))
     const dialog = await screen.findByRole('dialog')
@@ -282,7 +339,7 @@ describe('PluginStats', () => {
   it('评分提交失败时弹出错误提示且对话框保持打开', async () => {
     vi.mocked(ratePlugin).mockResolvedValue({ success: false, error: '每天最多评分 3 次' })
 
-    render(<PluginStats pluginId="demo-plugin" />)
+    renderWithQuery(<PluginStats pluginId="demo-plugin" />)
 
     fireEvent.click(await screen.findByRole('button', { name: '评价' }))
     const dialog = await screen.findByRole('dialog')

@@ -1,9 +1,9 @@
 import { Activity, Database, List, Puzzle, Settings } from 'lucide-react'
 import { useEffect, useSyncExternalStore } from 'react'
 
+import { getHostRuntime } from '@/host/state'
+import { onBackendUrlChanged, resolveApiPath } from '@/lib/api-base'
 import { backendApi } from '@/lib/http'
-import { onBackendUrlChanged } from '@/lib/api-base'
-import { resolveApiPath } from '@/lib/api-base'
 
 export type Scalar = string | number | boolean | null
 export type JSONValue = Scalar | JSONValue[] | { [key: string]: JSONValue }
@@ -152,6 +152,129 @@ interface RegistryState {
   preferences: Preferences
 }
 const STORAGE_KEY = 'maibot-plugin-webui-preferences'
+const MAX_DOCUMENT_CACHE_ENTRIES = 32
+const MAX_DOCUMENT_CACHE_BYTES = 32 * 1024 * 1024
+
+interface CachedDocument {
+  scope: string
+  pluginId: string
+  pageId: string
+  revision: string
+  document: string
+  bytes: number
+}
+
+const documentCache = new Map<string, CachedDocument>()
+let documentCacheBytes = 0
+
+function currentDocumentScope(): string {
+  const runtime = getHostRuntime()
+  return runtime.host ? (runtime.selected_bot_id ?? '') : ''
+}
+
+function documentCacheKey(scope: string, pluginId: string, pageId: string): string {
+  return JSON.stringify([scope, pluginId, pageId])
+}
+
+function deleteCachedDocument(key: string): void {
+  const existing = documentCache.get(key)
+  if (!existing) return
+  documentCache.delete(key)
+  documentCacheBytes -= existing.bytes
+}
+
+function setCachedDocument(
+  scope: string,
+  pluginId: string,
+  pageId: string,
+  revision: string,
+  document: string
+): void {
+  const key = documentCacheKey(scope, pluginId, pageId)
+  deleteCachedDocument(key)
+  const bytes = document.length * 2
+  if (bytes > MAX_DOCUMENT_CACHE_BYTES) return
+  while (
+    documentCache.size >= MAX_DOCUMENT_CACHE_ENTRIES ||
+    documentCacheBytes + bytes > MAX_DOCUMENT_CACHE_BYTES
+  ) {
+    const oldestKey = documentCache.keys().next().value
+    if (oldestKey === undefined) break
+    deleteCachedDocument(oldestKey)
+  }
+  documentCache.set(key, { scope, pluginId, pageId, revision, document, bytes })
+  documentCacheBytes += bytes
+}
+
+function pruneCustomPageDocuments(scope: string, extensions: WebUIExtension[]): void {
+  const activeRevisions = new Map<string, string>()
+  for (const extension of extensions) {
+    for (const page of extension.pages) {
+      if (page.mode === 'custom') {
+        activeRevisions.set(
+          documentCacheKey(scope, extension.plugin_id, page.id),
+          page.document_revision
+        )
+      }
+    }
+  }
+  for (const [key, entry] of documentCache.entries()) {
+    if (entry.scope === scope && activeRevisions.get(key) !== entry.revision) {
+      deleteCachedDocument(key)
+    }
+  }
+}
+
+export function getCachedCustomPageDocument(
+  pluginId: string,
+  pageId: string,
+  expectedRevision: string
+): string | null {
+  const key = documentCacheKey(currentDocumentScope(), pluginId, pageId)
+  const cached = documentCache.get(key)
+  if (!cached) return null
+  if (cached.revision !== expectedRevision) {
+    deleteCachedDocument(key)
+    return null
+  }
+  documentCache.delete(key)
+  documentCache.set(key, cached)
+  return cached.document
+}
+
+export function invalidateCustomPageDocuments(pluginId?: string, pageId?: string): void {
+  if (pluginId === undefined) {
+    documentCache.clear()
+    documentCacheBytes = 0
+    return
+  }
+  for (const [key, entry] of documentCache.entries()) {
+    if (entry.pluginId === pluginId && (pageId === undefined || entry.pageId === pageId)) {
+      deleteCachedDocument(key)
+    }
+  }
+}
+
+export async function getCustomPageDocument(
+  pluginId: string,
+  pageId: string,
+  expectedRevision: string,
+  signal?: AbortSignal
+): Promise<string> {
+  const scope = currentDocumentScope()
+  const cached = getCachedCustomPageDocument(pluginId, pageId, expectedRevision)
+  if (cached !== null) return cached
+  const path = [pluginId, pageId].map(encodeURIComponent).join('/')
+  const result = await backendApi.get<{ document: string; revision: string }>(
+    `/api/webui/plugins/runtime/webui/${path}/document`,
+    { signal }
+  )
+  if (result.revision !== expectedRevision)
+    throw new Error('Page changed; refresh the plugin registry')
+  setCachedDocument(scope, pluginId, pageId, result.revision, result.document)
+  return result.document
+}
+
 const listeners = new Set<() => void>()
 let state: RegistryState = {
   extensions: [],
@@ -191,6 +314,7 @@ export function refreshPluginWebUI(ensureFresh = false): Promise<void> {
   // 启停完成时，已有请求可能读取了变更前的注册表，需等它结束后再查询一次。
   if (pending) return ensureFresh ? pending.then(() => refreshPluginWebUI()) : pending
   const current = generation
+  const scope = currentDocumentScope()
   pending = backendApi
     .get<{ schema_version: number; extensions: WebUIExtension[]; capabilities: string[] }>(
       '/api/webui/plugins/runtime/webui'
@@ -218,12 +342,15 @@ export function refreshPluginWebUI(ensureFresh = false): Promise<void> {
             ? previous
             : extension
         })
+        pruneCustomPageDocuments(scope, extensions)
         publish({ ...state, extensions, loading: false, error: null })
       }
     })
     .catch((error: unknown) => {
-      if (current === generation)
+      if (current === generation) {
+        pruneCustomPageDocuments(scope, [])
         publish({ ...state, extensions: [], loading: false, error: String(error) })
+      }
     })
     .finally(() => {
       if (current === generation) pending = null
@@ -259,6 +386,7 @@ export function usePluginWebUI(enabled = false): RegistryState {
       unsubscribeBackend = onBackendUrlChanged(() => {
         generation += 1
         pending = null
+        invalidateCustomPageDocuments()
         publish({ ...state, extensions: [], loading: true, error: null })
         void refreshPluginWebUI()
       })

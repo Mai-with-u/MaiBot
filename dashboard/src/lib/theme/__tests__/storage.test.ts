@@ -14,7 +14,7 @@ import {
   saveThemeConfig,
   saveThemePartial,
 } from '../storage'
-import { DEFAULT_DASHBOARD_STYLE_CONFIG } from '../tokens'
+import { DEFAULT_DASHBOARD_STYLE, DEFAULT_DASHBOARD_STYLE_CONFIG } from '../tokens'
 import type { UserThemeConfig } from '../tokens'
 
 /** 构造一份合法的完整主题配置，按需覆盖字段 */
@@ -120,7 +120,7 @@ describe('loadThemeConfig', () => {
 
     const config = loadThemeConfig()
 
-    expect(config.dashboardStyle).toBe('future-retro')
+    expect(config.dashboardStyle).toBe(DEFAULT_DASHBOARD_STYLE)
     expect(config.accentColor).toBe(DEFAULT_ACCENT_COLOR_HSL)
   })
 

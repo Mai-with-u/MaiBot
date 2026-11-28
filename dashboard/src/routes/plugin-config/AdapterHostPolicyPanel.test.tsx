@@ -189,7 +189,7 @@ async function renderReadyPanel(
 ) {
   vi.mocked(getAdapterHostPolicy).mockResolvedValue(response as never)
   const view = renderPanel(pluginId, queryClient)
-  expect(await screen.findByTestId('list-field:输入接收消息的群号')).toBeInTheDocument()
+  expect(await screen.findByText('群聊规则')).toBeInTheDocument()
   return { ...view, response }
 }
 
@@ -210,7 +210,8 @@ describe('AdapterHostPolicyPanel', () => {
     await renderReadyPanel()
 
     await user.click(screen.getByRole('button', { name: '添加:输入接收消息的用户 ID' }))
-    await user.click(screen.getByRole('button', { name: '复制当前组' }))
+    await user.click(screen.getByRole('button', { name: '分组操作' }))
+    await user.click(await screen.findByRole('menuitem', { name: '复制当前组' }))
     await user.type(screen.getByLabelText('分组名称'), '测试组')
     await user.click(screen.getByRole('button', { name: '创建' }))
     await waitFor(() => expect(updateAdapterHostPolicy).toHaveBeenCalledTimes(1))
@@ -219,12 +220,17 @@ describe('AdapterHostPolicyPanel', () => {
     expect(copied.policy_groups).toHaveLength(2)
     expect(copied.policy_groups?.[1].private.allow_ids).toEqual(['new-item'])
 
-    await waitFor(() => expect(screen.getByRole('button', { name: '新建分组' })).toBeEnabled())
+    await waitFor(() =>
+      expect(screen.getByTestId('host-policy-save-status')).toHaveTextContent('已保存')
+    )
     await user.click(screen.getByRole('button', { name: '测试组' }))
     await waitFor(() => expect(updateAdapterHostPolicy).toHaveBeenCalledTimes(2))
     expect(vi.mocked(updateAdapterHostPolicy).mock.calls[1][1].active_group).toBe(copied.policy_groups?.[1].id)
-    await waitFor(() => expect(screen.getByRole('button', { name: '新建分组' })).toBeEnabled())
-    await user.click(screen.getByRole('button', { name: '管理分组' }))
+    await waitFor(() =>
+      expect(screen.getByTestId('host-policy-save-status')).toHaveTextContent('已保存')
+    )
+    await user.click(screen.getByRole('button', { name: '分组操作' }))
+    await user.click(await screen.findByRole('menuitem', { name: '管理分组' }))
     expect(screen.queryByRole('button', { name: '删除分组 测试组' })).not.toBeInTheDocument()
     await user.click(screen.getByRole('button', { name: '删除分组 默认分组' }))
     await waitFor(() => expect(updateAdapterHostPolicy).toHaveBeenCalledTimes(3))
@@ -238,7 +244,7 @@ describe('AdapterHostPolicyPanel', () => {
 
     expect(await screen.findByText('正在加载主程序规则')).toBeInTheDocument()
     deferred.resolve(makeResponse())
-    expect(await screen.findByTestId('list-field:输入接收消息的群号')).toBeInTheDocument()
+    expect(await screen.findByTestId('list-field:输入不接收消息的群号')).toBeInTheDocument()
   })
 
   it('加载失败时展示 Error.message', async () => {
@@ -259,7 +265,7 @@ describe('AdapterHostPolicyPanel', () => {
     expect(await screen.findByText('主程序规则加载失败')).toBeInTheDocument()
   })
 
-  it('成功渲染群聊/私聊规则、全局默认和列表占位符', async () => {
+  it('成功渲染群聊/私聊规则、全局默认和生效中的名单占位符', async () => {
     await renderReadyPanel()
 
     expect(screen.queryByText('这是 MaiBot 主程序侧规则，与适配器自身名单相互独立。')).not.toBeInTheDocument()
@@ -269,65 +275,64 @@ describe('AdapterHostPolicyPanel', () => {
     expect(screen.queryByText(/^全局默认：/)).not.toBeInTheDocument()
     expect(screen.queryByText('群聊填写群号，私聊填写用户 ID。')).not.toBeInTheDocument()
     expect(screen.queryByText('同一 ID 不可同时出现在阅读和不阅读列表。')).not.toBeInTheDocument()
-    // 群聊继承全局「接收所有消息」→ 黑名单模式；私聊继承全局「默认不接收」→ 白名单模式
+    // 群聊继承全局「接收所有消息」→ 黑名单模式（仅展示拒收名单）；私聊继承全局「默认不接收」→ 白名单模式（仅展示接收名单）
     expect(screen.getByTestId('mode-hint:group')).toHaveTextContent('黑名单模式')
     expect(screen.getByTestId('mode-hint:private')).toHaveTextContent('白名单模式')
-    expect(screen.getByTestId('allow-section:group')).toHaveAttribute('data-inactive', 'true')
-    expect(screen.getByTestId('deny-section:group')).toHaveAttribute('data-inactive', 'false')
-    expect(screen.getByTestId('allow-section:private')).toHaveAttribute('data-inactive', 'false')
-    expect(screen.getByTestId('deny-section:private')).toHaveAttribute('data-inactive', 'true')
-    expect(screen.getByTestId('list-field:输入接收消息的群号')).toBeInTheDocument()
+    expect(screen.queryByTestId('allow-section:group')).not.toBeInTheDocument()
+    expect(screen.getByTestId('deny-section:group')).toBeInTheDocument()
+    expect(screen.getByTestId('allow-section:private')).toBeInTheDocument()
+    expect(screen.queryByTestId('deny-section:private')).not.toBeInTheDocument()
     expect(screen.getByTestId('list-field:输入不接收消息的群号')).toBeInTheDocument()
     expect(screen.getByTestId('list-field:输入接收消息的用户 ID')).toBeInTheDocument()
-    expect(screen.getByTestId('list-field:输入不接收消息的用户 ID')).toBeInTheDocument()
     expect(screen.getByRole('button', { name: '与全局设置一致（接收所有消息）' })).toBeInTheDocument()
     expect(screen.getByRole('button', { name: '与全局设置一致（默认不接收消息）' })).toBeInTheDocument()
     expect(screen.getAllByRole('button', { name: '默认不接收消息' })).toHaveLength(2)
     expect(screen.getAllByRole('button', { name: '接收所有消息' })).toHaveLength(2)
   })
 
-  it('切换默认规则后置灰不生效的名单', async () => {
+  it('切换默认规则后隐藏不生效的名单', async () => {
     const user = userEvent.setup()
     await renderReadyPanel()
 
     await user.click(screen.getAllByRole('button', { name: '默认不接收消息' })[0])
     expect(screen.getByTestId('mode-hint:group')).toHaveTextContent('白名单模式')
-    expect(screen.getByTestId('allow-section:group')).toHaveAttribute('data-inactive', 'false')
-    expect(screen.getByTestId('deny-section:group')).toHaveAttribute('data-inactive', 'true')
+    expect(screen.getByTestId('allow-section:group')).toBeInTheDocument()
+    expect(screen.getByTestId('list-field:输入接收消息的群号')).toBeInTheDocument()
+    expect(screen.queryByTestId('deny-section:group')).not.toBeInTheDocument()
   })
 
-  it('接收名单含 * 时不接收名单不置灰', async () => {
+  it('接收名单含 * 时同时展示拒收名单', async () => {
     await renderReadyPanel(
       'adapter.qq',
       makeResponse('adapter.qq', {
         policy: makePolicy({ group: { default_action: 'block', allow_ids: ['*'] } }),
       })
     )
-    expect(screen.getByTestId('deny-section:group')).toHaveAttribute('data-inactive', 'false')
+    expect(screen.getByTestId('allow-section:group')).toBeInTheDocument()
+    expect(screen.getByTestId('deny-section:group')).toBeInTheDocument()
   })
 
-  it('未做修改时不会触发自动保存，保存按钮禁用', async () => {
+  it('未做修改时不会触发自动保存，且无手动保存按钮', async () => {
     await renderReadyPanel()
     await new Promise((resolve) => setTimeout(resolve, AUTOSAVE_DELAY_MS + 200))
     expect(updateAdapterHostPolicy).not.toHaveBeenCalled()
     expect(screen.queryByTestId('host-policy-save-status')).not.toBeInTheDocument()
-    expect(screen.getByRole('button', { name: '保存' })).toBeDisabled()
+    expect(screen.queryByRole('button', { name: '保存' })).not.toBeInTheDocument()
   })
 
-  it('点击保存按钮绕过防抖立即写回', async () => {
+  it('卸载面板时绕过防抖立即提交未保存更改', async () => {
     const user = userEvent.setup()
-    await renderReadyPanel()
+    const { unmount } = await renderReadyPanel()
 
     await user.click(screen.getAllByRole('button', { name: '接收所有消息' })[0])
-    await user.click(screen.getByRole('button', { name: '保存' }))
+    expect(updateAdapterHostPolicy).not.toHaveBeenCalled()
+    unmount()
 
-    await waitFor(
-      () =>
-        expect(updateAdapterHostPolicy).toHaveBeenCalledWith('adapter.qq', {
-          group: { default_action: 'allow', allow_ids: [], deny_ids: [] },
-          private: { default_action: 'inherit', allow_ids: [], deny_ids: [] },
-        }),
-      { timeout: 6000 }
+    await waitFor(() =>
+      expect(updateAdapterHostPolicy).toHaveBeenCalledWith('adapter.qq', {
+        group: { default_action: 'allow', allow_ids: [], deny_ids: [] },
+        private: { default_action: 'inherit', allow_ids: [], deny_ids: [] },
+      })
     )
   })
 
@@ -356,10 +361,15 @@ describe('AdapterHostPolicyPanel', () => {
 
   it('修改私聊名单时把非字符串项转成字符串', async () => {
     const user = userEvent.setup()
-    await renderReadyPanel()
+    await renderReadyPanel(
+      'adapter.qq',
+      makeResponse('adapter.qq', {
+        policy: makePolicy({ private: { allow_ids: ['*'] } }),
+      })
+    )
 
-    await user.click(screen.getByRole('button', { name: '设为混合类型:输入接收消息的用户 ID' }))
     await user.click(screen.getByRole('button', { name: '添加:输入不接收消息的用户 ID' }))
+    await user.click(screen.getByRole('button', { name: '设为混合类型:输入接收消息的用户 ID' }))
 
     await waitFor(
       () =>
@@ -378,7 +388,7 @@ describe('AdapterHostPolicyPanel', () => {
   it('就地修改列表时 clonePolicy 会隔离初始数据', async () => {
     const user = userEvent.setup()
     const allowIds = ['g1']
-    const policy = makePolicy({ group: { allow_ids: allowIds } })
+    const policy = makePolicy({ group: { default_action: 'block', allow_ids: allowIds } })
     await renderReadyPanel('adapter.qq', makeResponse('adapter.qq', { policy }))
 
     await user.click(screen.getByRole('button', { name: '就地修改:输入接收消息的群号' }))
@@ -399,14 +409,14 @@ describe('AdapterHostPolicyPanel', () => {
     const setQueryData = vi.spyOn(queryClient, 'setQueryData')
     const invalidateQueries = vi.spyOn(queryClient, 'invalidateQueries')
     const savedPolicy = makePolicy({
-      group: { default_action: 'block', deny_ids: ['new-item'] },
+      group: { default_action: 'block', allow_ids: ['new-item'] },
     })
     const saved = makeResponse('adapter.qq', { policy: savedPolicy })
     vi.mocked(updateAdapterHostPolicy).mockResolvedValue(saved as never)
     await renderReadyPanel('adapter.qq', makeResponse('adapter.qq'), queryClient)
 
     await user.click(screen.getAllByRole('button', { name: '默认不接收消息' })[0])
-    await user.click(screen.getByRole('button', { name: '添加:输入不接收消息的群号' }))
+    await user.click(screen.getByRole('button', { name: '添加:输入接收消息的群号' }))
 
     await waitFor(
       () => expect(setQueryData).toHaveBeenCalledWith(['adapter-host-policy', 'adapter.qq'], saved),
@@ -417,7 +427,7 @@ describe('AdapterHostPolicyPanel', () => {
       expect(screen.getByTestId('host-policy-save-status')).toHaveTextContent('已保存')
     )
     // 回包落缓存后保留编辑草稿，内容与保存结果一致时显示已保存。
-    expect(screen.getByTestId('list-value:输入不接收消息的群号')).toHaveTextContent(
+    expect(screen.getByTestId('list-value:输入接收消息的群号')).toHaveTextContent(
       JSON.stringify(['new-item'])
     )
   })
@@ -479,7 +489,7 @@ describe('AdapterHostPolicyPanel', () => {
     vi.mocked(getAdapterHostPolicy).mockImplementation(async (pluginId: string) => {
       return makeResponse(pluginId, {
         policy: makePolicy({
-          group: { allow_ids: pluginId === 'adapter.telegram' ? ['tg'] : ['qq'] },
+          group: { default_action: 'block', allow_ids: pluginId === 'adapter.telegram' ? ['tg'] : ['qq'] },
         }),
       }) as never
     })

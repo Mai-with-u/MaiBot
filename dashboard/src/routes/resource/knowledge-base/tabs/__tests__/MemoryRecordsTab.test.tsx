@@ -133,19 +133,22 @@ describe('MemoryRecordsTab', () => {
     renderTab()
     await user.click(await screen.findByRole('checkbox', { name: '选择段落：小明喜欢咖啡' }))
     expect(screen.getByText('已选 1 条')).toBeInTheDocument()
-    expect(screen.getByRole('checkbox', { name: '全选当前结果' })).toHaveAttribute('data-state', 'indeterminate')
+    expect(screen.getByRole('checkbox', { name: '全选' })).toHaveAttribute('data-state', 'indeterminate')
     await user.click(screen.getByRole('button', { name: /小明喜欢红茶/ }))
     expect(screen.getByText('已选 1 条')).toBeInTheDocument()
     await user.keyboard('{Escape}')
     await waitFor(() => expect(screen.queryByRole('dialog')).not.toBeInTheDocument())
-    await user.click(screen.getByRole('checkbox', { name: '全选当前结果' }))
+    await user.click(screen.getByRole('checkbox', { name: '全选' }))
     expect(screen.getByText('已选 2 条')).toBeInTheDocument()
     await user.click(screen.getByRole('button', { name: '清空选择' }))
-    expect(screen.getByText('已选 0 条')).toBeInTheDocument()
-    await user.click(screen.getByRole('checkbox', { name: '全选当前结果' }))
+    expect(screen.queryByText(/已选/)).not.toBeInTheDocument()
+    expect(screen.getByRole('checkbox', { name: '全选' })).toHaveAttribute('data-state', 'unchecked')
+    expect(screen.getByRole('button', { name: '修正所选' })).toBeDisabled()
+    await user.click(screen.getByRole('checkbox', { name: '全选' }))
     await user.type(screen.getByLabelText('搜索记忆'), '咖啡')
     await user.click(screen.getByRole('button', { name: '查询' }))
-    expect(screen.getByText('已选 0 条')).toBeInTheDocument()
+    expect(screen.queryByText(/已选/)).not.toBeInTheDocument()
+    expect(screen.getByRole('checkbox', { name: '全选' })).toHaveAttribute('data-state', 'unchecked')
   })
 
   it('批量预览发送精确目标，失败时保留选择，成功后打开待确认计划', async () => {
@@ -165,7 +168,7 @@ describe('MemoryRecordsTab', () => {
       .mockResolvedValueOnce({ success: true, plan_id: plan.plan_id, plan })
     renderTab(vi.fn(), onCorrectionPlan)
     await screen.findByRole('checkbox', { name: '选择段落：小明喜欢咖啡' })
-    await user.click(screen.getByRole('checkbox', { name: '全选当前结果' }))
+    await user.click(screen.getByRole('checkbox', { name: '全选' }))
     await user.click(screen.getByRole('button', { name: '修正所选' }))
     expect(screen.getByRole('button', { name: '生成预览' })).toBeDisabled()
     await user.type(screen.getByLabelText('修正内容'), '改为喜欢绿茶')
@@ -179,7 +182,8 @@ describe('MemoryRecordsTab', () => {
     }))
     await user.click(screen.getByRole('button', { name: '生成预览' }))
     await waitFor(() => expect(onCorrectionPlan).toHaveBeenCalledWith('batch-plan', '改为喜欢绿茶'))
-    expect(screen.getByText('已选 0 条')).toBeInTheDocument()
+    expect(screen.queryByText(/已选/)).not.toBeInTheDocument()
+    expect(screen.getByRole('checkbox', { name: '全选' })).toHaveAttribute('data-state', 'unchecked')
   })
 
   it('事实和实体可以勾选，但明确提示使用各自编辑入口', async () => {
@@ -260,8 +264,7 @@ describe('MemoryRecordsTab', () => {
     const onAction = renderTab()
 
     await user.click(await screen.findByRole('button', { name: /小明喜欢咖啡/ }))
-    await screen.findByText('关联内容')
-    await user.click(screen.getByRole('button', { name: '删除' }))
+    await user.click(await screen.findByRole('button', { name: '删除' }))
 
     await waitFor(() => {
       expect(onAction).toHaveBeenCalledWith('delete', paragraph, context, undefined)
@@ -299,8 +302,7 @@ describe('MemoryRecordsTab', () => {
     renderTab()
 
     await user.click(await screen.findByRole('button', { name: /小明喜欢咖啡/ }))
-    await screen.findByText('关联内容')
-    await user.click(screen.getByRole('tab', { name: /变更/ }))
+    await user.click(await screen.findByRole('tab', { name: /变更/ }))
     expect(screen.getByText('撤回')).toBeInTheDocument()
     expect(screen.getByText('本人确认该信息已经失效')).toBeInTheDocument()
     expect(screen.getByText('图投影状态')).toBeInTheDocument()
@@ -647,7 +649,8 @@ describe('MemoryRecordsTab 未覆盖交互', () => {
     await user.click(await screen.findByRole('button', { name: /小明喜欢咖啡/ }))
     expect(await screen.findByText('正在派生关联内容')).toBeInTheDocument()
     pending.resolve(context)
-    expect(await screen.findByText('关联内容')).toBeInTheDocument()
+    expect(await screen.findByRole('tab', { name: '实体 1' })).toBeInTheDocument()
+    expect(screen.queryByText('正在派生关联内容')).not.toBeInTheDocument()
 
     cleanup()
     contextMock.mockRejectedValue(new Error('详情不可用'))
@@ -749,30 +752,29 @@ describe('MemoryRecordsTab 未覆盖交互', () => {
       available_actions: ['graph', 'correct', 'reinforce', 'freeze', 'protect', 'mystery_action'],
     })
     const onAction = renderTab()
-    // 除 mystery_action 外的动都会关闭详情弹窗，每步重新点开记录
+    // 除 mystery_action 外的动作都会关闭详情弹窗，每步重新点开记录
     const openDetail = async () => {
       await user.click(await screen.findByRole('button', { name: /小明喜欢咖啡/ }))
-      await screen.findByText('关联内容')
+      await screen.findByRole('button', { name: '图谱' })
     }
     await openDetail()
+
+    // reinforce / freeze / protect 合并去重为单个「状态」入口
+    expect(screen.queryByRole('button', { name: '强化' })).not.toBeInTheDocument()
+    expect(screen.queryByRole('button', { name: '冻结' })).not.toBeInTheDocument()
+    expect(screen.queryByRole('button', { name: '保护' })).not.toBeInTheDocument()
 
     await user.click(screen.getByRole('button', { name: 'mystery_action' }))
     await user.click(screen.getByRole('button', { name: '图谱' }))
     await openDetail()
     await user.click(screen.getByRole('button', { name: '修正' }))
     await openDetail()
-    await user.click(screen.getByRole('button', { name: '强化' }))
-    await openDetail()
-    await user.click(screen.getByRole('button', { name: '冻结' }))
-    await openDetail()
-    await user.click(screen.getByRole('button', { name: '保护' }))
+    await user.click(screen.getByRole('button', { name: '状态' }))
 
     expect(onAction).toHaveBeenCalledWith('mystery_action', paragraph, expect.anything(), undefined)
     expect(onAction).toHaveBeenCalledWith('graph', paragraph, expect.anything(), undefined)
     expect(onAction).toHaveBeenCalledWith('correct', paragraph, expect.anything(), undefined)
-    expect(onAction).toHaveBeenCalledWith('reinforce', paragraph, expect.anything(), undefined)
-    expect(onAction).toHaveBeenCalledWith('freeze', paragraph, expect.anything(), undefined)
-    expect(onAction).toHaveBeenCalledWith('protect', paragraph, expect.anything(), undefined)
+    expect(onAction).toHaveBeenCalledWith('status', paragraph, expect.anything(), undefined)
   })
 
   it('展示情景、画像、非失败图投影以及证据和状态变更回退', async () => {

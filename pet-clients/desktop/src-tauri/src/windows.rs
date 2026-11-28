@@ -567,19 +567,25 @@ impl PetWindowController {
                         }
                         let diameter = (corner.min(width / 2.0).min(height / 2.0) * 2.0 * scale)
                             .round() as i32;
-                        let region = CreateRoundRectRgn(
+                        let (left, top, right, bottom) = (
                             (x * scale).floor() as i32,
                             (y * scale).floor() as i32,
                             ((x + width) * scale).ceil() as i32,
                             ((y + height) * scale).ceil() as i32,
-                            diameter,
-                            diameter,
                         );
+                        // RoundRectRgn drops the last row/column even at radius zero.
+                        // Alpha-region runs can be exactly one pixel tall.
+                        let region = if diameter == 0 {
+                            CreateRectRgn(left, top, right, bottom)
+                        } else {
+                            CreateRoundRectRgn(left, top, right + 1, bottom + 1, diameter, diameter)
+                        };
                         if region.0.is_null() {
                             let _ = DeleteObject(combined.into());
                             return Err("无法创建桌宠交互区域".into());
                         }
-                        let merged = CombineRgn(Some(combined), Some(combined), Some(region), RGN_OR);
+                        let merged =
+                            CombineRgn(Some(combined), Some(combined), Some(region), RGN_OR);
                         let _ = DeleteObject(region.into());
                         if merged.0 == 0 {
                             let _ = DeleteObject(combined.into());

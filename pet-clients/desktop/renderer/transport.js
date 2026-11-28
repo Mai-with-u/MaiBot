@@ -1,4 +1,4 @@
-/* Runs only in the isolated, same-origin authentication WebView. Credentials stay in its browser profile. */
+/* Runs only in the isolated, same-origin authentication WebView. The browser owns the session cookie. */
 (() => {
   'use strict';
 
@@ -6,13 +6,14 @@
   const object = value => value !== null && typeof value === 'object' && !Array.isArray(value);
   if (window.top !== window.self || !object(config) || typeof config.nonce !== 'string'
     || typeof config.server !== 'string' || !window.__TAURI_INTERNALS__?.invoke) return;
-  let server;
+  let server, authPath;
   try {
     const url = new URL(config.server);
     if (!['https:', 'http:'].includes(url.protocol) || url.origin !== window.location.origin
       || url.username || url.password || url.search || url.hash) return;
     server = url.href.replace(/\/+$/, '');
     const root = url.pathname.replace(/\/+$/, '');
+    authPath = root + '/auth';
     if (root && window.location.pathname !== root && !window.location.pathname.startsWith(root + '/')) return;
   } catch { return; }
   // PageFinished may run more than once for one document. Never create duplicate sockets/pollers.
@@ -35,6 +36,7 @@
   const pendingRequests = new Set();
   let options, controller, runner, connection, generation = 0;
   let authTimer, authController, authProbe, authenticated = false, authNotice = false, stopped = false;
+  let tryToken = false, forceTokenPending = false, tokenRequested = false, checkingToken = false;
 
   class ProtocolError extends Error {}
   class AuthRequired extends Error {}
@@ -50,7 +52,7 @@
   }
   const state = (connected, text) => publish({ type: 'state', connected, text });
 
-  async function readJSON(response, limit) {
+  async function readBytes(response, limit) {
     const declared = response.headers.get('content-length');
     if (declared !== null && (!/^\d+$/.test(declared) || Number(declared) > limit)) {
       await response.body?.cancel();
@@ -72,17 +74,58 @@
         }
       } finally { reader.releaseLock(); }
     }
-    if (!/^application\/(?:[\w.+-]+\+)?json(?:\s*;|\s*$)/i.test(response.headers.get('content-type') || '')) {
-      throw new ProtocolError('服务器响应不是 JSON');
-    }
     const bytes = new Uint8Array(size);
     let offset = 0;
     for (const chunk of chunks) { bytes.set(chunk, offset); offset += chunk.byteLength; }
+    return bytes;
+  }
+
+  async function readJSON(response, limit) {
+    const bytes = await readBytes(response, limit);
+    if (!/^application\/(?:[\w.+-]+\+)?json(?:\s*;|\s*$)/i.test(response.headers.get('content-type') || '')) {
+      throw new ProtocolError('服务器响应不是 JSON');
+    }
     let data;
     try { data = JSON.parse(new TextDecoder('utf-8', { fatal: true }).decode(bytes)); }
     catch { throw new ProtocolError('服务器返回了无效的 JSON'); }
     if (!object(data)) throw new ProtocolError('服务器响应必须是 JSON 对象');
     return data;
+  }
+
+  async function skinAssetRequest(url, session) {
+    const signal = session.controller.signal;
+    const abort = new AbortController();
+    const aborted = () => abort.abort(signal.reason);
+    if (signal.aborted) aborted();
+    else signal.addEventListener('abort', aborted, { once: true });
+    const timer = setTimeout(() => abort.abort(new Error('皮肤资源读取超时')), 20_000);
+    try {
+      const response = await fetch(url, {
+        credentials: 'include', redirect: 'error', signal: abort.signal,
+        headers: { 'X-Desktop-Pet-Connection': session.id },
+      });
+      if (!response.ok) {
+        await response.body?.cancel();
+        if (response.status === 401) throw new AuthRequired('登录已失效，请在 WebUI 中重新登录');
+        throw new HTTPError(response.status, `皮肤资源读取失败：HTTP ${response.status}`);
+      }
+      const mime = response.headers.get('content-type');
+      if (!['image/png', 'image/webp'].includes(mime)) {
+        await response.body?.cancel();
+        throw new ProtocolError('不支持的皮肤图片类型');
+      }
+      const bytes = await readBytes(response, 32 * 1024 * 1024);
+      const data_url = await new Promise((resolve, reject) => {
+        const reader = new FileReader();
+        reader.onload = () => resolve(reader.result);
+        reader.onerror = () => reject(new Error('皮肤图片读取失败'));
+        reader.readAsDataURL(new Blob([bytes], {type: mime}));
+      });
+      return {data_url};
+    } finally {
+      clearTimeout(timer);
+      signal.removeEventListener('abort', aborted);
+    }
   }
 
   async function jsonRequest(url, { method = 'GET', payload, signal, headers = {}, limit = MAX_HTTP_BYTES,
@@ -131,8 +174,24 @@
   }
 
   async function probeAuth(signal) {
+    if (forceTokenPending) {
+      // An explicitly entered password must succeed before we consult an existing cookie.
+      if (location.pathname !== authPath || !tryToken) await rejectToken();
+      else if (!tokenRequested) {
+        tokenRequested = true;
+        try {
+          if (await notify({type: 'token_required'}) !== true && !signal.aborted) await rejectToken();
+        }
+        catch { if (!signal.aborted) await rejectToken(); }
+      }
+      return;
+    }
     const status = await jsonRequest(server + '/api/webui/auth/check', { signal, limit: MAX_AUTH_BYTES, timeout: 15_000 });
     if (typeof status.authenticated !== 'boolean') throw new ProtocolError('服务器返回了无效的认证状态');
+    if (!tokenRequested && tryToken && location.pathname === authPath && !status.authenticated) {
+      tokenRequested = true;
+      if (await notify({type: 'token_required'}) === true) return;
+    }
     if (!status.authenticated || status.requires_custom_token === true) {
       throw new AuthRequired(status.requires_custom_token === true ? '请先在 WebUI 完成首次设置' : '请在 WebUI 中登录');
     }
@@ -148,13 +207,46 @@
     if (changed) publish({ type: 'authenticated', bots });
   }
 
+  async function rejectToken() {
+    // Native discovery ends and returns control to the connection form.
+    stop();
+    await notify({type: 'token_invalid'}).catch(() => {});
+  }
+
+  async function verifyToken(token) {
+    if (stopped || checkingToken || !tokenRequested || location.pathname !== authPath) return;
+    checkingToken = true;
+    try {
+      const result = await jsonRequest(server + '/api/webui/auth/verify', {
+        method: 'POST', payload: {token}, limit: MAX_AUTH_BYTES, timeout: 15_000,
+      });
+      if (stopped) return;
+      if (result.valid !== true) {
+        await rejectToken();
+      } else {
+        const requiresCustomToken = result.requires_custom_token === true;
+        await notify({type: 'token_verified', requires_custom_token: requiresCustomToken});
+        forceTokenPending = false;
+        if (requiresCustomToken) authRequired('请先在 WebUI 完成首次设置');
+      }
+    } catch (error) {
+      if (!stopped) {
+        if (forceTokenPending) await rejectToken();
+        else authRequired(messageOf(error));
+      }
+    } finally {
+      checkingToken = false;
+      scheduleAuth(0);
+    }
+  }
+
   function scheduleAuth(delay = 2000) {
     clearTimeout(authTimer);
     if (!stopped) authTimer = setTimeout(pollAuth, delay);
   }
 
   async function pollAuth() {
-    if (stopped || authProbe) return;
+    if (stopped || authProbe || checkingToken) return;
     authController = new AbortController();
     const signal = authController.signal;
     authProbe = probeAuth(signal);
@@ -235,7 +327,7 @@
       socket.addEventListener('open', () => {
         if (!active()) return;
         try { send(socket, { type: 'hello', version: VERSION, client_id: selected.clientId,
-          capabilities: { screen_read: selected.allowScreenRead } }); } catch (error) { fail(error); }
+          capabilities: { screen_read: selected.allowScreenRead, skin_assets: true, skin_loading: true } }); } catch (error) { fail(error); }
       });
       socket.addEventListener('error', () => fail(new Error('无法连接服务器，请检查网络和 WebUI 登录状态')));
       socket.addEventListener('close', event => fail(event.code === 4001
@@ -378,7 +470,8 @@
     try {
       if (pendingRequests.size > 16) throw new Error('桌宠请求过多，请稍后重试');
       if (!session?.connected) throw new Error('桌宠未连接服务器，请等待连接恢复');
-      const allowed = method === 'POST' && (path === '/todos' || /^\/chat\/[0-9a-f]{32}$/.test(path))
+      const skinAsset = method === 'GET' && /^\/skins\/assets\/[0-9a-f]{64}$/.test(path);
+      const allowed = skinAsset || method === 'POST' && (path === '/todos' || /^\/chat\/[0-9a-f]{32}$/.test(path))
         || method === 'GET' && /^\/todos\/images\/[0-9a-f]{64}$/.test(path);
       if (!allowed) throw new TypeError('不支持的桌宠接口');
       if (method === 'POST' && !object(payload)) throw new TypeError('请求必须是 JSON 对象');
@@ -390,8 +483,9 @@
         && (typeof payload.request_id !== 'string' || !REQUEST_ID.test(payload.request_id))) {
         throw new TypeError('修改待办必须提供 32 位十六进制 request_id');
       }
-      const data = await jsonRequest(session.base + path, { method, payload, signal: session.controller.signal,
-        headers: { 'X-Desktop-Pet-Connection': session.id } });
+      const data = skinAsset ? await skinAssetRequest(session.base + path, session)
+        : await jsonRequest(session.base + path, { method, payload, signal: session.controller.signal,
+          headers: { 'X-Desktop-Pet-Connection': session.id } });
       if (connection !== session || !session.connected) throw new Error('桌宠连接已变化，请刷新记录确认操作结果');
       publish({ type: 'response', id, ok: true, data });
     } catch (error) {
@@ -411,7 +505,14 @@
   }
 
   Object.defineProperty(window, '__petTransport', { configurable: true,
-    value: Object.freeze({ nonce, start, stop, request, sendEvent, commandResult }) });
+    value: Object.freeze({ nonce, start, stop, request, sendEvent, commandResult, verifyToken }) });
   window.addEventListener('pagehide', stop, { once: true });
-  notify({ type: 'ready' }).then(() => scheduleAuth(0)).catch(stop);
+  notify({ type: 'ready' }).then(state => {
+    if (!object(state) || typeof state.tryToken !== 'boolean' || typeof state.forceToken !== 'boolean') {
+      throw new ProtocolError('原生端未返回有效的认证状态');
+    }
+    tryToken = state.tryToken;
+    forceTokenPending = state.forceToken;
+    scheduleAuth(0);
+  }).catch(stop);
 })();

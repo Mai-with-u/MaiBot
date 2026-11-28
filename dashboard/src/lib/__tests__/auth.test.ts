@@ -75,7 +75,10 @@ describe('getAuthStatus', () => {
       token_source: 'custom',
       requires_custom_token: true,
     })
-    expect(getMock).toHaveBeenCalledWith('/api/webui/auth/check')
+    expect(getMock).toHaveBeenCalledWith('/api/webui/auth/check', {
+      cache: 'no-store',
+      signal: expect.any(AbortSignal),
+    })
   })
 
   it('可选字段缺失时 authenticated / requires_custom_token 强制为布尔值', async () => {
@@ -100,7 +103,10 @@ describe('checkAuthStatus', () => {
     getMock.mockResolvedValue({ authenticated: true, token_source: 'env' })
 
     await expect(checkAuthStatus()).resolves.toBe(true)
-    expect(getMock).toHaveBeenCalledWith('/api/webui/auth/check')
+    expect(getMock).toHaveBeenCalledWith('/api/webui/auth/check', {
+      cache: 'no-store',
+      signal: expect.any(AbortSignal),
+    })
   })
 
   it('请求失败时返回 false', async () => {
@@ -121,7 +127,9 @@ describe('getSetupStatus', () => {
     getMock.mockResolvedValue(response)
 
     await expect(getSetupStatus()).resolves.toBe(response)
-    expect(getMock).toHaveBeenCalledWith('/api/webui/setup/status')
+    expect(getMock).toHaveBeenCalledWith('/api/webui/setup/status', {
+      signal: expect.any(AbortSignal),
+    })
   })
 
   it('请求失败时返回 null 而不抛错', async () => {

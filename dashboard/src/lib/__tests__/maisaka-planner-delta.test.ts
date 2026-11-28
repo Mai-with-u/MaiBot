@@ -68,6 +68,17 @@ describe('Planner 增量解码', () => {
     expect(decoder.decode(delta())!.data.event_id).toBe(2)
   })
 
+  it('preserves the private screen names as a root field through snapshots and deltas', () => {
+    const decoder = new PlannerDeltaDecoder()
+    expect(decoder.decode(full(1, { private_screen_tool_names: [] }))?.data.private_screen_tool_names).toEqual([])
+    expect(decoder.decode(delta(2, {
+      changes: { event_id: 2, private_screen_tool_names: ['wait', 'reply'] },
+    }))?.data.private_screen_tool_names).toEqual(['wait', 'reply'])
+    const final = decoder.decode(delta(3, { event_type: 'planner.finalized' }))
+    expect(final?.event).toBe('planner.finalized')
+    expect(final?.data.private_screen_tool_names).toEqual(['wait', 'reply'])
+  })
+
   it('重订阅标记清空基准，重新收到完整快照后继续增量', () => {
     const decoder = new PlannerDeltaDecoder()
     decoder.decode(full())

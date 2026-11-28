@@ -115,9 +115,10 @@ export function ExpressionReview() {
               trailing: <ExpressionScopeStatus enableLearning="on" useExpression="on" />,
             }))}
             footer={
-              <label className="flex items-center justify-between gap-2 text-xs">
+              <label htmlFor="expression-review-legacy" className="flex items-center justify-between gap-2 text-xs">
                 显示旧格式
                 <Checkbox
+                  id="expression-review-legacy"
                   size="sm"
                   checked={legacy}
                   onCheckedChange={(value) => setLegacy(value === true)}

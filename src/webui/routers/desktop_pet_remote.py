@@ -2,7 +2,7 @@
 
 from typing import Any, Dict
 
-from fastapi import APIRouter, HTTPException, Request, WebSocket, WebSocketDisconnect
+from fastapi import APIRouter, HTTPException, Request, Response, WebSocket, WebSocketDisconnect
 
 import asyncio
 
@@ -176,3 +176,16 @@ async def remote_todo_image(image_id: str, request: Request) -> Dict[str, Any]:
     finally:
         if started:
             peer.end_image_request()
+
+
+@router.get("/skins/assets/{digest}")
+def remote_skin_asset(digest: str, request: Request) -> Response:
+    peer = _peer(request)
+    asset = peer.skin_assets.get(digest)
+    if asset is None:
+        raise HTTPException(404, "皮肤资源不存在")
+    mime, raw = asset
+    return Response(raw, media_type=mime, headers={
+        "Cache-Control": "private, max-age=86400, immutable",
+        "X-Content-Type-Options": "nosniff",
+    })

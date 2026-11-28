@@ -1,14 +1,20 @@
 import * as React from 'react'
 import * as ProgressPrimitive from '@radix-ui/react-progress'
+import { motion } from 'motion/react'
 
+import { useMotion } from '@/lib/motion'
 import { cn } from '@/lib/utils'
 
 const Progress = React.forwardRef<
   React.ElementRef<typeof ProgressPrimitive.Root>,
   React.ComponentPropsWithoutRef<typeof ProgressPrimitive.Root>
 >(({ className, value, max = 100, ...props }, ref) => {
+  const { style, enabled, transitions } = useMotion()
   const limit = Number.isFinite(max) && max > 0 ? max : 100
   const progress = typeof value === 'number' && Number.isFinite(value) ? Math.min(limit, Math.max(0, value)) : null
+  const offsetPercent = progress === null ? null : 100 - (progress / limit) * 100
+  const modernSpring = style === 'modern' && enabled && offsetPercent !== null
+
   return (
     <ProgressPrimitive.Root
       ref={ref}
@@ -18,11 +24,23 @@ const Progress = React.forwardRef<
       className={cn('bg-primary/20 relative h-2 w-full overflow-hidden rounded-full', className)}
       {...props}
     >
-      <ProgressPrimitive.Indicator
-        data-dashboard-progress-indicator="true"
-        className="bg-primary h-full w-full flex-1 transition-all"
-        style={progress === null ? undefined : { transform: `translateX(-${100 - progress / limit * 100}%)` }}
-      />
+      {modernSpring ? (
+        <ProgressPrimitive.Indicator asChild>
+          <motion.div
+            data-dashboard-progress-indicator="true"
+            className="bg-primary h-full w-full flex-1"
+            initial={false}
+            animate={{ x: `-${offsetPercent}%` }}
+            transition={transitions.gentle}
+          />
+        </ProgressPrimitive.Indicator>
+      ) : (
+        <ProgressPrimitive.Indicator
+          data-dashboard-progress-indicator="true"
+          className="bg-primary h-full w-full flex-1 transition-transform duration-[var(--motion-duration-normal)] ease-[var(--motion-ease)]"
+          style={offsetPercent === null ? undefined : { transform: `translateX(-${offsetPercent}%)` }}
+        />
+      )}
     </ProgressPrimitive.Root>
   )
 })

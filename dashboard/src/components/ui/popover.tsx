@@ -13,12 +13,13 @@ const PopoverAnchor = PopoverPrimitive.Anchor
 const PopoverContent = React.forwardRef<
   React.ElementRef<typeof PopoverPrimitive.Content>,
   React.ComponentPropsWithoutRef<typeof PopoverPrimitive.Content>
->(({ className, children, align = "center", sideOffset = 4, onWheel, onTouchMove, ...props }, ref) => (
+>(({ className, children, align = "center", sideOffset = 4, collisionPadding = 16, onWheel, onTouchMove, ...props }, ref) => (
   <PopoverPrimitive.Portal>
     <PopoverPrimitive.Content
       ref={ref}
       align={align}
       sideOffset={sideOffset}
+      collisionPadding={collisionPadding}
       asChild
       {...props}
     >

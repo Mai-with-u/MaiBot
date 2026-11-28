@@ -36,6 +36,7 @@ vi.mock('@/components/search-dialog', () => ({
 }))
 
 vi.mock('@/lib/ai-search-api', () => ({
+  deleteAIHelpSession: vi.fn(),
   getAIHelpSession: vi.fn(),
   listAIHelpSessions: vi.fn().mockResolvedValue([]),
 }))
