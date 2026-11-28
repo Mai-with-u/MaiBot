@@ -345,6 +345,22 @@
   border-color: var(--mil-lo);
 }
 
+/* ---------- 现代桌面 ---------- */
+:root[data-dashboard-style='modern'] :is([data-task-board-label], [data-task-board-more]) > b {
+  display: none;
+}
+
+@media (min-width: 1024px) {
+  :root[data-dashboard-style='modern'] [data-task-editor-head] {
+    border-bottom-width: 1px;
+  }
+
+  :root[data-dashboard-style='modern'] [data-task-guide-step] > i,
+  :root[data-dashboard-style='modern'] [data-task-card='empty'] {
+    border-width: 1px;
+  }
+}
+
 /* ---------- 未来复古 ---------- */
 :root[data-dashboard-style='future-retro'] [data-task-card='empty'] {
   border-radius: 0;

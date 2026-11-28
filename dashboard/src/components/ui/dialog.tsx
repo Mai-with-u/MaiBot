@@ -115,7 +115,7 @@ const DialogContent = React.forwardRef<
               'bg-background fixed z-50 flex flex-col gap-4 overflow-hidden border p-6 shadow-lg outline-none',
               side === 'right'
                 ? 'top-20 right-4 max-h-[min(75dvh,48rem)] w-[min(calc(100vw-2rem),var(--dialog-width,32rem))] rounded-none pb-[max(1.5rem,env(safe-area-inset-bottom))]'
-                : 'top-[50%] left-[50%] max-h-[calc(100vh-2rem)] w-[min(calc(100vw-2rem),var(--dialog-width,32rem))] translate-x-[-50%] translate-y-[-50%] sm:rounded-lg',
+                : 'top-[50%] left-[50%] max-h-[calc(100vh-2rem)] w-[min(calc(100vw-2rem),var(--dialog-width,32rem))] translate-x-[-50%] translate-y-[-50%] sm:rounded-xl',
               // 手机上改为从底部升起的弹层：贴底、顶部大圆角、留出底部安全区
               side === 'center' &&
                 'max-sm:top-auto max-sm:bottom-0 max-sm:left-0 max-sm:max-h-[92dvh] max-sm:w-full max-sm:translate-x-0 max-sm:translate-y-0 max-sm:rounded-t-[28px] max-sm:border-x-0 max-sm:border-b-0 max-sm:pb-[calc(env(safe-area-inset-bottom)+1.5rem)]',

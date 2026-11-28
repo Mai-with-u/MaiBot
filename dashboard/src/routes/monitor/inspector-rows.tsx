@@ -9,7 +9,7 @@ export function InspectorSection({ title, meta }: { title: ReactNode; meta?: Rea
   return (
     <div data-rows-group="true" className="flex items-center gap-2">
       <span>{title}</span>
-      {meta !== undefined && <span className="ml-auto font-mono font-normal tracking-normal">{meta}</span>}
+      {meta !== undefined && <span className="ml-auto font-normal tracking-normal tabular-nums">{meta}</span>}
     </div>
   )
 }

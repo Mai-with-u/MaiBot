@@ -11,7 +11,21 @@ import type { PluginInfo } from '@/types/plugin'
 
 import { QueryClient, QueryClientProvider } from '@tanstack/react-query'
 import { cleanup, fireEvent, render, screen, waitFor } from '@testing-library/react'
+import userEvent from '@testing-library/user-event'
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest'
+
+if (!Element.prototype.hasPointerCapture) {
+  Element.prototype.hasPointerCapture = () => false
+}
+if (!Element.prototype.setPointerCapture) {
+  Element.prototype.setPointerCapture = () => {}
+}
+if (!Element.prototype.releasePointerCapture) {
+  Element.prototype.releasePointerCapture = () => {}
+}
+if (!Element.prototype.scrollIntoView) {
+  Element.prototype.scrollIntoView = () => {}
+}
 
 import { PluginDetailPage } from '../plugin-detail'
 import * as httpLib from '@/lib/http'
@@ -182,10 +196,12 @@ function makeReleasePlugin(): PluginInfo {
 
 describe('插件发布版本选择', () => {
   it('选择历史版本后，提交明确版本并按 commit 获取文档', async () => {
+    const user = userEvent.setup({ pointerEventsCheck: 0 })
     vi.mocked(pluginApi.fetchPluginList).mockResolvedValue([makeReleasePlugin()])
     renderPage()
     await waitDetailReady()
-    fireEvent.change(screen.getByRole('combobox', { name: '选择发布版本' }), { target: { value: '1.0.0' } })
+    await user.click(screen.getByRole('combobox', { name: '选择发布版本' }))
+    await user.click(await screen.findByRole('option', { name: /v1\.0\.0/ }))
     fireEvent.click(screen.getByRole('button', { name: '安装' }))
     await waitFor(() => expect(pluginApi.installPlugin).toHaveBeenCalledWith(
       'plug-1', 'https://github.com/owner/repo.git', 'main', { version: '1.0.0' }
@@ -198,6 +214,7 @@ describe('插件发布版本选择', () => {
   })
 
   it('没有兼容版本时禁止安装并显示具体原因', async () => {
+    const user = userEvent.setup({ pointerEventsCheck: 0 })
     const plugin = makeReleasePlugin()
     plugin.releases!.recommended_version = null
     plugin.releases!.versions.forEach((release) => { release.compatible = false; release.reasons = ['SDK 版本不兼容'] })
@@ -205,8 +222,9 @@ describe('插件发布版本选择', () => {
     renderPage()
     await waitDetailReady()
     expect(screen.getByRole('button', { name: '安装' })).toBeDisabled()
-    // 发布版本选项末尾附带更新日期，夹具未提供 published_at 时显示「时间未知」
-    expect(screen.getByRole('option', { name: '2.0.0 · SDK 版本不兼容 · 更新于 时间未知' })).toBeDisabled()
+    await user.click(screen.getByRole('combobox', { name: '选择发布版本' }))
+    const incompatibleOption = await screen.findByRole('option', { name: /v2\.0\.0.*SDK 版本不兼容/ })
+    expect(incompatibleOption).toHaveAttribute('aria-disabled', 'true')
     expect(pluginApi.installPlugin).not.toHaveBeenCalled()
   })
 })

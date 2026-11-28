@@ -314,6 +314,15 @@ export class LogWebSocketManager {
     this.notifyLogChange()
   }
 
+  /** 将撤销快照合并回缓存前列，保留撤销窗口期间新到达的实时日志。 */
+  restoreLogs(entries: LogEntry[]): void {
+    if (entries.length === 0) return
+    const current = this.getAllLogs()
+    this.replaceLogs([...entries, ...current])
+    this.cancelLogNotification()
+    this.notifyLogChange()
+  }
+
   getConnectionStatus(): boolean {
     return this.isConnected
   }

@@ -331,7 +331,7 @@ function StageStatusContent({
         </StatusIndicator>
         {status.roundText && <span>{status.roundText}</span>}
         {agentStateLabel && <span>{agentStateLabel}</span>}
-        <span className="text-muted-foreground ml-auto text-[11px]">
+        <span className="text-muted-foreground ml-auto text-xs tabular-nums">
           {floating || status.stage === '组织上下文' ? (
             <ToolExecutionElapsed key={status.stageStartedAt} startedAt={status.stageStartedAt} />
           ) : (
@@ -372,7 +372,7 @@ function ReplyPreviewBlock({
           回复 {replyTo.sender_name || '未知用户'}
         </span>
         {replyTo.message_id && (
-          <span className="text-muted-foreground/70 shrink-0 font-mono text-[10px]">
+          <span className="text-muted-foreground/70 shrink-0 font-mono text-xs">
             #{replyTo.message_id}
           </span>
         )}
@@ -580,7 +580,7 @@ function MessageMediaContent({
 
   if (!hasContent && !hasMedia) {
     return (
-      <p className="text-foreground/80 text-[14.5px] leading-relaxed wrap-break-word whitespace-pre-wrap">
+      <p className="text-foreground/80 text-sm leading-relaxed wrap-break-word whitespace-pre-wrap">
         {emptyLabel}
       </p>
     )
@@ -589,7 +589,7 @@ function MessageMediaContent({
   return (
     <div className="space-y-1.5">
       {hasContent && (
-        <p className="text-foreground/80 text-[14.5px] leading-relaxed wrap-break-word whitespace-pre-wrap">
+        <p className="text-foreground/80 text-sm leading-relaxed wrap-break-word whitespace-pre-wrap">
           {normalizedContent}
         </p>
       )}
@@ -664,10 +664,10 @@ function TimingGateCard({ data }: { data: TimingGateResultEvent }) {
         <div className="mb-1 flex flex-wrap items-center gap-2">
           <span className="text-sm font-medium">反应</span>
           <EventTimestamp timestamp={data.timestamp} durationMs={data.duration_ms} />
-          <Badge variant="outline" className="text-[10px]">
+          <Badge variant="outline" className="text-xs">
             react
           </Badge>
-          <Badge variant={config.variant} className="gap-0.5 text-[10px]">
+          <Badge variant={config.variant} className="gap-0.5 text-xs">
             <Icon className="h-2.5 w-2.5" />
             {config.label}
           </Badge>
@@ -687,7 +687,7 @@ function ToolCallBadges({ toolCalls }: { toolCalls: MaisakaToolCall[] }) {
   return (
     <div className="mt-2 flex flex-wrap gap-1.5">
       {toolCalls.map((tc: MaisakaToolCall, idx: number) => (
-        <Badge key={`${tc.id || tc.name}-${idx}`} variant="secondary" className="gap-1 text-[10px]">
+        <Badge key={`${tc.id || tc.name}-${idx}`} variant="secondary" className="gap-1 text-xs">
           <Wrench className="h-2.5 w-2.5" />
           {tc.name}
         </Badge>
@@ -754,7 +754,7 @@ function PlannerInterruptedCard({ data }: { data: PlannerFinalizedEvent }) {
         <AlertCircle className="h-4 w-4 shrink-0 text-amber-500" />
         <span className="font-medium">Planner 被新消息打断</span>
         <EventTimestamp startedAt={data.planner_started_at} endedAt={data.planner_ended_at} />
-        <Badge variant="outline" className="ml-auto text-[10px]">
+        <Badge variant="outline" className="ml-auto text-xs tabular-nums">
           #{data.cycle_id}
         </Badge>
         {planner && planner.duration_ms > 0 && (
@@ -792,7 +792,7 @@ function PlannerResponseCard({ data }: { data: PlannerResponseEvent }) {
           <span className="text-sm font-medium">规划器思考</span>
           <EventTimestamp timestamp={data.timestamp} durationMs={data.duration_ms} />
           <span className="text-muted-foreground text-xs">{formatMs(data.duration_ms)}</span>
-          <Badge variant="outline" className="text-[10px]">
+          <Badge variant="outline" className="text-xs tabular-nums">
             {data.prompt_tokens}+{data.completion_tokens} tokens
           </Badge>
         </div>
@@ -807,7 +807,7 @@ function ModelNameBadge({ modelName }: { modelName?: string | null }) {
   if (!modelName) return null
 
   return (
-    <Badge variant="outline" className="text-muted-foreground min-w-0 max-w-full text-[10px] font-normal opacity-65" title={modelName}>
+    <Badge variant="outline" className="text-muted-foreground min-w-0 max-w-full text-xs font-normal opacity-65" title={modelName}>
       <span className="max-w-64 truncate">{modelName}</span>
     </Badge>
   )
@@ -926,7 +926,11 @@ function ReplyFlowDetails({ tool, messages, onJumpToMessage }: ReplyToolMessageP
                 <div className="min-w-0 space-y-1 leading-5 break-words">
                   {part.type === 'reply' ? '回复正文' : part.type === 'at' ? <>@ {messageLink(String(part.msg_id))}</>
                     : part.type === 'emoji' ? `表情包 · 候选 #${part.index}` : part.type === 'pic' ? <>
-                      <div>图片 · 第 {pictureIndex + 1} 张 · {source.startsWith('tool_result:') ? `工具返回图片（${source}）` : messageLink(source)}</div>
+                      <div className="flex flex-wrap items-center gap-x-2 gap-y-0.5">
+                        <span>图片</span>
+                        <span className="tabular-nums">第 {pictureIndex + 1} 张</span>
+                        <span>{source.startsWith('tool_result:') ? `工具返回图片（${source}）` : messageLink(source)}</span>
+                      </div>
                       {media && <MessageMediaItem item={{ ...media, default_original: true }} />}
                     </> : `未知编排项：${String(part.type)}`}
                 </div>
@@ -1031,8 +1035,8 @@ function ReplyToolArguments({
           >
             <span className="text-muted-foreground shrink-0">↳ 回复</span>
             {message?.speaker_name && <span className="shrink-0 font-medium">{message.speaker_name}</span>}
-            <span className="text-muted-foreground shrink-0 font-mono text-[10px]">#{messageId}</span>
-            {quoteText && <span className="text-muted-foreground min-w-0 truncate">· {quoteText}</span>}
+            <span className="text-muted-foreground shrink-0 font-mono text-xs">#{messageId}</span>
+            {quoteText && <span className="text-muted-foreground min-w-0 truncate">{quoteText}</span>}
           </Button>
         )}
         {atTargets.map((target, index) => {
@@ -1193,7 +1197,7 @@ function ToolFullJsonBlock({
     <>
       <button
         type="button"
-        className="text-muted-foreground hover:text-foreground ml-auto flex h-6 cursor-pointer list-none items-center gap-1 px-1.5 text-[10px]"
+        className="text-muted-foreground hover:text-foreground ml-auto flex h-6 cursor-pointer list-none items-center gap-1 px-1.5 text-xs"
         title="完整调用 JSON"
         data-maisaka-expand="true"
         aria-expanded={expanded}
@@ -1203,7 +1207,7 @@ function ToolFullJsonBlock({
         <span>JSON</span>
       </button>
       {expanded && (
-        <pre className="bg-background/60 text-muted-foreground w-full min-w-0 basis-full rounded-md border px-2.5 py-1.5 font-mono text-[11px] leading-4 break-words whitespace-pre-wrap">
+        <pre className="bg-background/60 text-muted-foreground w-full min-w-0 basis-full rounded-md border px-2.5 py-1.5 font-mono text-xs leading-4 break-words whitespace-pre-wrap">
           {JSON.stringify(payload, null, 2)}
         </pre>
       )}
@@ -1347,7 +1351,7 @@ function PlannerToolResultCard({
             <WaitToolLabel key={waitUntil} args={tool.tool_args} waitUntil={waitUntil} pending={Boolean(tool.status)} />
           </span>
           <EventTimestamp startedAt={tool.started_at} />
-          <span className="text-muted-foreground ml-auto text-[10px]">#{index + 1}</span>
+          <span className="text-muted-foreground ml-auto text-xs tabular-nums">#{index + 1}</span>
           {canOpenReasoning && (
             <Button
               variant="outline"
@@ -1388,24 +1392,24 @@ function PlannerToolResultCard({
           <EventTimestamp startedAt={tool.started_at} endedAt={tool.ended_at} />
           <ModelNameBadge modelName={tool.model_name} />
           {tool.status && (
-            <Badge variant="secondary" className="h-5 px-1.5 text-[10px]">
+            <Badge variant="secondary" className="h-5 px-1.5 text-xs">
               {statusText}
             </Badge>
           )}
           {!tool.status && !tool.success && (
             <>
               <XCircle className="h-3.5 w-3.5 text-red-500" />
-              <Badge variant="destructive" className="h-5 px-1.5 text-[10px]">
+              <Badge variant="destructive" className="h-5 px-1.5 text-xs">
                 {statusText}
               </Badge>
             </>
           )}
           {tool.duration_ms > 0 && (
-            <span className="text-muted-foreground text-xs font-normal opacity-65">
+            <span className="text-muted-foreground text-xs font-normal opacity-65 tabular-nums">
               {formatMs(tool.duration_ms)}
             </span>
           )}
-          <span className="text-muted-foreground ml-auto text-[10px]">#{index + 1}</span>
+          <span className="text-muted-foreground ml-auto text-xs tabular-nums">#{index + 1}</span>
           {canOpenReasoning && (
             <Button
               variant="outline"
@@ -1426,7 +1430,7 @@ function PlannerToolResultCard({
         {tool.tool_name === 'subagent' && (
           <button
             type="button"
-            className="text-primary flex items-center gap-1 text-[11px] hover:underline"
+            className="text-primary flex items-center gap-1 text-xs hover:underline"
             onClick={() => openSubagentPanel(tool.tool_call_id)}
             title="在右侧栏查看这个子代理的运行过程"
           >
@@ -1452,7 +1456,7 @@ function PlannerToolResultCard({
 
         {!tool.status && !isReplyFlow(tool) && tool.tool_name !== 'reply' && (!isToolSearch || !tool.success) && (
             <div className="flex flex-wrap items-baseline gap-x-1.5 font-normal opacity-65">
-              <span className="text-muted-foreground shrink-0 text-[10px] leading-4">
+              <span className="text-muted-foreground shrink-0 text-xs leading-4">
                 执行结果
               </span>
               <p className="text-muted-foreground min-w-0 flex-1 text-xs leading-4 break-words whitespace-pre-wrap">
@@ -1566,24 +1570,24 @@ function PlannerToolCallsBlock({
             />
           )}
           {singleTool?.status && (
-            <Badge variant="secondary" className="px-1.5 text-[10px]">
+            <Badge variant="secondary" className="px-1.5 text-xs">
               {singleTool.status === 'running' ? '执行中' : '等待执行'}
             </Badge>
           )}
           {singleTool && !singleTool.status && !singleTool.success && (
-            <Badge variant="destructive" className="px-1.5 text-[10px]">
+            <Badge variant="destructive" className="px-1.5 text-xs">
               执行失败
             </Badge>
           )}
           {singleTool && !singleToolIsWait && singleTool.duration_ms > 0 && (
-            <span className="text-muted-foreground text-xs font-normal opacity-65">
+            <span className="text-muted-foreground text-xs font-normal opacity-65 tabular-nums">
               {formatMs(singleTool.duration_ms)}
             </span>
           )}
           {!singleTool && (
             <Badge
               variant="secondary"
-              className="ml-auto text-[10px]"
+              className="ml-auto text-xs tabular-nums"
             >
               {regularTools.length} 个
             </Badge>
@@ -1646,7 +1650,7 @@ function PlannerNativeToolCallsBlock({ data }: { data: PlannerFinalizedEvent }) 
           <CardTitle className="text-sm font-medium">Provider 原生工具</CardTitle>
           <span className="text-muted-foreground text-xs opacity-65">推理区间</span>
           <EventTimestamp startedAt={data.planner_started_at} endedAt={data.planner_ended_at} />
-          <Badge variant="secondary" className="ml-auto text-[10px]">
+          <Badge variant="secondary" className="ml-auto text-xs tabular-nums">
             {nativeToolCalls.length} 次
           </Badge>
         </div>
@@ -1657,21 +1661,21 @@ function PlannerNativeToolCallsBlock({ data }: { data: PlannerFinalizedEvent }) 
               className="bg-muted/20 space-y-1 rounded-md border px-2.5 py-2"
             >
               <div className="flex flex-wrap items-center gap-1.5">
-                <span className="font-mono text-sm font-semibold">
+                <span className={cn('text-sm font-semibold', toolCall.tool_type !== 'web_search' && 'font-mono')}>
                   {toolCall.tool_type === 'web_search' ? '联网搜索' : toolCall.tool_type}
                 </span>
                 {toolCall.action_type && (
-                  <Badge variant="outline" className="text-[10px]">
+                  <Badge variant="outline" className="text-xs">
                     {toolCall.action_type}
                   </Badge>
                 )}
                 {toolCall.status && (
-                  <Badge variant="outline" className="text-[10px]">
+                  <Badge variant="outline" className="text-xs">
                     {toolCall.status}
                   </Badge>
                 )}
                 {toolCall.source_count > 0 && (
-                  <span className="text-muted-foreground ml-auto text-[10px]">
+                  <span className="text-muted-foreground ml-auto text-xs tabular-nums">
                     来源 {toolCall.source_count} 个
                   </span>
                 )}
@@ -1846,7 +1850,7 @@ function FlowStepRow({
 }) {
   if (compact) {
     return (
-      <div className="text-muted-foreground flex items-center gap-3 py-1 text-[11px]">
+      <div className="text-muted-foreground flex items-center gap-3 py-1 text-xs">
         <span aria-hidden="true" className="border-border/60 min-w-0 flex-1 border-t" />
         <span className="shrink-0" title={detail}>{title}</span>
       </div>
@@ -1900,7 +1904,12 @@ function ContextTrimCard({ data, open, onOpenChange }: {
     <TraceRound
       label="上下文裁切"
       time={formatTimestamp(data.timestamp)}
-      summary={trim && <span>裁切 <strong className="tabular-nums">{trim.removed_count}</strong> 条 · 保留 <strong className="tabular-nums">{trim.remaining_count}</strong> 条</span>}
+      summary={trim && (
+        <span className="inline-flex flex-wrap items-center gap-x-2.5 gap-y-0.5">
+          <span>裁切 <strong className="tabular-nums">{trim.removed_count}</strong> 条</span>
+          <span>保留 <strong className="tabular-nums">{trim.remaining_count}</strong> 条</span>
+        </span>
+      )}
       metrics={trim && <Badge variant={statusVariant(trim.learning.status)}>{labels[trim.learning.status]}</Badge>}
       open={open}
       onOpenChange={onOpenChange}
@@ -2062,8 +2071,12 @@ export function TimelineEventRenderer({
             ? entry.type === 'planner.progress' ? '进行中' : undefined
             : <CollapsedPlannerToolSummary data={data} isProgress={entry.type === 'planner.progress'} />}
           metrics={data.planner && (
-            <span title={`Planner 输入 ${data.planner.prompt_tokens} + 输出 ${data.planner.completion_tokens} tokens`}>
-              {formatMs(data.planner.duration_ms)} · {data.planner.prompt_tokens + data.planner.completion_tokens} tok
+            <span
+              className="inline-flex items-center gap-2 tabular-nums"
+              title={`Planner 输入 ${data.planner.prompt_tokens} + 输出 ${data.planner.completion_tokens} tokens`}
+            >
+              <span>{formatMs(data.planner.duration_ms)}</span>
+              <span>{data.planner.prompt_tokens + data.planner.completion_tokens} tok</span>
             </span>
           )}
           active={entry.type === 'planner.progress'}

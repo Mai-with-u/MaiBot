@@ -92,14 +92,17 @@ function TaskListItem({
       <span className="flex min-w-0 items-center gap-2">
         <StatusLight status={STATUS_LIGHTS[task.status]} decorative />
         <span className="font-mono text-xs font-semibold">{task.taskId}</span>
-        <span className="text-[11px]">{STATUS_LABELS[task.status]}</span>
-        <span className="ml-auto shrink-0 font-mono text-[11px]">
+        <span className="text-xs">{STATUS_LABELS[task.status]}</span>
+        <span className="ml-auto shrink-0 text-xs tabular-nums">
           <TaskElapsed task={task} />
         </span>
       </span>
-      <span className="truncate pl-4 text-[11px] opacity-80">{task.description}</span>
-      <span className="truncate pl-4 font-mono text-[11px] opacity-80">
-        第 {Math.min(task.rounds.length, task.maxRounds)} / {task.maxRounds} 轮 · {formatToolUsage(task.toolUsage)}
+      <span className="truncate pl-4 text-xs opacity-80">{task.description}</span>
+      <span className="flex min-w-0 items-center gap-2 pl-4 text-xs opacity-80">
+        <span className="shrink-0 tabular-nums">
+          第 {Math.min(task.rounds.length, task.maxRounds)} / {task.maxRounds} 轮
+        </span>
+        <span className="truncate">{formatToolUsage(task.toolUsage)}</span>
       </span>
     </button>
   )
@@ -119,21 +122,21 @@ function ToolCallRow({ toolCall }: { toolCall: SubagentToolCallInfo }) {
           label={result ? (result.success ? '成功' : '失败') : '执行中'}
         />
         <span className="font-mono">{toolCall.call.name}</span>
-        {!result && <span className="text-[11px]">执行中</span>}
-        {result && !result.success && <span className="text-destructive text-[11px]">失败</span>}
+        {!result && <span className="text-xs">执行中</span>}
+        {result && !result.success && <span className="text-destructive text-xs">失败</span>}
         {result && (
-          <span className="text-muted-foreground ml-auto shrink-0 font-mono text-[11px]">
+          <span className="text-muted-foreground ml-auto shrink-0 text-xs tabular-nums">
             {(result.durationMs / 1000).toFixed(1)} 秒
           </span>
         )}
       </span>
       {argumentsText && (
-        <span className="text-muted-foreground pl-4 font-mono text-[11px] leading-snug break-all">
+        <span className="text-muted-foreground pl-4 font-mono text-xs leading-snug break-all">
           {argumentsText}
         </span>
       )}
       {result?.summary && (
-        <span className="max-h-32 overflow-y-auto pl-4 text-[11px] leading-snug break-words whitespace-pre-wrap">
+        <span className="max-h-32 overflow-y-auto pl-4 text-xs leading-snug break-words whitespace-pre-wrap">
           {result.summary}
         </span>
       )}
@@ -161,7 +164,7 @@ function TaskDetail({ task }: { task: SubagentTaskInfo }) {
       <InspectorSection title="任务" />
       <InspectorRow className="leading-relaxed break-words whitespace-pre-wrap">{task.description}</InspectorRow>
       <InspectorSection title="授权工具" />
-      <InspectorRow className="font-mono">
+      <InspectorRow className={task.grantedTools.length ? 'font-mono' : undefined}>
         {task.grantedTools.length ? task.grantedTools.join(' · ') : '无'}
       </InspectorRow>
 

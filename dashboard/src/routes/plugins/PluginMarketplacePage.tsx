@@ -1093,9 +1093,9 @@ function PluginMarketplacePageContent({ embedded }: Required<PluginMarketplacePa
                 <SelectTrigger
                   aria-label="类型筛选"
                   title="类型筛选"
-                  className="min-w-0 flex-1 gap-2 px-3 sm:w-auto sm:flex-none"
+                  className="min-w-0 flex-1 sm:w-auto sm:flex-none"
                 >
-                  <Filter className="h-4 w-4 shrink-0" />
+                  <Filter className="size-3.5 shrink-0 text-muted-foreground" />
                   <span className="min-w-0 flex-1 truncate text-left">
                     <SelectValue placeholder="选择类型">
                       {pluginTypeFilter === 'all' ? '全部类型' : PLUGIN_TYPE_OPTIONS.find(option => option.value === pluginTypeFilter)?.label}
@@ -1126,10 +1126,10 @@ function PluginMarketplacePageContent({ embedded }: Required<PluginMarketplacePa
                 <SelectTrigger
                   aria-label="排序"
                   title="排序"
-                  className="min-w-0 flex-1 gap-2 px-3 sm:w-12 sm:flex-none sm:justify-center sm:gap-1 sm:px-2"
+                  className="min-w-0 flex-1 sm:w-auto sm:min-w-[7.5rem] sm:flex-none"
                 >
-                  <ArrowUpDown className="h-4 w-4 shrink-0" />
-                  <span className="min-w-0 flex-1 truncate text-left sm:sr-only">
+                  <ArrowUpDown className="size-3.5 shrink-0 text-muted-foreground" />
+                  <span className="min-w-0 flex-1 truncate text-left">
                     <SelectValue placeholder="排序" />
                   </span>
                 </SelectTrigger>

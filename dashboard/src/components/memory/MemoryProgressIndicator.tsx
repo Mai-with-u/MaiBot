@@ -22,14 +22,6 @@ export interface MemoryProgressIndicatorProps {
   className?: string
 }
 
-const TONE_RING_CLASS: Record<NonNullable<MemoryProgressIndicatorProps['tone']>, string> = {
-  default: 'text-primary',
-  success: 'text-emerald-500',
-  warning: 'text-amber-500',
-  destructive: 'text-rose-500',
-  muted: 'text-muted-foreground',
-}
-
 const TONE_BADGE_VARIANT: Record<
   NonNullable<MemoryProgressIndicatorProps['tone']>,
   'default' | 'secondary' | 'destructive' | 'outline'
@@ -45,9 +37,8 @@ const TONE_BADGE_VARIANT: Record<
  * 长期记忆控制台统一的任务进度展示组件。
  *
  * 设计目标：
- *  - 让用户一眼看清「整体百分比 + 语义状态 + 当前步骤」。
+ *  - 让用户一眼看清「状态 + 当前步骤 + 单一线性进度条与百分比」。
  *  - 复用 shadcn `Progress` 与 `Badge`，避免引入额外样式来源。
- *  - 在紧凑模式下保留可读性，可放进队列卡片；非紧凑模式带圆环用于详情区。
  */
 export function MemoryProgressIndicator({
   value,
@@ -60,71 +51,30 @@ export function MemoryProgressIndicator({
   className,
 }: MemoryProgressIndicatorProps) {
   const safeValue = Number.isFinite(value) ? Math.max(0, Math.min(100, value)) : 0
-  const ringSize = compact ? 36 : 56
-  const ringStroke = compact ? 4 : 5
-  const radius = (ringSize - ringStroke) / 2
-  const circumference = 2 * Math.PI * radius
-  const dashOffset = circumference * (1 - safeValue / 100)
 
   return (
-    <div className={cn('flex items-center gap-3', className)}>
-      <div
-        className={cn('relative shrink-0', TONE_RING_CLASS[tone])}
-        style={{ width: ringSize, height: ringSize }}
-        aria-hidden="true"
-      >
-        <svg width={ringSize} height={ringSize} className="-rotate-90">
-          <circle
-            cx={ringSize / 2}
-            cy={ringSize / 2}
-            r={radius}
-            strokeWidth={ringStroke}
-            className="stroke-muted/40"
-            fill="none"
+    <div className={cn('space-y-1.5', className)}>
+      <div className="flex flex-wrap items-center gap-2">
+        {busy ? (
+          <Loader2
+            className="h-3.5 w-3.5 shrink-0 animate-spin text-muted-foreground"
+            aria-hidden="true"
           />
-          <circle
-            cx={ringSize / 2}
-            cy={ringSize / 2}
-            r={radius}
-            strokeWidth={ringStroke}
-            strokeLinecap="round"
-            stroke="currentColor"
-            fill="none"
-            strokeDasharray={circumference}
-            strokeDashoffset={dashOffset}
-            className="transition-[stroke-dashoffset] duration-500 ease-out"
-          />
-        </svg>
-        <div className="absolute inset-0 flex items-center justify-center">
-          {busy ? (
-            <Loader2 className={cn('animate-spin', compact ? 'h-3.5 w-3.5' : 'h-4 w-4')} />
-          ) : (
-            <span className={cn('font-medium tabular-nums', compact ? 'text-[10px]' : 'text-xs')}>
-              {Math.round(safeValue)}%
-            </span>
-          )}
-        </div>
+        ) : null}
+        {statusLabel ? (
+          <Badge variant={TONE_BADGE_VARIANT[tone]} className="shrink-0">
+            {statusLabel}
+          </Badge>
+        ) : null}
+        {stepLabel ? (
+          <span className="truncate text-xs text-muted-foreground">{stepLabel}</span>
+        ) : null}
+        <span className="ml-auto text-xs font-medium tabular-nums text-muted-foreground">
+          {compact ? `${Math.round(safeValue)}%` : `${safeValue.toFixed(1)}%`}
+        </span>
       </div>
-
-      <div className="min-w-0 flex-1 space-y-1">
-        <div className="flex flex-wrap items-center gap-2">
-          {statusLabel ? (
-            <Badge variant={TONE_BADGE_VARIANT[tone]} className="shrink-0">
-              {statusLabel}
-            </Badge>
-          ) : null}
-          {stepLabel ? (
-            <span className="truncate text-xs text-muted-foreground">{stepLabel}</span>
-          ) : null}
-          {!compact ? (
-            <span className="ml-auto text-xs tabular-nums text-muted-foreground">
-              {safeValue.toFixed(1)}%
-            </span>
-          ) : null}
-        </div>
-        <Progress value={safeValue} className={cn(compact ? 'h-1' : 'h-1.5')} />
-        {detail ? <div className="truncate text-xs text-muted-foreground">{detail}</div> : null}
-      </div>
+      <Progress value={safeValue} className={cn(compact ? 'h-1' : 'h-1.5')} />
+      {detail ? <div className="truncate text-xs text-muted-foreground">{detail}</div> : null}
     </div>
   )
 }

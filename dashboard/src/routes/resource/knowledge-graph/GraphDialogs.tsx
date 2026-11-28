@@ -52,8 +52,8 @@ function RelationList({
           <div className="flex flex-wrap items-center justify-between gap-2">
             <div className="flex flex-wrap items-center gap-2">
               <Badge variant="outline">{relation.predicate || '未命名谓词'}</Badge>
-              <span className="text-xs text-muted-foreground">证据段落 {relation.paragraph_count}</span>
-              <span className="text-xs text-muted-foreground">置信度 {relation.confidence.toFixed(3)}</span>
+              <span className="text-xs text-muted-foreground tabular-nums">证据段落 {relation.paragraph_count}</span>
+              <span className="text-xs text-muted-foreground tabular-nums">置信度 {relation.confidence.toFixed(3)}</span>
             </div>
             {onDeleteRelation ? (
               <Button size="sm" variant="outline" onClick={() => onDeleteRelation(relation)}>
@@ -87,9 +87,9 @@ function ParagraphList({
           <div className="flex flex-wrap items-center justify-between gap-2">
             <div className="flex flex-wrap items-center gap-2">
               <Badge variant="secondary">{paragraph.source || '未命名来源'}</Badge>
-              <span className="text-xs text-muted-foreground">实体 {paragraph.entity_count}</span>
-              <span className="text-xs text-muted-foreground">关系 {paragraph.relation_count}</span>
-              <span className="text-xs text-muted-foreground">更新时间 {formatTimestamp(paragraph.updated_at)}</span>
+              <span className="text-xs text-muted-foreground tabular-nums">实体 {paragraph.entity_count}</span>
+              <span className="text-xs text-muted-foreground tabular-nums">关系 {paragraph.relation_count}</span>
+              <span className="text-xs text-muted-foreground tabular-nums">更新时间 {formatTimestamp(paragraph.updated_at)}</span>
             </div>
             {onDeleteParagraph ? (
               <Button size="sm" variant="outline" onClick={() => onDeleteParagraph(paragraph)}>
@@ -152,15 +152,19 @@ export function NodeDetailDialog({
         <DialogBody className="h-full overflow-y-auto">
           {node ? (
             <div className="space-y-6 pb-2">
-              <div className="flex flex-wrap items-start justify-between gap-3 rounded-xl border bg-muted/30 p-4">
+              <div className="flex flex-wrap items-start justify-between gap-3 rounded-lg border bg-muted/30 p-4">
                 <div>
-                  <div className="flex flex-wrap items-center gap-2">
+                  <div className="flex flex-wrap items-center gap-x-3 gap-y-1.5">
                     <Badge>{node.type === 'entity' ? '实体' : node.type}</Badge>
                     {'active_evidence_count' in (nodeDetail?.node ?? {}) && (
-                      <Badge variant="secondary">有效证据 {nodeDetail?.node.active_evidence_count ?? 0}</Badge>
+                      <span className="text-xs text-muted-foreground tabular-nums">
+                        有效证据 {nodeDetail?.node.active_evidence_count ?? 0}
+                      </span>
                     )}
                     {'appearance_count' in (nodeDetail?.node ?? {}) && (
-                      <Badge variant="outline">累计出现 {nodeDetail?.node.appearance_count ?? 0}</Badge>
+                      <span className="text-xs text-muted-foreground tabular-nums">
+                        累计出现 {nodeDetail?.node.appearance_count ?? 0}
+                      </span>
                     )}
                   </div>
                   <h3 className="mt-2 text-lg font-semibold">{node.content}</h3>
@@ -171,7 +175,7 @@ export function NodeDetailDialog({
                     切到证据视图
                   </Button>
                   {onDeleteEntity ? (
-                    <div className="flex flex-col items-end gap-2 rounded-lg border bg-background p-3">
+                    <div className="flex flex-col items-end gap-2 rounded-md border bg-background p-3">
                       <div className="flex items-center gap-2 text-xs text-muted-foreground">
                         <Checkbox
                           checked={includeParagraphs}
@@ -259,20 +263,24 @@ export function EdgeDetailDialog({
         <DialogBody className="overflow-y-auto">
           {selectedEdgeData || edgeDetail ? (
             <div className="space-y-6 pb-2">
-              <div className="rounded-xl border bg-muted/30 p-4">
+              <div className="rounded-lg border bg-muted/30 p-4">
                 <div className="flex flex-wrap items-start justify-between gap-3">
                   <div className="min-w-0">
-                    <div className="flex flex-wrap items-center gap-2">
+                    <div className="flex flex-wrap items-center gap-x-3 gap-y-1.5">
                       {(edgeDetail?.edge.predicates ?? []).map((predicate) => (
                         <Badge key={predicate} variant="outline">{predicate}</Badge>
                       ))}
-                      <Badge variant="secondary">关系 {edgeDetail?.edge.relation_count ?? selectedEdgeData?.edge.relationCount ?? 0}</Badge>
-                      <Badge variant="secondary">证据 {edgeDetail?.edge.evidence_count ?? selectedEdgeData?.edge.evidenceCount ?? 0}</Badge>
+                      <span className="text-xs text-muted-foreground tabular-nums">
+                        关系 {edgeDetail?.edge.relation_count ?? selectedEdgeData?.edge.relationCount ?? 0}
+                      </span>
+                      <span className="text-xs text-muted-foreground tabular-nums">
+                        证据 {edgeDetail?.edge.evidence_count ?? selectedEdgeData?.edge.evidenceCount ?? 0}
+                      </span>
                     </div>
                     <p className="mt-3 text-base font-semibold break-words">
                       {sourceLabel} → {targetLabel}
                     </p>
-                    <p className="mt-2 text-sm text-muted-foreground">
+                    <p className="mt-2 text-sm text-muted-foreground tabular-nums">
                       聚合权重 {(edgeDetail?.edge.weight ?? selectedEdgeData?.edge.weight ?? 0).toFixed(4)}
                     </p>
                   </div>
@@ -281,7 +289,7 @@ export function EdgeDetailDialog({
                       切到证据视图
                     </Button>
                     {onDeleteEdgeGroup ? (
-                      <div className="flex flex-col items-end gap-2 rounded-lg border bg-background p-3">
+                      <div className="flex flex-col items-end gap-2 rounded-md border bg-background p-3">
                         <div className="flex items-center gap-2 text-xs text-muted-foreground">
                           <Checkbox
                             checked={includeParagraphs}
@@ -362,18 +370,18 @@ export function RelationDetailDialog({
           <DialogTitle>关系明细</DialogTitle>
         </DialogHeader>
         <DialogBody className="space-y-4 overflow-y-auto">
-          <div className="rounded-xl border bg-muted/30 p-4">
-            <div className="flex flex-wrap items-center gap-2">
+          <div className="rounded-lg border bg-muted/30 p-4">
+            <div className="flex flex-wrap items-center gap-x-3 gap-y-1.5">
               <Badge variant="outline">{relation.predicate || metadata?.predicate || '未命名谓词'}</Badge>
-              <Badge variant="secondary">证据段落 {relation.paragraph_count}</Badge>
-              <Badge variant="secondary">置信度 {relation.confidence.toFixed(3)}</Badge>
+              <span className="text-xs text-muted-foreground tabular-nums">证据段落 {relation.paragraph_count}</span>
+              <span className="text-xs text-muted-foreground tabular-nums">置信度 {relation.confidence.toFixed(3)}</span>
             </div>
             <p className="mt-3 text-base font-semibold break-words">{relation.text}</p>
             <code className="mt-3 block break-all text-xs text-muted-foreground">{relation.hash}</code>
           </div>
 
           {onDeleteRelation ? (
-            <div className="rounded-lg border bg-background p-3">
+            <div className="rounded-md border bg-background p-3">
               <div className="flex items-center gap-2 text-xs text-muted-foreground">
                 <Checkbox
                   checked={includeParagraphs}
@@ -420,12 +428,12 @@ export function ParagraphDetailDialog({
           <DialogTitle>段落明细</DialogTitle>
         </DialogHeader>
         <DialogBody className="space-y-4 overflow-y-auto">
-          <div className="rounded-xl border bg-muted/30 p-4">
-            <div className="flex flex-wrap items-center gap-2">
+          <div className="rounded-lg border bg-muted/30 p-4">
+            <div className="flex flex-wrap items-center gap-x-3 gap-y-1.5">
               <Badge variant="secondary">{paragraph.source || metadata?.source || '未命名来源'}</Badge>
-              <Badge variant="outline">实体 {paragraph.entity_count}</Badge>
-              <Badge variant="outline">关系 {paragraph.relation_count}</Badge>
-              <Badge variant="outline">更新时间 {formatTimestamp(paragraph.updated_at ?? metadata?.updated_at)}</Badge>
+              <span className="text-xs text-muted-foreground tabular-nums">实体 {paragraph.entity_count}</span>
+              <span className="text-xs text-muted-foreground tabular-nums">关系 {paragraph.relation_count}</span>
+              <span className="text-xs text-muted-foreground tabular-nums">更新时间 {formatTimestamp(paragraph.updated_at ?? metadata?.updated_at)}</span>
             </div>
             <p className="mt-3 whitespace-pre-wrap text-sm break-words">{paragraph.content}</p>
             <code className="mt-3 block break-all text-xs text-muted-foreground">{paragraph.hash}</code>

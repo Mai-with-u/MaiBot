@@ -1,0 +1,243 @@
+/* 日志终端控制台与筛选控件的主题原生样式：覆盖 modern（明/暗）、millennium 与 future-retro。 */
+
+/* ---------- 1. 控制台表面令牌 ---------- */
+
+[data-log-terminal='true'] {
+  --log-console-bg: #f8f9fb;
+  --log-console-border: hsl(var(--border) / 0.85);
+  --log-console-ink: hsl(var(--foreground) / 0.9);
+  --log-console-muted: hsl(var(--muted-foreground) / 0.85);
+  --log-console-row-hover: hsl(var(--muted) / 0.55);
+  --log-console-selection-bg: hsl(var(--primary) / 0.18);
+  --log-console-selection-ink: hsl(var(--foreground));
+  --log-console-scrollbar-thumb: hsl(var(--foreground) / 0.16);
+  --log-console-scrollbar-thumb-hover: hsl(var(--foreground) / 0.28);
+  --log-console-module-bg: hsl(var(--foreground) / 0.055);
+  --log-console-module-ink: #0f766e;
+  --log-console-shadow: inset 0 1px 0 hsl(var(--background) / 0.7);
+  --log-console-radius: var(--radius-lg, 0.5rem);
+  --log-console-scrollbar-radius: 9999px;
+
+  background-color: var(--log-console-bg);
+  border: var(--hairline-width, 1px) solid var(--log-console-border);
+  border-radius: var(--log-console-radius);
+  box-shadow: var(--log-console-shadow);
+  color: var(--log-console-ink);
+}
+
+:root.dark [data-log-terminal='true'],
+:root.dark[data-dashboard-style='modern'] [data-log-terminal='true'] {
+  --log-console-bg: #0d0f14;
+  --log-console-border: hsl(var(--border) / 0.75);
+  --log-console-ink: hsl(var(--foreground) / 0.9);
+  --log-console-muted: hsl(var(--muted-foreground) / 0.78);
+  --log-console-row-hover: hsl(var(--muted) / 0.35);
+  --log-console-selection-bg: hsl(var(--primary) / 0.28);
+  --log-console-selection-ink: #f8fafc;
+  --log-console-scrollbar-thumb: rgb(255 255 255 / 0.14);
+  --log-console-scrollbar-thumb-hover: rgb(255 255 255 / 0.26);
+  --log-console-module-bg: rgb(255 255 255 / 0.06);
+  --log-console-module-ink: #5eead4;
+  --log-console-shadow: inset 0 1px 0 rgb(255 255 255 / 0.03);
+}
+
+/* 千禧风格：下沉式 LCD 显示屏，自动适配浅色与夜间模式 */
+:root[data-dashboard-style='millennium'] [data-log-terminal='true'] {
+  --log-console-bg: var(--mil-screen);
+  --log-console-border: var(--mil-line);
+  --log-console-ink: var(--mil-screen-ink);
+  --log-console-muted: var(--mil-screen-dim);
+  --log-console-row-hover: color-mix(in srgb, var(--mil-screen-ink) 7%, transparent);
+  --log-console-selection-bg: var(--mil-on);
+  --log-console-selection-ink: var(--mil-on-ink);
+  --log-console-scrollbar-thumb: var(--mil-lo);
+  --log-console-scrollbar-thumb-hover: var(--mil-line);
+  --log-console-module-bg: color-mix(in srgb, var(--mil-screen-ink) 8%, transparent);
+  --log-console-module-ink: var(--mil-accent-text);
+  --log-console-shadow: var(--mil-sunk);
+  --log-console-radius: 0;
+  --log-console-scrollbar-radius: 0;
+
+  background-color: var(--mil-screen);
+  background-image: var(--mil-screen-tex);
+  background-size: 3px 3px;
+  border: 2px solid var(--mil-line);
+  border-radius: 0;
+  box-shadow: var(--mil-sunk);
+  color: var(--mil-screen-ink);
+}
+
+/* 未来复古风格：温润纸面与深墨控制台，自动适配浅色与夜间模式 */
+:root[data-dashboard-style='future-retro'] [data-log-terminal='true'] {
+  --log-console-bg: var(--retro-paper);
+  --log-console-border: var(--retro-line);
+  --log-console-ink: var(--retro-ink);
+  --log-console-muted: var(--retro-ink-soft);
+  --log-console-row-hover: var(--retro-recessed);
+  --log-console-selection-bg: color-mix(in srgb, var(--retro-rust) 22%, transparent);
+  --log-console-selection-ink: var(--retro-ink);
+  --log-console-scrollbar-thumb: var(--retro-scrollbar-thumb);
+  --log-console-scrollbar-thumb-hover: var(--retro-ink);
+  --log-console-module-bg: var(--retro-recessed-strong);
+  --log-console-module-ink: var(--retro-rust);
+  --log-console-shadow: inset 0 0 0 1px var(--retro-recessed-strong);
+  --log-console-radius: 0;
+  --log-console-scrollbar-radius: 0;
+
+  background-color: var(--retro-paper) !important;
+  border: var(--retro-stroke) solid var(--retro-line) !important;
+  border-radius: 0 !important;
+  box-shadow: var(--log-console-shadow) !important;
+  color: var(--retro-ink);
+}
+
+/* ---------- 2. 滚动视口、选区与滚动条 ---------- */
+
+[data-log-viewport='true'] {
+  background-color: transparent;
+  color: var(--log-console-ink);
+  scrollbar-width: thin;
+  scrollbar-color: var(--log-console-scrollbar-thumb) transparent;
+}
+
+[data-log-viewport='true']::selection,
+[data-log-viewport='true'] *::selection {
+  background-color: var(--log-console-selection-bg);
+  color: var(--log-console-selection-ink);
+}
+
+[data-log-viewport='true']::-webkit-scrollbar {
+  width: 8px;
+  height: 8px;
+}
+
+[data-log-viewport='true']::-webkit-scrollbar-track {
+  background: transparent;
+}
+
+[data-log-viewport='true']::-webkit-scrollbar-thumb {
+  background-color: var(--log-console-scrollbar-thumb);
+  border-radius: var(--log-console-scrollbar-radius);
+  border: 2px solid transparent;
+  background-clip: content-box;
+}
+
+[data-log-viewport='true']::-webkit-scrollbar-thumb:hover {
+  background-color: var(--log-console-scrollbar-thumb-hover);
+}
+
+/* ---------- 3. 日志行与列层次 ---------- */
+
+[data-log-row='true'] {
+  transition: background-color 120ms ease;
+}
+
+[data-log-row='true']:hover {
+  background-color: var(--log-console-row-hover);
+}
+
+[data-log-timestamp='true'] {
+  color: var(--log-console-muted);
+}
+
+[data-log-module='true'] {
+  background-color: var(--log-console-module-bg);
+}
+
+[data-log-module='true'][data-log-module-default='true'] {
+  color: var(--log-console-module-ink);
+}
+
+:root[data-dashboard-style='millennium'] [data-log-message='true'],
+:root[data-dashboard-style='future-retro'] [data-log-message='true'] {
+  color: var(--log-console-ink);
+}
+
+:root[data-dashboard-style='millennium'] [data-log-module='true'],
+:root[data-dashboard-style='future-retro'] [data-log-module='true'] {
+  border-radius: 0;
+}
+
+/* ---------- 4. 紧凑筛选条、状态丸与回到底部浮标 ---------- */
+
+/* 现代主题下紧凑筛选条自带浅底圆角框，避免与 filter-panel.css 顶部边框叠成双线 */
+:root[data-dashboard-style='modern'] [data-log-filter-drawer='true'][data-filter-panel='true'] {
+  border-top: 0;
+  padding-top: 0;
+}
+
+/* 手机端弹层内直接呈现表单项，不叠外框 */
+[data-log-filter-sheet='true'] [data-log-filter-bar='true'] {
+  border: 0;
+  background: transparent;
+  padding: 0;
+}
+
+:root[data-dashboard-style='millennium'] [data-log-filter-bar='true'] {
+  border: 2px solid var(--mil-lo);
+  border-radius: 0;
+  background: var(--mil-panel);
+  box-shadow: var(--mil-bevel);
+}
+
+:root[data-dashboard-style='future-retro'] [data-log-filter-bar='true'] {
+  border: var(--retro-stroke) solid var(--retro-line);
+  border-radius: 0;
+  background: var(--retro-recessed);
+}
+
+:root[data-dashboard-style='millennium'] [data-log-status='true'] {
+  border: 2px solid var(--mil-line);
+  border-radius: 0;
+  background: var(--mil-screen);
+  box-shadow: var(--mil-sunk);
+  color: var(--mil-screen-ink);
+}
+
+:root[data-dashboard-style='future-retro'] [data-log-status='true'] {
+  border: var(--retro-stroke) solid var(--retro-line);
+  border-radius: 0;
+  background: var(--retro-paper-soft);
+  color: var(--retro-ink);
+}
+
+/* 悬浮「回到最新日志」药丸 */
+[data-log-follow-pill='true'] {
+  background-color: hsl(var(--popover) / 0.92);
+  border: var(--hairline-width, 1px) solid hsl(var(--border) / 0.85);
+  color: hsl(var(--popover-foreground));
+  box-shadow: 0 8px 24px -6px rgb(0 0 0 / 0.25);
+  backdrop-filter: blur(10px);
+}
+
+[data-log-follow-pill='true']:hover {
+  background-color: hsl(var(--popover));
+  border-color: hsl(var(--primary) / 0.55);
+}
+
+:root[data-dashboard-style='millennium'] [data-log-follow-pill='true'] {
+  border: 2px solid var(--mil-line);
+  border-radius: 0;
+  background-color: var(--mil-key);
+  box-shadow: var(--mil-float);
+  color: var(--mil-ink);
+  backdrop-filter: none;
+}
+
+:root[data-dashboard-style='millennium'] [data-log-follow-pill='true']:hover {
+  background-color: var(--mil-key-hover);
+}
+
+:root[data-dashboard-style='future-retro'] [data-log-follow-pill='true'] {
+  border: var(--retro-stroke) solid var(--retro-ink);
+  border-radius: 0;
+  background-color: var(--retro-paper);
+  box-shadow: 3px 3px 0 var(--retro-shadow);
+  color: var(--retro-ink);
+  backdrop-filter: none;
+}
+
+:root[data-dashboard-style='future-retro'] [data-log-follow-pill='true']:hover {
+  border-color: var(--retro-rust);
+  color: var(--retro-rust);
+}

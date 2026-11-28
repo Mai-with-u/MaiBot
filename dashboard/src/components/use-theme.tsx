@@ -21,8 +21,14 @@ export const toggleThemeWithTransition = (
   setTheme: (theme: 'dark' | 'light' | 'system') => void,
   event: MouseEvent
 ) => {
-  // 禁用动画时直接切换，避免触发全局过渡效果。
-  const animationsDisabled = document.documentElement.classList.contains('no-animations')
+  const prefersReducedMotion =
+    typeof window !== 'undefined' &&
+    typeof window.matchMedia === 'function' &&
+    window.matchMedia('(prefers-reduced-motion: reduce)').matches
+
+  // 禁用动画或系统偏好减少动态效果时直接切换，避免触发全局过渡效果。
+  const animationsDisabled =
+    document.documentElement.classList.contains('no-animations') || prefersReducedMotion
 
   // Edge 的 View Transitions API 在主题切换时会出现显示异常，先回退到普通切换。
   if (!document.startViewTransition || animationsDisabled || isEdgeBrowser()) {

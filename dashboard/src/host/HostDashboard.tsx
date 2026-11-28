@@ -379,14 +379,11 @@ export function HostDashboard({ embedded = false }: { embedded?: boolean }) {
       <section aria-labelledby="host-bot-list-heading" className="space-y-3">
         <div className="flex flex-wrap items-center justify-between gap-2 px-0.5">
           <div className="flex items-center gap-2.5">
-            <span className="text-muted-foreground font-mono text-xs font-bold tracking-widest uppercase">
-              INSTANCES
-            </span>
             <h2 id="host-bot-list-heading" className="text-base font-bold">
               {t('hostManager.botList')}
             </h2>
             {data && (
-              <Badge variant="outline" className="font-mono tabular-nums">
+              <Badge variant="outline" className="tabular-nums">
                 {bots.length}
               </Badge>
             )}
@@ -420,14 +417,13 @@ export function HostDashboard({ embedded = false }: { embedded?: boolean }) {
         )}
 
         <div className="grid gap-5 xl:grid-cols-2">
-          {bots.map((bot, index) => {
+          {bots.map((bot) => {
             const action = pending[bot.bot_id]
             const busy =
               Boolean(action) || ['starting', 'migrating', 'stopping'].includes(bot.status)
             const selected = runtime.selected_bot_id === bot.bot_id
             const error = bot.error || bot.initialization_error
             const lightStatus = botLightStatus(bot)
-            const code = `BOT-${String(index + 1).padStart(2, '0')}`
 
             return (
               <PageFrame
@@ -439,13 +435,10 @@ export function HostDashboard({ embedded = false }: { embedded?: boolean }) {
                 )}
               >
                 <article aria-busy={busy}>
-                  {/* 舱顶丝印栏：指示灯 + 编号 + 名称 + 状态徽标 + 右侧「切换/当前 Bot」主开关 */}
+                  {/* 舱顶栏：指示灯 + 名称 + 状态徽标 + 右侧「切换/当前 Bot」主开关 */}
                   <header className="flex flex-wrap items-center justify-between gap-2 px-0.5">
                     <div className="flex min-w-0 items-center gap-2">
                       <StatusLight status={lightStatus} size="sm" />
-                      <span className="text-muted-foreground shrink-0 font-mono text-xs font-bold tracking-widest">
-                        {code}
-                      </span>
                       <h3 className="min-w-0 truncate text-base font-bold" title={bot.name}>
                         {bot.name}
                       </h3>
@@ -502,7 +495,7 @@ export function HostDashboard({ embedded = false }: { embedded?: boolean }) {
                         </strong>
                       </div>
                       <div className="flex min-w-0 flex-col gap-0.5 pl-3">
-                        <span data-board-label="true">GATEWAY</span>
+                        <span data-board-label="true">{t('hostShared.gateway')}</span>
                         <code
                           className="text-primary mt-0.5 truncate font-mono text-xs font-semibold"
                           title={`/maim/${bot.bot_id}/api`}
@@ -621,7 +614,7 @@ export function HostDashboard({ embedded = false }: { embedded?: boolean }) {
         </div>
       </section>
 
-      {/* 4. 底部 WORKSPACE 宿主工作区铭牌栏 */}
+      {/* 4. 底部宿主工作区信息栏 */}
       <PageFrame
         asChild
         className="mt-auto flex flex-wrap items-center justify-between gap-3 px-4 py-3 text-xs"
@@ -629,9 +622,6 @@ export function HostDashboard({ embedded = false }: { embedded?: boolean }) {
         <footer>
           {data && (
             <div className="flex min-w-0 flex-wrap items-center gap-2">
-              <span className="text-muted-foreground font-mono font-bold tracking-widest uppercase">
-                WORKSPACE
-              </span>
               <span className="text-muted-foreground">{t('hostManager.workspace')}：</span>
               <DataPanel
                 asChild

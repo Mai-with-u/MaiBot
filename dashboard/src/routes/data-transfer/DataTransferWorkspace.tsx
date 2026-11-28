@@ -1,7 +1,6 @@
 import { Box, Download, RefreshCw, Trash2, Upload, X } from 'lucide-react'
 import type { ReactNode } from 'react'
 
-import { Badge } from '@/components/ui/badge'
 import { Button } from '@/components/ui/button'
 import { FileDropzone, ResourceRow, SectionPanel, SelectionCard } from '@/components/ui/management'
 import { Separator } from '@/components/ui/separator'
@@ -60,7 +59,6 @@ export function DataTransferWorkspace({ viewModel: model, headerActions }: {
         <SectionPanel
           title="导出"
           description="暂停当前 Bot 后生成完整快照，完成后恢复原运行状态；其他 Bot 不受影响"
-          leading={<Badge className="text-xs font-normal">01</Badge>}
           bodyClassName="flex flex-col gap-4 p-4 sm:p-5"
         >
           <fieldset className="space-y-2" disabled={exporting}>
@@ -206,11 +204,6 @@ export function DataTransferWorkspace({ viewModel: model, headerActions }: {
         <SectionPanel
           title="导入"
           description="支持 1.3.19 及之后版本的数据包。暂停当前 Bot 后导入并保留原文件备份，不覆盖其他 Bot 或公共设置"
-          leading={
-            <Badge variant="success" className="text-xs font-normal">
-              02
-            </Badge>
-          }
           bodyClassName="flex flex-col gap-4 p-4 sm:p-5"
         >
           <FileDropzone

@@ -3,6 +3,7 @@ import { useEffect, useState } from 'react'
 import { Card } from '@/components/ui/card'
 import { Input } from '@/components/ui/input'
 import { MultiSelect } from '@/components/ui/multi-select'
+import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from '@/components/ui/select'
 import { Switch } from '@/components/ui/switch'
 import { getChatStreams } from '@/lib/chat-management-api'
 import { getInstalledPlugins, type InstalledPlugin } from '@/lib/plugin-api'
@@ -54,13 +55,21 @@ export function PluginUsagePermissions({ pluginSection, onChange }: Props) {
       </div>
       {error ? <p className="text-destructive text-sm">{error}</p> : (
         <>
-          <label className="block space-y-2 text-sm">
-            <span>选择插件</span>
-            <select className="bg-background w-full rounded-md border p-2" value={selected} onChange={(event) => setSelected(event.target.value)}>
-              {plugins.length === 0 && <option value="">暂无已安装插件</option>}
-              {plugins.map((plugin) => <option key={plugin.id} value={plugin.id}>{plugin.manifest.name} · {plugin.id}</option>)}
-            </select>
-          </label>
+          <div className="space-y-2 text-sm">
+            <label htmlFor="plugin-usage-select" className="block">选择插件</label>
+            <Select value={selected || undefined} onValueChange={setSelected} disabled={plugins.length === 0}>
+              <SelectTrigger id="plugin-usage-select">
+                <SelectValue placeholder={plugins.length === 0 ? '暂无已安装插件' : '选择插件'} />
+              </SelectTrigger>
+              <SelectContent>
+                {plugins.map((plugin) => (
+                  <SelectItem key={plugin.id} value={plugin.id}>
+                    {plugin.manifest.name} · {plugin.id}
+                  </SelectItem>
+                ))}
+              </SelectContent>
+            </Select>
+          </div>
           {selected && (
             <>
               <div className="flex items-center justify-between gap-3">

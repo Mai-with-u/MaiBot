@@ -22,6 +22,8 @@ import { Collapsible, CollapsibleContent, CollapsibleTrigger } from '@/component
 import { ListFieldEditor } from '@/components/ListFieldEditor'
 import { ChatStreamSelect } from '@/components/ChatStreamSelect'
 import { MultiSelect } from '@/components/ui/multi-select'
+import { PillNav } from '@/components/ui/pill-nav'
+import { StatefulButton, type StatefulButtonStatus } from '@/components/ui/stateful-button'
 import { Alert, AlertDescription } from '@/components/ui/alert'
 import { CodeEditor } from '@/components/CodeEditor'
 import { useTheme } from '@/components/use-theme'
@@ -629,10 +631,7 @@ function PluginRuntimeComponentsPanel({ pluginId }: { pluginId: string }) {
     <Card>
       <CardHeader>
         <div className="flex flex-wrap items-center justify-between gap-2">
-          <div>
-            <CardTitle>注册组件</CardTitle>
-            <CardDescription>当前插件运行时已注册的 Tool 和 Command。</CardDescription>
-          </div>
+          <CardTitle>注册组件</CardTitle>
           <Badge variant="secondary">{componentCount} 个组件</Badge>
         </div>
       </CardHeader>
@@ -693,14 +692,14 @@ function PluginRuntimeComponentsPanel({ pluginId }: { pluginId: string }) {
                                 {component.enabled ? '启用' : '禁用'}
                               </Badge>
                             </div>
-                            <Badge variant="outline" className="mb-2 text-[0.68rem]">
+                            <Badge variant="outline" className="mb-2 text-xs">
                               {COMPONENT_TYPE_LABELS[component.component_type]}
                             </Badge>
 
                             {component.component_type === 'tool' && schemaProperties.length > 0 && (
                               <div className="mt-2 flex flex-wrap gap-1">
                                 {schemaProperties.map((propertyName) => (
-                                  <Badge key={propertyName} variant="outline" className="text-[0.68rem]">
+                                  <Badge key={propertyName} variant="outline" className="text-xs">
                                     {propertyName}
                                   </Badge>
                                 ))}
@@ -816,7 +815,6 @@ function PluginDetailsPanel({
           <Card>
             <CardHeader>
               <CardTitle>README</CardTitle>
-              <CardDescription>插件根目录中的说明文档。</CardDescription>
             </CardHeader>
             <CardContent>
               {readmeLoading ? (
@@ -905,7 +903,6 @@ function PluginDetailsPanel({
           <Card>
             <CardHeader className="p-3 sm:p-3">
               <CardTitle>更新日志</CardTitle>
-              <CardDescription>插件作者提供的版本变更记录。</CardDescription>
             </CardHeader>
             <CardContent className="p-3 pt-0 sm:p-3 sm:pt-0">
               {changelogLoading ? (
@@ -1176,30 +1173,36 @@ function PluginDocumentFloatingPanel({ plugin, onClose }: PluginDocumentFloating
           <div className="text-muted-foreground truncate text-xs">{plugin.manifest.name}</div>
         </div>
         <div
-          className="flex shrink-0 items-center gap-1"
+          className="flex shrink-0 items-center gap-1.5"
           onPointerDown={(event) => event.stopPropagation()}
         >
+          <PillNav<PluginDocumentMode>
+            variant="segmented"
+            size="sm"
+            ariaLabel="文档类型"
+            value={mode}
+            onChange={setMode}
+            options={[
+              {
+                value: 'readme',
+                label: 'README',
+                icon: <BookOpen className="h-3.5 w-3.5" />,
+              },
+              {
+                value: 'changelog',
+                label: '更新日志',
+                icon: <FileText className="h-3.5 w-3.5" />,
+              },
+            ]}
+          />
           <Button
             type="button"
-            variant={mode === 'readme' ? 'default' : 'outline'}
-            size="sm"
-            className="h-8"
-            onClick={() => setMode('readme')}
+            variant="ghost"
+            size="icon"
+            className="h-8 w-8"
+            aria-label="关闭插件文档"
+            onClick={onClose}
           >
-            <BookOpen className="mr-1.5 h-3.5 w-3.5" />
-            README
-          </Button>
-          <Button
-            type="button"
-            variant={mode === 'changelog' ? 'default' : 'outline'}
-            size="sm"
-            className="h-8"
-            onClick={() => setMode('changelog')}
-          >
-            <FileText className="mr-1.5 h-3.5 w-3.5" />
-            更新日志
-          </Button>
-          <Button type="button" variant="ghost" size="icon" className="h-8 w-8" onClick={onClose}>
             <X className="h-4 w-4" />
           </Button>
         </div>
@@ -1249,6 +1252,17 @@ function PluginConfigEditor({ plugin, onBack, initialTab }: PluginConfigEditorPr
   const language = i18n.resolvedLanguage || i18n.language || 'zh'
   const [documentPanelOpen, setDocumentPanelOpen] = useState(false)
   const [configTabToolbar, setConfigTabToolbar] = useState<HTMLDivElement | null>(null)
+  const [saveFeedback, setSaveFeedback] = useState<Exclude<StatefulButtonStatus, 'loading'>>('idle')
+  const saveFeedbackTimerRef = useRef<number | null>(null)
+
+  useEffect(
+    () => () => {
+      if (saveFeedbackTimerRef.current !== null) {
+        window.clearTimeout(saveFeedbackTimerRef.current)
+      }
+    },
+    []
+  )
 
   const {
     editMode,
@@ -1279,6 +1293,23 @@ function PluginConfigEditor({ plugin, onBack, initialTab }: PluginConfigEditorPr
     leaveWithoutSaving,
     saveAndLeave,
   } = usePluginConfigEditor({ plugin, onBack, initialTab })
+
+  const handleSaveClick = async () => {
+    if (saveFeedbackTimerRef.current !== null) {
+      window.clearTimeout(saveFeedbackTimerRef.current)
+      saveFeedbackTimerRef.current = null
+    }
+    setSaveFeedback('idle')
+    const saved = await handleSave()
+    setSaveFeedback(saved ? 'success' : 'error')
+    saveFeedbackTimerRef.current = window.setTimeout(
+      () => {
+        setSaveFeedback('idle')
+        saveFeedbackTimerRef.current = null
+      },
+      saved ? 1600 : 1800
+    )
+  }
 
   if (loading) {
     return (
@@ -1457,14 +1488,18 @@ function PluginConfigEditor({ plugin, onBack, initialTab }: PluginConfigEditorPr
             />
             <span className="text-xs">启用</span>
           </div>
-          <Button size="sm" className="h-8" onClick={handleSave} disabled={!hasChanges || saving}>
-            {saving ? (
-              <Loader2 className="mr-2 h-4 w-4 animate-spin" />
-            ) : (
-              <Save className="mr-2 h-4 w-4" />
-            )}
-            保存
-          </Button>
+          <StatefulButton
+            size="sm"
+            className="h-8"
+            status={saving ? 'loading' : hasChanges && saveFeedback === 'success' ? 'idle' : saveFeedback}
+            idleLabel="保存"
+            loadingLabel="保存中…"
+            successLabel="已保存"
+            errorLabel="保存失败"
+            idleIcon={<Save className="h-3.5 w-3.5" />}
+            onClick={() => void handleSaveClick()}
+            disabled={!hasChanges || saving}
+          />
         </div>
       </div>
 
@@ -1524,7 +1559,7 @@ function PluginConfigEditor({ plugin, onBack, initialTab }: PluginConfigEditorPr
                       TOML语法的用户。只有格式完全正确才能保存。
                       {hasTomlError && (
                         <span className="text-destructive ml-2 font-semibold">
-                          ⚠️ 上次保存失败，请检查 TOML 格式
+                          上次保存失败，请检查 TOML 格式
                         </span>
                       )}
                     </AlertDescription>
@@ -2035,7 +2070,7 @@ function PluginConfigPageContent() {
                 <div
                   key={plugin.id}
                   data-plugin-list-item="true"
-                  className={`hover:bg-muted/55 focus-visible:bg-muted/55 relative flex cursor-pointer flex-col justify-between gap-2 py-2.5 transition-all duration-150 ease-out hover:-translate-y-0.5 hover:shadow-md focus-visible:-translate-y-0.5 focus-visible:shadow-md focus-visible:outline-none sm:min-h-0 sm:flex-row sm:items-center sm:gap-3 sm:px-2 sm:py-3 ${
+                  className={`hover:bg-muted/55 focus-visible:bg-muted/55 relative flex cursor-pointer flex-col justify-between gap-2 py-2.5 transition-colors duration-150 ease-out focus-visible:outline-none sm:min-h-0 sm:flex-row sm:items-center sm:gap-3 sm:px-2 sm:py-3 ${
                     isPluginDisabled(plugin) ? 'opacity-70' : ''
                   }`}
                   role="button"
@@ -2063,7 +2098,7 @@ function PluginConfigPageContent() {
                         installed
                         className="h-12 w-12 sm:h-10 sm:w-10"
                       />
-                      <span className="text-muted-foreground text-[0.65rem] leading-none">
+                      <span className="text-muted-foreground text-xs leading-none">
                         v{plugin.manifest.version}
                       </span>
                     </div>

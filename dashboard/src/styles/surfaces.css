@@ -5,6 +5,7 @@
   --surface-line: hsl(var(--border));
   --surface-ink: hsl(var(--foreground));
   --surface-radius: 0.5rem;
+  --surface-frame-stroke: 2px;
   --surface-data-stroke: 1px;
   --surface-separator-stroke: 1px;
   --surface-frame-shadow: none;
@@ -18,6 +19,11 @@
   --list-selected-ink: hsl(var(--primary-foreground));
   --list-hover-bg: hsl(var(--muted));
   --surface-focus: hsl(var(--ring));
+}
+
+:root[data-dashboard-style='modern'] {
+  --surface-frame-stroke: 1px;
+  --surface-separator-stroke: var(--hairline-width, 1px);
 }
 
 :root[data-dashboard-style='future-retro'] {
@@ -58,7 +64,7 @@
 
 [data-dashboard-page-frame='true'] {
   background: var(--surface-texture) 0 0 / 5px 5px var(--surface-frame-bg);
-  border: 2px solid var(--surface-line);
+  border: var(--surface-frame-stroke, 2px) solid var(--surface-line);
   border-radius: var(--surface-radius);
   box-shadow: var(--surface-frame-shadow);
 }
@@ -121,7 +127,7 @@
   cursor: pointer;
 }
 [data-dashboard-list-item='true'][data-density='compact'] { padding-block: 6px; font-size: 0.75rem; line-height: 1.125rem; }
-[data-dashboard-list-item='true'][data-density='compact'] > span + span { font-size: 0.6875rem; line-height: 1rem; }
+[data-dashboard-list-item='true'][data-density='compact'] > span + span { font-size: 0.75rem; line-height: 1.125rem; }
 [data-dashboard-list-item='true']:not(:disabled):not([data-selected='true']):hover { background-color: var(--list-hover-bg); }
 [data-dashboard-list-item='true'][data-selected='true'] {
   background-color: var(--list-selected-bg);
@@ -146,6 +152,12 @@
 }
 [data-dashboard-separator='true'][data-variant='groove'][data-orientation='horizontal'] { height: 4px; }
 [data-dashboard-separator='true'][data-variant='groove'][data-orientation='vertical'] { width: 4px; }
+:root[data-dashboard-style='modern'] [data-dashboard-separator='true'][data-variant='groove'][data-orientation='horizontal'] {
+  height: var(--hairline-width, 1px);
+}
+:root[data-dashboard-style='modern'] [data-dashboard-separator='true'][data-variant='groove'][data-orientation='vertical'] {
+  width: var(--hairline-width, 1px);
+}
 :root[data-dashboard-style='millennium'] [data-dashboard-separator='true'][data-variant='groove'] {
   background: var(--mil-lo);
 }

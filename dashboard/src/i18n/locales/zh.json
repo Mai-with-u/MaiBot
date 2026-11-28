@@ -181,7 +181,7 @@
     "moveCard": "拖动或用方向键移动「{{name}}」",
     "cardWidth": "卡片宽度",
     "addCard": "把「{{name}}」加到面板",
-    "libraryHint": "点 + 加回面板；统计类卡片会放在刻线以下。",
+    "libraryHint": "点 + 加回面板；统计类卡片会放在统计区域。",
     "libraryEmpty": "所有卡片都在面板上了",
     "closeLibrary": "收起卡片库",
     "refreshQuote": "换一句",
@@ -796,7 +796,7 @@
     }
   },
   "layout": {
-    "verifyingLogin": "麦麦正在啃食服务器...",
+    "verifyingLogin": "正在加载...",
     "logoTitle": "MaiBot WebUI",
     "logoTitleShort": "M"
   },
@@ -1169,7 +1169,7 @@
       "buildTool": "构建工具",
       "openSourceThanks": "开源库感谢",
       "openSourceLicense": "开源许可",
-      "openSourceDesc": "本项目在 GitHub 开源，欢迎 Star ⭐ 支持！",
+      "openSourceDesc": "本项目在 GitHub 开源，欢迎 Star 支持。",
       "visitGitHub": "前往 GitHub",
       "appDesc": "麦麦（MaiBot）的现代化 Web 管理界面",
       "maimaiCore": "MaiBot 核心",
@@ -1275,11 +1275,11 @@
         "description": ""
       },
       "replyer": {
-        "title": "设置 回复模型",
-        "description": "这个模型决定了ta说话的风格，适合文笔和风格好的模型"
+        "title": "设置回复模型",
+        "description": "这个模型决定了麦麦说话的风格，适合文笔和风格好的模型"
       },
       "planner": {
-        "title": "设置 行为模型",
+        "title": "设置行为模型",
         "description": "这个模型控制麦麦的行为，需要能够使用工具，理解任务，拥有Agent能力的模型"
       },
       "basicSettings": {
@@ -1467,17 +1467,17 @@
         "personality": {
           "label": "人格特征",
           "placeholder": "描述机器人的人格特质和身份特征（建议 120 字以内）",
-          "description": "ta的性格特点和关键信息"
+          "description": "麦麦的性格特点和关键信息"
         },
         "behaviorStyle": {
           "label": "行为风格",
           "placeholder": "描述何时参与聊天、如何观察局面以及何时保持安静",
-          "description": "ta聊天时的行为和做事风格"
+          "description": "麦麦聊天时的行为和做事风格"
         },
         "replyStyle": {
           "label": "表达风格",
           "placeholder": "描述机器人说话的表达风格、表达习惯",
-          "description": "ta说话的风格"
+          "description": "麦麦说话的风格"
         },
         "multipleReplyStyle": {
           "label": "备用表达风格",

@@ -1,34 +1,17 @@
-import { Card } from '@/components/ui/card'
+import { useNavigate } from '@tanstack/react-router'
 import {
   AlertTriangle,
   Check,
   CheckCircle2,
-  Copy,
   Eye,
   EyeOff,
   LogOut,
   RefreshCw,
   XCircle,
 } from 'lucide-react'
-import { useState, useMemo } from 'react'
+import { useMemo, useState } from 'react'
 import { useTranslation } from 'react-i18next'
 
-import { useNavigate } from '@tanstack/react-router'
-import { cn } from '@/lib/utils'
-import { logout } from '@/lib/auth'
-import { useToast } from '@/hooks/use-toast'
-import { validateToken } from '@/lib/token-validator'
-import { Button } from '@/components/ui/button'
-import { Input } from '@/components/ui/input'
-import { Label } from '@/components/ui/label'
-import {
-  Dialog,
-  DialogContent,
-  DialogDescription,
-  DialogFooter,
-  DialogHeader,
-  DialogTitle,
-} from '@/components/ui/dialog'
 import {
   AlertDialog,
   AlertDialogAction,
@@ -40,6 +23,23 @@ import {
   AlertDialogTitle,
   AlertDialogTrigger,
 } from '@/components/ui/alert-dialog'
+import { Button } from '@/components/ui/button'
+import { Card } from '@/components/ui/card'
+import {
+  Dialog,
+  DialogContent,
+  DialogDescription,
+  DialogFooter,
+  DialogHeader,
+  DialogTitle,
+} from '@/components/ui/dialog'
+import { Input } from '@/components/ui/input'
+import { Label } from '@/components/ui/label'
+import { CopyButton } from '@/components/ui/stateful-button'
+import { useToast } from '@/hooks/use-toast'
+import { logout } from '@/lib/auth'
+import { validateToken } from '@/lib/token-validator'
+import { cn } from '@/lib/utils'
 
 export function SecurityTab() {
   const { t } = useTranslation()
@@ -50,7 +50,6 @@ export function SecurityTab() {
   const [isRegenerating, setIsRegenerating] = useState(false)
   const [showTokenDialog, setShowTokenDialog] = useState(false)
   const [generatedToken, setGeneratedToken] = useState('')
-  const [tokenCopied, setTokenCopied] = useState(false)
   const { toast } = useToast()
 
   // 实时验证新 Token
@@ -147,7 +146,6 @@ export function SecurityTab() {
         // 显示弹窗展示新 Token
         setGeneratedToken(data.token)
         setShowTokenDialog(true)
-        setTokenCopied(false)
         
         toast({
           title: t('settings.security.generateSuccess'),
@@ -173,20 +171,21 @@ export function SecurityTab() {
   }
 
   // 复制生成的 Token
-  const copyGeneratedToken = async () => {
+  const copyGeneratedToken = async (): Promise<boolean> => {
     try {
       await navigator.clipboard.writeText(generatedToken)
-      setTokenCopied(true)
       toast({
         title: t('settings.security.copySuccess'),
         description: t('settings.security.copySuccessDesc'),
       })
+      return true
     } catch {
       toast({
         title: t('settings.security.copyFailed'),
         description: t('settings.security.copyFailedDesc'),
         variant: 'destructive',
       })
+      return false
     }
   }
 
@@ -196,7 +195,6 @@ export function SecurityTab() {
     // 延迟清空 token，避免用户看到内容消失
     setTimeout(() => {
       setGeneratedToken('')
-      setTokenCopied(false)
     }, 300)
     
     // 跳转到登录页
@@ -247,39 +245,24 @@ export function SecurityTab() {
 
             {/* 警告提示 */}
             <div className="rounded-lg border border-yellow-200 dark:border-yellow-900 bg-yellow-50 dark:bg-yellow-950/30 p-3">
-              <div className="flex gap-2">
+              <div className="flex items-start gap-2">
                 <AlertTriangle className="h-4 w-4 text-yellow-600 dark:text-yellow-500 flex-shrink-0 mt-0.5" />
-                <div className="text-sm text-yellow-800 dark:text-yellow-300 space-y-1">
-                  <p className="font-semibold">{t('settings.security.important')}</p>
-                  <ul className="list-disc list-inside space-y-0.5 text-xs">
-                    <li>{t('settings.security.tip1')}</li>
-                    <li>{t('settings.security.tip2')}</li>
-                    <li>{t('settings.security.tip3')}</li>
-                    <li>{t('settings.security.tip4')}</li>
-                  </ul>
-                </div>
+                <p className="text-xs text-yellow-800 dark:text-yellow-300">
+                  {t('settings.security.tip1')}
+                </p>
               </div>
             </div>
           </div>
 
           <DialogFooter className="gap-2 sm:gap-0">
-            <Button
+            <CopyButton
+              key={generatedToken}
               variant="outline"
-              onClick={copyGeneratedToken}
-              className="gap-2"
-            >
-              {tokenCopied ? (
-                <>
-                  <Check className="h-4 w-4 text-green-500" />
-                  {t('settings.security.copied')}
-                </>
-              ) : (
-                <>
-                  <Copy className="h-4 w-4" />
-                  {t('settings.security.copyToken')}
-                </>
-              )}
-            </Button>
+              onCopy={copyGeneratedToken}
+              label={t('settings.security.copyToken')}
+              copiedLabel={t('settings.security.copied')}
+              iconClassName="h-4 w-4"
+            />
             <Button onClick={handleCloseDialog}>
               {t('settings.security.savedClose')}
             </Button>
@@ -390,12 +373,8 @@ export function SecurityTab() {
       <div className="rounded-lg border border-yellow-200 dark:border-yellow-900 bg-yellow-50 dark:bg-yellow-950/30 p-3 sm:p-4">
         <h4 className="text-sm sm:text-base font-semibold text-yellow-900 dark:text-yellow-200 mb-2">{t('settings.security.securityTip')}</h4>
         <ul className="text-xs sm:text-sm text-yellow-800 dark:text-yellow-300 space-y-1 list-disc list-inside">
-          <li>{t('settings.security.securityTip1')}</li>
-          <li>{t('settings.security.securityTip2')}</li>
           <li>{t('settings.security.securityTip3')}</li>
-          <li>{t('settings.security.securityTip4')}</li>
           <li>{t('settings.security.securityTip5')}</li>
-          <li>{t('settings.security.securityTip6')}</li>
         </ul>
       </div>
     </div>

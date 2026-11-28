@@ -386,7 +386,7 @@ export default function PackDetailPage() {
           <Card>
             <CardHeader>
               <CardTitle>API 提供商</CardTitle>
-              <CardDescription>模板中包含的 API 提供商配置（不含 API Key）</CardDescription>
+              <CardDescription>不含 API Key</CardDescription>
             </CardHeader>
             <CardContent>
               <div className="overflow-x-auto">
@@ -421,7 +421,6 @@ export default function PackDetailPage() {
           <Card>
             <CardHeader>
               <CardTitle>模型配置</CardTitle>
-              <CardDescription>模板中包含的模型配置</CardDescription>
             </CardHeader>
             <CardContent>
               <div className="overflow-x-auto">
@@ -458,7 +457,6 @@ export default function PackDetailPage() {
           <Card>
             <CardHeader>
               <CardTitle>任务配置</CardTitle>
-              <CardDescription>模板中各任务类型的模型分配</CardDescription>
             </CardHeader>
             <CardContent>
               <Accordion type="multiple" className="w-full">
@@ -776,14 +774,6 @@ function ApplyDialog({
             {/* 步骤 3: 确认 */}
             {step === 3 && (
               <div className="space-y-4">
-                <Alert>
-                  <Info className="h-4 w-4" />
-                  <AlertTitle>确认应用</AlertTitle>
-                  <AlertDescription>
-                    请确认以下将要应用的内容：
-                  </AlertDescription>
-                </Alert>
-                
                 <div className="space-y-2">
                   {options.apply_providers && (
                     <div className="flex items-center gap-2 text-sm">

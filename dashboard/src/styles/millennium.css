@@ -1308,10 +1308,12 @@
 /* ---------- 版式细节：对齐设计稿的字号与留白 ---------- */
 
 /* 页面大标题 */
-:root[data-dashboard-style='millennium'] [data-dashboard-main='true'] h1 {
-  font-size: 2.5rem;
-  font-weight: 900;
-  line-height: 1.1;
+@layer base {
+  :where(:root[data-dashboard-style='millennium'] [data-dashboard-main='true']) h1 {
+    font-size: 1.75rem;
+    font-weight: 900;
+    line-height: 1.1;
+  }
 }
 
 /* 表单标签：印在壳上的小字 */
@@ -1817,7 +1819,7 @@
   background-color: var(--mil-key);
   box-shadow: var(--mil-keycap);
   color: var(--mil-ink);
-  font-size: 0.6875rem;
+  font-size: 0.75rem;
   font-weight: 700;
   height: 58px;
   padding-bottom: 7px;

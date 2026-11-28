@@ -2,6 +2,7 @@ import { Globe, Plus } from 'lucide-react'
 
 import type { TestConnectionResult } from '@/lib/config-api'
 import { DashedButton } from '@/components/ui/dashed-button'
+import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from '@/components/ui/select'
 import { StatusLight } from '@/components/ui/status-light'
 import { DataPanel } from '@/components/ui/surface'
 import { cn } from '@/lib/utils'
@@ -10,6 +11,8 @@ import type { WebSearchConfig } from '../webSearch/types'
 
 import { getProviderTestStatus } from './providerStatus'
 import type { APIProvider } from './types'
+
+const ALL_PROVIDERS_VALUE = '__all__'
 
 interface ProviderSidebarProps {
   providers: APIProvider[]
@@ -60,31 +63,35 @@ export function ProviderSidebar({
       </div>
 
       <div className="min-w-0 lg:hidden">
-        <select
-          className="border-input bg-background h-9 w-full min-w-0 rounded-md border px-3 text-sm"
-          aria-label="模型厂商"
-          value={selectedProvider ? `provider:${selectedProvider}` : ''}
-          onChange={(event) => {
-            const value = event.target.value
-            if (value.startsWith('web:')) {
+        <Select
+          value={selectedProvider ? `provider:${selectedProvider}` : ALL_PROVIDERS_VALUE}
+          onValueChange={(value) => {
+            if (value === ALL_PROVIDERS_VALUE) {
+              onSelectProvider('')
+            } else if (value.startsWith('web:')) {
               onEditWebSearch?.(value.slice(4))
             } else {
               onSelectProvider(value.slice(9))
             }
           }}
         >
-          <option value="">全部 · {totalModels}</option>
-          {sortedProviders.map(({ provider }) => (
-            <option key={`provider:${provider.name}`} value={`provider:${provider.name}`}>
-              {provider.name} · {modelCounts.get(provider.name) ?? 0}
-            </option>
-          ))}
-          {webServiceNames.map((name) => (
-            <option key={`web:${name}`} value={`web:${name}`}>
-              {name} · 联网搜索
-            </option>
-          ))}
-        </select>
+          <SelectTrigger aria-label="模型厂商">
+            <SelectValue />
+          </SelectTrigger>
+          <SelectContent>
+            <SelectItem value={ALL_PROVIDERS_VALUE}>全部 · {totalModels}</SelectItem>
+            {sortedProviders.map(({ provider }) => (
+              <SelectItem key={`provider:${provider.name}`} value={`provider:${provider.name}`}>
+                {provider.name} · {modelCounts.get(provider.name) ?? 0}
+              </SelectItem>
+            ))}
+            {webServiceNames.map((name) => (
+              <SelectItem key={`web:${name}`} value={`web:${name}`}>
+                {name} · 联网搜索
+              </SelectItem>
+            ))}
+          </SelectContent>
+        </Select>
       </div>
 
       <DataPanel

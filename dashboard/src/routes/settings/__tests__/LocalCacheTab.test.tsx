@@ -648,11 +648,11 @@ describe('LocalCacheTab 特征化', () => {
     expect(screen.getByText('空')).toBeInTheDocument()
 
     // 空目录行的清理按钮不可用
-    const emptyRow = screen.getByText('/app/logs/app').closest('.rounded-md') as HTMLElement
+    const emptyRow = screen.getByText('/app/logs/app').closest('[data-log-directory-row="true"]') as HTMLElement
     expect(within(emptyRow).getByRole('button', { name: '清理' })).toBeDisabled()
 
     // 根目录行确认清理后按相对路径调用接口
-    const rootRow = screen.getByText('/app/logs').closest('.rounded-md') as HTMLElement
+    const rootRow = screen.getByText('/app/logs').closest('[data-log-directory-row="true"]') as HTMLElement
     await user.click(within(rootRow).getByRole('button', { name: '清理' }))
     const alert = await screen.findByRole('alertdialog')
     expect(within(alert).getByText('确认清理logs？')).toBeInTheDocument()

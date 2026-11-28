@@ -43,8 +43,9 @@ export function TargetSelect({ value, onChange, type, platform, disabled, label 
   })
   return <div className="min-w-0 space-y-2">
     <Popover open={open && !disabled} onOpenChange={setOpen}>
-      <PopoverTrigger asChild><Button type="button" variant="outline" size="sm" disabled={disabled} role="combobox" aria-expanded={open} aria-label={label} className="w-full justify-between font-normal">
-        搜索并选择{type === 'group' ? '群' : '用户'}<ChevronsUpDown className="h-4 w-4 opacity-50" />
+      <PopoverTrigger asChild><Button type="button" variant="outline" size="sm" disabled={disabled} role="combobox" aria-expanded={open} aria-label={label} className="group w-full justify-between gap-2 font-normal">
+        <span className="truncate">搜索并选择{type === 'group' ? '群' : '用户'}</span>
+        <ChevronsUpDown strokeWidth={1.75} className="size-3.5 shrink-0 text-muted-foreground/70 transition-colors group-hover:text-foreground/80" />
       </Button></PopoverTrigger>
       <PopoverContent align="start" className="w-[var(--radix-popover-trigger-width)] min-w-64 p-0">
         <Command shouldFilter={false}>

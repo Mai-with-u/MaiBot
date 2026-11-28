@@ -303,8 +303,7 @@ export function AuthPage() {
         <CardHeader className="text-left">
           <div className="space-y-2">
             <CardTitle className="text-2xl font-bold">{t('auth.welcome')}</CardTitle>
-            <CardDescription className="flex items-center gap-2 text-base">
-              <span aria-hidden="true" className="font-mono text-primary">&gt;</span>
+            <CardDescription className="text-base">
               {t('auth.accessDesc')}
             </CardDescription>
           </div>
@@ -362,7 +361,7 @@ export function AuthPage() {
             <div className="flex items-center justify-between gap-3">
               <Dialog>
                 <DialogTrigger asChild>
-                  <button type="button" className="flex items-center justify-start gap-1 text-left text-[11px] text-primary transition-colors underline-offset-4 hover:text-primary/80 hover:underline">
+                  <button type="button" className="flex items-center justify-start gap-1 text-left text-xs text-primary transition-colors underline-offset-4 hover:text-primary/80 hover:underline">
                     <HelpCircle className="h-3 w-3" strokeWidth={2} fill="none" />
                     {t('auth.helpLink')}
                   </button>

@@ -24,7 +24,7 @@ export function NotFoundPage() {
             页面未找到
           </h2>
           <p className="text-base text-muted-foreground sm:text-lg max-w-md mx-auto">
-            抱歉，您访问的页面不存在或已被移除。请检查 URL 是否正确，或返回首页继续浏览。
+            访问的页面不存在或已被移除。
           </p>
         </div>
 
@@ -52,7 +52,7 @@ export function NotFoundPage() {
         {/* 提示信息 */}
         <div className="mt-12 pt-8 border-t border-border">
           <p className="text-sm text-muted-foreground">
-            如果您认为这是一个错误，请联系系统管理员
+            请检查地址栏路径，或返回首页重新导航
           </p>
         </div>
       </div>

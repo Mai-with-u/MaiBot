@@ -380,9 +380,6 @@ export function OtherTab() {
               step={5}
               className="w-full"
             />
-            <p className="text-xs text-muted-foreground">
-              {t('settings.other.dataSyncIntervalDesc')}
-            </p>
           </div>
 
           {/* WebSocket 重连间隔 */}
@@ -418,9 +415,6 @@ export function OtherTab() {
               step={1}
               className="w-full"
             />
-            <p className="text-xs text-muted-foreground">
-              {t('settings.other.wsMaxReconnectDesc')}
-            </p>
           </div>
 
           {/* 清理按钮 */}
@@ -462,10 +456,6 @@ export function OtherTab() {
           {t('settings.other.importExport')}
         </h3>
         <div className="space-y-4">
-          <p className="text-xs sm:text-sm text-muted-foreground">
-            {t('settings.other.importExportDesc')}
-          </p>
-          
           <div className="flex flex-wrap gap-2">
             <Button 
               variant="outline" 

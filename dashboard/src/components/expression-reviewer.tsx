@@ -812,7 +812,7 @@ export function ExpressionReviewer({
           <button
             onClick={() => handleReviewModeChange('list')}
             className={cn(
-              'group relative flex items-center gap-2 rounded-t-lg px-4 py-2 text-sm font-medium transition-all',
+              'group relative flex items-center gap-2 rounded-t-lg px-4 py-2 text-sm font-medium transition-colors',
               'hover:bg-background/50',
               reviewMode === 'list'
                 ? 'bg-background text-foreground border-border border border-b-0 shadow-sm'
@@ -830,7 +830,7 @@ export function ExpressionReviewer({
           <button
             onClick={() => handleReviewModeChange('quick')}
             className={cn(
-              'group relative flex items-center gap-2 rounded-t-lg px-4 py-2 text-sm font-medium transition-all',
+              'group relative flex items-center gap-2 rounded-t-lg px-4 py-2 text-sm font-medium transition-colors',
               'hover:bg-background/50',
               reviewMode === 'quick'
                 ? 'bg-background text-foreground border-border border border-b-0 shadow-sm'
@@ -1082,14 +1082,12 @@ export function ExpressionReviewer({
                         </div>
 
                         {/* 元信息 */}
-                        <div className="text-muted-foreground flex flex-wrap items-center gap-1 text-xs sm:gap-2">
-                          <span>#{expr.id}</span>
-                          <span>·</span>
+                        <div className="text-muted-foreground flex flex-wrap items-center gap-x-2.5 gap-y-1 text-xs">
+                          <span className="tabular-nums">#{expr.id}</span>
                           <span title={getChatName(expr)} className="max-w-24 truncate sm:max-w-32">
                             {getChatName(expr)}
                           </span>
-                          <span>·</span>
-                          <span>{formatTime(expr.create_date)}</span>
+                          <span className="tabular-nums">{formatTime(expr.create_date)}</span>
                           <div className="flex items-center gap-1">{getReviewBadge(expr)}</div>
                         </div>
                       </div>
@@ -1257,7 +1255,7 @@ export function ExpressionReviewer({
                       <>
                         <div
                           className={cn(
-                            'flex items-center gap-2 rounded-lg px-4 py-2 transition-all duration-300',
+                            'flex items-center gap-2 rounded-lg px-4 py-2 transition-colors duration-300',
                             swipeDirectionRef.current === 'left'
                               ? 'scale-110 bg-red-500/20 text-red-500'
                               : 'bg-muted/50 text-muted-foreground opacity-0',
@@ -1269,7 +1267,7 @@ export function ExpressionReviewer({
                         </div>
                         <div
                           className={cn(
-                            'flex items-center gap-2 rounded-lg px-4 py-2 transition-all duration-300',
+                            'flex items-center gap-2 rounded-lg px-4 py-2 transition-colors duration-300',
                             swipeDirectionRef.current === 'right'
                               ? 'scale-110 bg-green-500/20 text-green-500'
                               : 'bg-muted/50 text-muted-foreground opacity-0',
@@ -1453,7 +1451,7 @@ export function ExpressionReviewer({
                             </div>
                             {/* 情景 */}
                             <div className="space-y-1.5">
-                              <div className="text-muted-foreground text-xs font-semibold tracking-wider uppercase">
+                              <div className="text-muted-foreground text-xs font-medium">
                                 情景
                               </div>
                               <div
@@ -1467,7 +1465,7 @@ export function ExpressionReviewer({
                             </div>
                             {/* 风格 */}
                             <div className="min-h-0 space-y-1.5">
-                              <div className="text-muted-foreground text-xs font-semibold tracking-wider uppercase">
+                              <div className="text-muted-foreground text-xs font-medium">
                                 风格
                               </div>
                               <div className="flex max-h-24 flex-wrap gap-2 overflow-y-auto pr-1">
@@ -1489,7 +1487,7 @@ export function ExpressionReviewer({
                                 {getChatName(expr)}
                               </span>
                             </div>
-                            <span className="shrink-0 font-mono">
+                            <span className="shrink-0 tabular-nums">
                               {formatTime(expr.create_date)}
                             </span>
                           </div>
@@ -1517,7 +1515,7 @@ export function ExpressionReviewer({
                             </div>
                             {/* 情景 */}
                             <div className="space-y-1.5">
-                              <div className="text-muted-foreground text-xs font-semibold tracking-wider uppercase">
+                              <div className="text-muted-foreground text-xs font-medium">
                                 情景
                               </div>
                               <div
@@ -1531,7 +1529,7 @@ export function ExpressionReviewer({
                             </div>
                             {/* 风格 */}
                             <div className="min-h-0 space-y-1.5">
-                              <div className="text-muted-foreground text-xs font-semibold tracking-wider uppercase">
+                              <div className="text-muted-foreground text-xs font-medium">
                                 风格
                               </div>
                               <div className="flex max-h-24 flex-wrap gap-2 overflow-y-auto pr-1">
@@ -1553,7 +1551,7 @@ export function ExpressionReviewer({
                                 {getChatName(expr)}
                               </span>
                             </div>
-                            <span className="shrink-0 font-mono">
+                            <span className="shrink-0 tabular-nums">
                               {formatTime(expr.create_date)}
                             </span>
                           </div>
@@ -1578,7 +1576,7 @@ export function ExpressionReviewer({
                           aria-label="拒绝"
                           data-quick-review-action="reject"
                           className={cn(
-                            'h-16 w-16 rounded-full border-2 shadow-lg transition-all active:scale-95',
+                            'h-16 w-16 rounded-full border-2 shadow-lg transition-colors active:scale-95',
                             !directions.left
                               ? 'cursor-not-allowed opacity-30'
                               : 'hover:border-red-200 hover:bg-red-50 hover:text-red-600'
@@ -1594,7 +1592,7 @@ export function ExpressionReviewer({
                           aria-label="通过"
                           data-quick-review-action="approve"
                           className={cn(
-                            'h-16 w-16 rounded-full border-2 shadow-lg transition-all active:scale-95',
+                            'h-16 w-16 rounded-full border-2 shadow-lg transition-colors active:scale-95',
                             !directions.right
                               ? 'cursor-not-allowed opacity-30'
                               : 'hover:border-green-200 hover:bg-green-50 hover:text-green-600'

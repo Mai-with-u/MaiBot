@@ -29,6 +29,10 @@
   --board-chart-ink: hsl(var(--muted-foreground));
 }
 
+:root[data-dashboard-style='modern'] {
+  --board-rule: var(--hairline-width, 1px) solid hsl(var(--border));
+}
+
 /* 千禧：整块面板是一个机壳，模块只是印在机壳上的丝印标题 + 下沉屏幕 */
 :root[data-dashboard-style='millennium'] {
   --board-gap: 1.25rem;
@@ -118,9 +122,10 @@
   /* 刻线：一段网格和下一段之间压一道线，左端印代号，右端装控件 */
   [data-board-rule='true'] {
     display: flex;
+    flex-wrap: wrap;
     flex-shrink: 0;
     align-items: center;
-    gap: 0.75rem;
+    gap: 0.5rem 0.75rem;
     min-height: 1.75rem;
     padding: 0 0.25rem;
     color: var(--board-ink);
@@ -135,6 +140,12 @@
     flex: 1;
     min-width: 1rem;
     border-top: 1px solid hsl(var(--border));
+  }
+  :root[data-dashboard-style='modern'] [data-board-rule-code='true'] {
+    display: none;
+  }
+  :root[data-dashboard-style='modern'] [data-board-rule-line='true'] {
+    border-top-width: var(--hairline-width, 1px);
   }
   :root[data-dashboard-style='millennium'] [data-board-rule='true'] {
     color: var(--mil-ink);
@@ -307,7 +318,7 @@
   [data-board-badge='true'] {
     padding: 0.0625rem 0.5rem;
     color: hsl(var(--primary-foreground));
-    font-size: 0.6875rem;
+    font-size: 0.75rem;
     font-weight: 700;
     background: hsl(var(--primary));
     border-radius: 999px;

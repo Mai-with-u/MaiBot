@@ -91,10 +91,11 @@ describe('Toast', () => {
     const toast = queryToast()
     expect(toast).not.toBeNull()
     expect(toast).toHaveClass(
-      'bg-primary/5',
+      'bg-card',
       'data-[state=open]:animate-slide-in-from-right',
       'extra-toast'
     )
+    expect(toast).not.toHaveClass('bg-primary/5', 'backdrop-blur-sm')
     expect(toast).not.toHaveClass('data-[state=open]:animate-slide-in-from-top')
   })
 

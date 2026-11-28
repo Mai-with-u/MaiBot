@@ -261,18 +261,20 @@ export function ExpressionReviewLogPanel({ onRescued }: ExpressionReviewLogPanel
         </Table>
       </div>
 
-      <div className="min-h-0 flex-1 space-y-3 overflow-y-auto p-4 md:hidden">
+      <div className="min-h-0 flex-1 divide-y divide-border/60 overflow-y-auto md:hidden">
         {loading ? (
-          <div className="text-muted-foreground py-8 text-center">
+          <div className="text-muted-foreground px-4 py-8 text-center">
             <ThinkingIllustration size="sm" className="mx-auto" />
           </div>
         ) : entries.length === 0 ? (
-          <div className="text-muted-foreground py-8 text-center">暂无 AI 审核记录</div>
+          <div className="text-muted-foreground px-4 py-8 text-center">暂无 AI 审核记录</div>
         ) : (
           entries.map((entry) => (
-            <Card key={entry.id} className="space-y-3 p-4">
+            <div key={entry.id} className="space-y-3 p-4">
               <div className="flex items-center justify-between gap-2">
-                <div className="text-muted-foreground text-xs">{formatTime(entry.created_at)}</div>
+                <div className="text-muted-foreground text-xs tabular-nums">
+                  {formatTime(entry.created_at)}
+                </div>
                 <div className="flex flex-wrap justify-end gap-1.5">
                   <ReviewStatusBadge />
                   <RescueBadge entry={entry} />
@@ -305,7 +307,7 @@ export function ExpressionReviewLogPanel({ onRescued }: ExpressionReviewLogPanel
                 <RotateCcw className="mr-1 h-4 w-4" />
                 人工通过救回
               </Button>
-            </Card>
+            </div>
           ))
         )}
       </div>

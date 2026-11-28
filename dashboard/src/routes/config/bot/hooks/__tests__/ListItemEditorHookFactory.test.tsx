@@ -337,7 +337,7 @@ describe('createListItemEditorHook', () => {
         value={[]}
       />,
     )
-    expect(screen.getAllByText('文档标题').length).toBeGreaterThan(1)
+    expect(screen.getByText('文档标题')).toBeInTheDocument()
 
     rerender(
       <ListHook

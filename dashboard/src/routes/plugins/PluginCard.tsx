@@ -149,7 +149,7 @@ export const PluginCard = memo(function PluginCard({
       {showDownloadGrowth && downloadGrowth && (
         <div
           data-plugin-growth-badge="downloads"
-          className="absolute right-4 top-0 z-10 -translate-y-1/2 flex items-center gap-1 rounded-sm bg-orange-700 px-1.5 py-1 text-[11px] font-semibold text-white shadow-sm dark:bg-orange-400 dark:text-orange-950"
+          className="absolute right-4 top-0 z-10 -translate-y-1/2 flex items-center gap-1 rounded-sm bg-orange-700 px-1.5 py-1 text-xs font-semibold text-white shadow-sm dark:bg-orange-400 dark:text-orange-950"
           title={`${downloadGrowth.days} 天下载飙升榜第 ${downloadGrowth.rank} 名，按本期比上期的增加量排序`}
         >
           <TrendingUp className="h-3 w-3 shrink-0" />
@@ -159,7 +159,7 @@ export const PluginCard = memo(function PluginCard({
       {!showDownloadGrowth && likeGrowth && (
         <div
           data-plugin-growth-badge="likes"
-          className="absolute right-4 top-0 z-10 -translate-y-1/2 flex items-center gap-1 rounded-sm bg-orange-700 px-1.5 py-1 text-[11px] font-semibold text-white shadow-sm dark:bg-orange-400 dark:text-orange-950"
+          className="absolute right-4 top-0 z-10 -translate-y-1/2 flex items-center gap-1 rounded-sm bg-orange-700 px-1.5 py-1 text-xs font-semibold text-white shadow-sm dark:bg-orange-400 dark:text-orange-950"
           title={`${likeGrowth.days} 天点赞飙升榜第 ${likeGrowth.rank} 名，按本期比上期的增加量排序，仅统计当前有效的赞`}
         >
           <TrendingUp className="h-3 w-3 shrink-0" />
@@ -171,7 +171,7 @@ export const PluginCard = memo(function PluginCard({
         {plugin.installed && (
           <span
             data-plugin-installed-badge="true"
-            className="inline-flex items-center whitespace-nowrap rounded-sm bg-orange-700 px-2 py-1 text-[11px] font-semibold text-white shadow-sm dark:bg-orange-400 dark:text-orange-950"
+            className="inline-flex items-center whitespace-nowrap rounded-sm bg-orange-700 px-2 py-1 text-xs font-semibold text-white shadow-sm dark:bg-orange-400 dark:text-orange-950"
           >
             已安装
           </span>
@@ -191,7 +191,7 @@ export const PluginCard = memo(function PluginCard({
               iconClassName="h-6 w-6 text-3xl"
             />
             {needsUpdate(plugin) && (
-              <span data-plugin-update-ribbon="true" className="absolute inset-x-0 bottom-0 bg-orange-600 px-0.5 py-1 text-center text-[10px] font-semibold leading-none text-white">
+              <span data-plugin-update-ribbon="true" className="absolute inset-x-0 bottom-0 bg-orange-600 px-0.5 py-1 text-center text-xs font-semibold leading-none text-white">
                 可更新
               </span>
             )}
@@ -228,7 +228,7 @@ export const PluginCard = memo(function PluginCard({
                 <div
                   key={recentActivity.action}
                   data-plugin-activity={recentActivity.action === '发布' ? 'publish' : 'update'}
-                  className="relative shrink-0 pl-3 text-[11px] leading-tight text-muted-foreground"
+                  className="relative shrink-0 pl-3 text-xs leading-tight text-muted-foreground"
                   title={`${recentActivity.timeLabel}${recentActivity.action}`}
                 >
                   <span className={`absolute left-0 top-1/2 h-1.5 w-1.5 -translate-y-1/2 ${recentActivity.action === '发布' ? 'bg-emerald-500' : 'bg-orange-500'}`} aria-hidden="true" />
@@ -247,7 +247,7 @@ export const PluginCard = memo(function PluginCard({
           <div data-plugin-card-toolbar="true" className="flex min-w-0 items-center justify-between gap-2">
             {/* 按实际内容宽度排列，三组读数等距，数字紧跟图标并在显示框内垂直居中。 */}
             {statsStatus === 'ready' && hasStats ? (
-              <div data-plugin-card-stats="true" className="grid min-w-max flex-1 grid-cols-[max-content_max-content_max-content] content-center items-center gap-x-3 font-mono text-xs leading-none tabular-nums text-muted-foreground">
+              <div data-plugin-card-stats="true" className="grid min-w-max flex-1 grid-cols-[max-content_max-content_max-content] content-center items-center gap-x-3 text-xs leading-none tabular-nums text-muted-foreground">
                 <div className="flex items-center gap-1" title={`下载量：${downloadCount.toLocaleString()}`}>
                   <Download className="h-3.5 w-3.5 shrink-0" aria-hidden="true" />
                   <span className="sr-only">下载</span>
@@ -304,7 +304,7 @@ export const PluginCard = memo(function PluginCard({
                 ) : (
                   <ThumbsUp className="h-4 w-4" />
                 )}
-                <span className="min-w-[3ch] text-right font-mono tabular-nums">
+                <span className="min-w-[3ch] text-right tabular-nums">
                   {likeCount === undefined ? '—' : likeCount >= 1_000 ? `${(likeCount / 1_000).toFixed(1)}k` : likeCount.toString()}
                 </span>
               </Button>
@@ -383,12 +383,12 @@ export const PluginCard = memo(function PluginCard({
           {plugin.manifest?.keywords && plugin.manifest.keywords.length > 0 && (
             <div className="flex flex-wrap gap-1.5">
               {plugin.manifest.keywords.slice(0, 3).map((keyword) => (
-                <Badge key={keyword} variant="outline" data-plugin-keyword="true" className="min-w-0 max-w-full px-1.5 py-0 text-[11px]">
+                <Badge key={keyword} variant="outline" data-plugin-keyword="true" className="min-w-0 max-w-full px-1.5 py-0 text-xs">
                   <span className="truncate">{keyword}</span>
                 </Badge>
               ))}
               {plugin.manifest.keywords.length > 3 && (
-                <Badge variant="outline" data-plugin-keyword="true" className="px-1.5 py-0 text-[11px]">
+                <Badge variant="outline" data-plugin-keyword="true" className="px-1.5 py-0 text-xs">
                   +{plugin.manifest.keywords.length - 3}
                 </Badge>
               )}

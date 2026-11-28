@@ -1,6 +1,7 @@
 import { useId, type ReactNode } from 'react'
 
 import { Button } from '@/components/ui/button'
+import { PillNav } from '@/components/ui/pill-nav'
 import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from '@/components/ui/select'
 import { Separator } from '@/components/ui/separator'
 import type { Jargon } from '@/types/jargon'
@@ -50,7 +51,12 @@ export function JargonMeaningOverview({
       {!universal && (
         <>
           <nav aria-label="作用域索引" className="flex min-h-0 shrink-0 flex-col gap-2 sm:w-[26%] sm:max-w-72">
-            <h3 className="hidden text-sm font-semibold sm:block">作用域 · {visible.length}</h3>
+            <h3 className="hidden items-center gap-1.5 text-sm font-semibold sm:flex">
+              <span>作用域</span>
+              <span className="text-muted-foreground text-xs font-normal tabular-nums">
+                ({visible.length})
+              </span>
+            </h3>
             <div className="custom-scrollbar hidden min-h-0 space-y-1 overflow-y-auto pr-1 sm:block">
               {visible.map(row => (
                 <button key={row.id} type="button" disabled={disableSelection && selected.id !== row.id}
@@ -58,7 +64,10 @@ export function JargonMeaningOverview({
                   className="block w-full px-3 py-2 text-left hover:bg-muted aria-pressed:bg-accent aria-pressed:text-accent-foreground focus-visible:outline-offset-[-2px]"
                   onClick={() => selectScope(row)}>
                   <span className="block break-words font-medium">{scopeLabel(row)}</span>
-                  <span className="text-muted-foreground text-xs">{scopeType(row)} · {statusLabel(row)}</span>
+                  <span className="text-muted-foreground flex items-center gap-2 text-xs">
+                    <span>{scopeType(row)}</span>
+                    <span>{statusLabel(row)}</span>
+                  </span>
                 </button>
               ))}
             </div>
@@ -80,11 +89,17 @@ export function JargonMeaningOverview({
         <header className="flex shrink-0 flex-wrap items-start justify-between gap-2">
           <div className="min-w-0">
             <h3 className="truncate text-base font-semibold" title={scopeLabel(selected)}>{scopeLabel(selected)}</h3>
-            <p className="text-muted-foreground text-xs">
-              {statusLabel(selected)} · 遇见 {selected.count} 次 · {selected.last_inference_count ? `上次推断于第 ${selected.last_inference_count} 次` : '尚未推断'}
-              {!selected.allow_update && ' · 已暂停更新'}{selected.is_complete && <> · <span>推断完成</span></>}
-              {selected.archived && ' · 历史版本'}{selected.is_legacy_empty_meaning && <> · <span>旧数据</span></>}
-            </p>
+            <div className="text-muted-foreground mt-0.5 flex flex-wrap items-center gap-x-2.5 gap-y-1 text-xs">
+              <span>{statusLabel(selected)}</span>
+              <span className="tabular-nums">遇见 {selected.count} 次</span>
+              <span className="tabular-nums">
+                {selected.last_inference_count ? `上次推断于第 ${selected.last_inference_count} 次` : '尚未推断'}
+              </span>
+              {!selected.allow_update && <span>已暂停更新</span>}
+              {selected.is_complete && <span>推断完成</span>}
+              {selected.archived && <span>历史版本</span>}
+              {selected.is_legacy_empty_meaning && <span>旧数据</span>}
+            </div>
           </div>
           {scoped && panelTab === 'meaning' && (
             <div className="flex shrink-0 flex-wrap gap-1">
@@ -106,15 +121,37 @@ export function JargonMeaningOverview({
               其他作用域（{others.length}）
               {differences > 0 && <span className="ml-2 text-xs text-muted-foreground">{differences} 个释义不同</span>}
             </summary>
-            <nav aria-label="作用域索引" className="custom-scrollbar mt-1 flex max-h-28 flex-wrap gap-1 overflow-y-auto">
-              {(selected.id === universal.id ? others : [universal, ...others]).map(row => (
-                <Button key={row.id} size="xs" variant={row.id === selected.id ? 'secondary' : 'ghost'}
-                  aria-label={scopeLabel(row)} aria-pressed={row.id === selected.id} disabled={disableSelection}
-                  title={scopeLabel(row)} className="max-w-full" onClick={() => selectScope(row)}>
-                  <span className="truncate">{scopeLabel(row)}</span><span className="text-muted-foreground">{statusLabel(row)}</span>
-                </Button>
-              ))}
-            </nav>
+            {(() => {
+              const scopeNavRows = selected.id === universal.id ? others : [universal, ...others]
+              return (
+                <PillNav
+                  as="nav"
+                  variant="pill"
+                  size="xs"
+                  scrollable
+                  ariaLabel="作用域索引"
+                  value={String(selected.id)}
+                  onChange={(value) => {
+                    const row = scopeNavRows.find((item) => String(item.id) === value)
+                    if (row) selectScope(row)
+                  }}
+                  options={scopeNavRows.map((row) => ({
+                    value: String(row.id),
+                    ariaLabel: scopeLabel(row),
+                    title: scopeLabel(row),
+                    disabled: disableSelection,
+                    label: (
+                      <span className="inline-flex max-w-full items-center gap-1">
+                        <span className="truncate">{scopeLabel(row)}</span>
+                        <span className="text-muted-foreground">{statusLabel(row)}</span>
+                      </span>
+                    ),
+                  }))}
+                  className="mt-1.5"
+                  itemClassName="max-w-full"
+                />
+              )
+            })()}
           </details>
         )}
       </article>

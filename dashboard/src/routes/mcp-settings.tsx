@@ -460,8 +460,8 @@ function MCPServersBlockEditor({
             const currentStatus = runtimeStatus?.servers.find((item) => item.name === server.name)
 
             return (
-              <Card key={key} variant="flat" className="bg-muted/20">
-                <CardHeader className="space-y-3 px-4 py-3">
+              <div key={key} className="space-y-4 rounded-md border border-border/60 bg-muted/20 p-4">
+                <div className="space-y-3">
                   <div className="flex flex-col gap-3 md:flex-row md:items-center md:justify-between">
                     <div className="flex min-w-0 flex-1 items-center gap-3">
                       <Switch
@@ -478,14 +478,14 @@ function MCPServersBlockEditor({
                       </div>
                       <Badge
                         variant={server.enabled ? 'default' : 'secondary'}
-                        className="shrink-0 text-[10px]"
+                        className="shrink-0 text-xs"
                       >
                         {server.enabled ? '启用' : '禁用'}
                       </Badge>
                       {currentStatus && (
                         <Badge
                           variant={currentStatus.connected ? 'secondary' : 'destructive'}
-                          className="shrink-0 text-[10px]"
+                          className="shrink-0 text-xs"
                           title={currentStatus.error || undefined}
                         >
                           {currentStatus.connected
@@ -532,8 +532,8 @@ function MCPServersBlockEditor({
                       </Button>
                     </div>
                   </div>
-                </CardHeader>
-                <CardContent className="space-y-4 px-4 pb-4 pt-0">
+                </div>
+                <div className="space-y-4">
                   <div className="grid gap-3 md:grid-cols-[12rem_1fr]">
                     <div className="space-y-1.5">
                       <span className="text-xs font-medium text-muted-foreground">传输方式</span>
@@ -730,8 +730,8 @@ function MCPServersBlockEditor({
                       )}
                     </div>
                   )}
-                </CardContent>
-              </Card>
+                </div>
+              </div>
             )
           })
         )}
@@ -825,7 +825,7 @@ export function MCPExtensionList({
                     onEdit()
                   }
                 }}
-                className={`hover:bg-muted/55 focus-visible:bg-muted/55 relative flex cursor-pointer flex-col justify-between gap-2 py-2.5 transition-all duration-150 ease-out hover:-translate-y-0.5 hover:shadow-md focus-visible:-translate-y-0.5 focus-visible:shadow-md focus-visible:outline-none sm:min-h-0 sm:flex-row sm:items-center sm:gap-3 sm:px-2 sm:py-3 ${!enabled ? 'opacity-70' : ''}`}
+                className={`hover:bg-muted/55 focus-visible:bg-muted/55 relative flex cursor-pointer flex-col justify-between gap-2 py-2.5 transition-colors duration-150 ease-out focus-visible:outline-none sm:min-h-0 sm:flex-row sm:items-center sm:gap-3 sm:px-2 sm:py-3 ${!enabled ? 'opacity-70' : ''}`}
               >
                 <div className="flex min-w-0 items-start gap-3 sm:items-center">
                   <span
@@ -837,7 +837,7 @@ export function MCPExtensionList({
                     <div className="bg-muted flex h-12 w-12 items-center justify-center rounded-lg sm:h-10 sm:w-10">
                       <Server className="text-muted-foreground h-5 w-5" />
                     </div>
-                    <span className="text-muted-foreground text-[0.65rem] leading-none">MCP</span>
+                    <span className="text-muted-foreground text-xs leading-none">MCP</span>
                   </div>
                   <div className="min-w-0 flex-1 space-y-2 sm:space-y-1">
                     <div className="flex min-w-0 flex-wrap items-center gap-2">
@@ -1033,9 +1033,6 @@ export function MCPSettingsPage({ onBack }: { onBack?: () => void }) {
         <div className="flex flex-col gap-3 sm:flex-row sm:items-center sm:justify-between">
           <div className="min-w-0">
             <h1 className="text-xl font-bold sm:text-2xl md:text-3xl">MCP 设置</h1>
-            <p className="text-muted-foreground mt-1 text-xs sm:text-sm">
-              管理 MCP 客户端能力与服务器连接配置
-            </p>
           </div>
           <div className="flex gap-2">
             <Button

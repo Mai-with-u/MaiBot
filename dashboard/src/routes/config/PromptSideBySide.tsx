@@ -1,10 +1,9 @@
+import { Check, Save } from 'lucide-react'
 import { useEffect, useState } from 'react'
 import { useTranslation } from 'react-i18next'
 
-import { Save } from 'lucide-react'
-
-import { Button } from '@/components/ui/button'
 import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from '@/components/ui/select'
+import { StatefulButton } from '@/components/ui/stateful-button'
 import { useToast } from '@/hooks/use-toast'
 import {
   getDefaultPromptFile,
@@ -150,10 +149,18 @@ export function PromptSideBySide({
           <span className="min-w-0 truncate font-medium" title={leftFile?.relative_path}>
             {leftFile?.display_name || filename}
           </span>
-          <Button size="xs" className="h-6 shrink-0 gap-1" onClick={() => void onSave()} disabled={!hasUnsavedChanges || saving}>
-            <Save className="size-3" />
-            {saving ? t('promptCompare.saving') : hasUnsavedChanges ? saveLabel : t('promptCompare.saved')}
-          </Button>
+          <StatefulButton
+            size="xs"
+            className="shrink-0 gap-1"
+            status={saving ? 'loading' : hasUnsavedChanges ? 'idle' : 'success'}
+            idleLabel={saveLabel}
+            loadingLabel={t('promptCompare.saving')}
+            successLabel={t('promptCompare.saved')}
+            idleIcon={<Save className="size-3" />}
+            successIcon={<Check className="size-3" />}
+            onClick={() => void onSave()}
+            disabled={!hasUnsavedChanges || saving}
+          />
         </div>
         <PromptBlockEditor
           value={content}
@@ -178,7 +185,7 @@ export function PromptSideBySide({
           </span>
           {!sameFile && right.key === key && right.file && (
             <Select value={right.versionId} onValueChange={(value) => void handleVersionChange(value)} disabled={dirty || rightSaving || loadingVersion}>
-              <SelectTrigger aria-label={t('promptCompare.rightVersion')} className="h-6 w-[120px] shrink-0 text-xs">
+              <SelectTrigger controlSize="xs" aria-label={t('promptCompare.rightVersion')} className="w-[120px] shrink-0 text-xs">
                 <SelectValue />
               </SelectTrigger>
               <SelectContent>
@@ -189,19 +196,24 @@ export function PromptSideBySide({
               </SelectContent>
             </Select>
           )}
-          <Button
+          <StatefulButton
             size="xs"
-            className="h-6 shrink-0 gap-1"
+            className="shrink-0 gap-1"
+            status={
+              (sameFile ? saving : rightSaving)
+                ? 'loading'
+                : (sameFile ? hasUnsavedChanges : dirty)
+                  ? 'idle'
+                  : 'success'
+            }
+            idleLabel={sameFile ? saveLabel : rightSaveLabel}
+            loadingLabel={t('promptCompare.saving')}
+            successLabel={t('promptCompare.saved')}
+            idleIcon={<Save className="size-3" />}
+            successIcon={<Check className="size-3" />}
             onClick={() => void (sameFile ? onSave() : handleSaveRight())}
             disabled={sameFile ? !hasUnsavedChanges || saving : !dirty || rightSaving || loadingVersion}
-          >
-            <Save className="size-3" />
-            {(sameFile ? saving : rightSaving)
-              ? t('promptCompare.saving')
-              : (sameFile ? hasUnsavedChanges : dirty)
-                ? (sameFile ? saveLabel : rightSaveLabel)
-                : t('promptCompare.saved')}
-          </Button>
+          />
         </div>
         {!rightFilename ? (
           <p className="text-muted-foreground text-sm">{t('promptCompare.chooseFromDirectory')}</p>

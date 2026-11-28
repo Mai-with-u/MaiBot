@@ -66,13 +66,6 @@ export function ModernTabIndicator({ listRef, variant = 'auto' }: ModernTabIndic
     }
 
     const syncRect = () => {
-      // 文件夹标签拥有独立折角造型，不由药丸指示器接管。
-      if (list.closest('[data-dashboard-folder-tabs="true"]')) {
-        list.removeAttribute('data-modern-tab-glide')
-        setIndicator((prev) => (prev.rect === null ? prev : { rect: null, mode: prev.mode, hasMoved: false }))
-        return
-      }
-
       const activeTrigger = list.querySelector<HTMLElement>(
         '[data-dashboard-tabs-trigger="true"][data-state="active"]'
       )
@@ -142,7 +135,7 @@ export function ModernTabIndicator({ listRef, variant = 'auto' }: ModernTabIndic
         'pointer-events-none absolute top-0 left-0 z-0',
         mode === 'underline'
           ? 'top-auto bottom-0 h-[2px] rounded-full bg-primary shadow-[0_0_8px_hsl(var(--primary)/0.45)]'
-          : 'rounded-md bg-background shadow-[0_1px_3px_hsl(var(--foreground)/0.12),0_0_0_1px_hsl(var(--input))]'
+          : 'rounded-sm bg-background shadow-[0_1px_3px_hsl(var(--foreground)/0.12),0_0_0_1px_hsl(var(--input))] dark:bg-white/[0.12] dark:shadow-[0_1px_4px_rgba(0,0,0,0.45),inset_0_1px_0_rgba(255,255,255,0.09),0_0_0_1px_rgba(255,255,255,0.1)]'
       )}
     />
   )
@@ -304,7 +297,7 @@ export function ModernGlideHighlight({
         opacity: transitions.instant,
       }}
       className={cn(
-        'pointer-events-none absolute top-0 left-0 z-0 rounded-md bg-foreground/[0.07] dark:bg-foreground/[0.11]',
+        'pointer-events-none absolute top-0 left-0 z-0 rounded-sm bg-foreground/[0.07] dark:bg-foreground/[0.11]',
         className
       )}
     />
@@ -507,7 +500,7 @@ export function ModernMorphTooltip({
             exit={{
               opacity: 0,
               scale: 0.95,
-              transition: { duration: 0.1, ease: [0.4, 0, 1, 1] },
+              transition: transitions.exit,
             }}
             transition={{
               x: hasMoved ? transitions.snappy : { duration: 0 },
@@ -653,7 +646,7 @@ export function MotionHoldButton({
   variant = 'default',
   className,
 }: MotionHoldButtonProps) {
-  const { enabled } = useMotion()
+  const { enabled, transitions } = useMotion()
   const [holding, setHolding] = useState(false)
   const [completed, setCompleted] = useState(false)
   const timerRef = useRef<number | null>(null)
@@ -723,7 +716,7 @@ export function MotionHoldButton({
           holding
             ? { duration: holdDurationMs / 1000, ease: 'linear' }
             : enabled
-              ? { type: 'spring', stiffness: 460, damping: 32 }
+              ? transitions.snappy
               : { duration: 0 }
         }
         className={cn('pointer-events-none absolute inset-y-0 left-0 z-20 overflow-hidden', fillClass)}

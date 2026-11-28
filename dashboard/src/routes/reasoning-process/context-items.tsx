@@ -705,13 +705,13 @@ export function renderMessageTagMeta(
           {avatar.avatar_url && (
             <AvatarImage src={avatar.avatar_url} alt={`${avatarLabel} 的头像`} />
           )}
-          <AvatarFallback className="text-[10px]">
+          <AvatarFallback className="text-xs">
             {buildAvatarFallbackText(avatarLabel, avatar.user_id)}
           </AvatarFallback>
         </Avatar>
       )}
       {user && (
-        <Badge variant="outline" className="px-1.5 py-0 text-[11px]">
+        <Badge variant="outline" className="px-1.5 py-0 text-xs">
           {user}
         </Badge>
       )}
@@ -861,14 +861,14 @@ export function ContextItemCard({
     >
       <div className="min-w-0 space-y-2">
         {/* 桌面端右上角浮着「完整 Item JSON」，标题行给它让出宽度，窄屏时标签换行而不是叠上去 */}
-        <div className="flex min-w-0 flex-wrap items-center gap-1.5 lg:min-h-8 lg:pr-52">
-          <Badge variant="outline">#{index + 1}</Badge>
+        <div className="flex min-w-0 flex-wrap items-center gap-x-2 gap-y-1 lg:min-h-8 lg:pr-52">
+          <span className="text-muted-foreground text-xs font-medium tabular-nums">#{index + 1}</span>
           <Badge variant="outline" className={cn('font-mono', roleStyle.badgeClassName)}>
             {roleStyle.label}
           </Badge>
-          <span className="text-muted-foreground font-mono text-[11px]">{item.item_type}</span>
-          {item.phase && <Badge variant="outline">phase: {item.phase}</Badge>}
-          {item.representation && <Badge variant="outline">{item.representation}</Badge>}
+          <span className="text-muted-foreground font-mono text-xs">{item.item_type}</span>
+          {item.phase && <span className="text-muted-foreground text-xs">phase: {item.phase}</span>}
+          {item.representation && <span className="text-muted-foreground text-xs">{item.representation}</span>}
           {item.status && <Badge variant="outline">{item.status}</Badge>}
         </div>
 
@@ -1013,13 +1013,13 @@ export function ToolDefinitionsCollapsible({ toolDefinitions }: { toolDefinition
                       <div key={parameter.name} className="rounded-md border px-2.5 py-2">
                         <div className="flex flex-wrap items-center gap-2">
                           <span className="font-mono text-sm font-semibold">{parameter.name}</span>
-                          <Badge variant="outline" className="px-1.5 py-0 font-mono text-[11px]">
+                          <Badge variant="outline" className="px-1.5 py-0 font-mono text-xs">
                             {parameter.type}
                           </Badge>
                           {parameter.required && (
                             <Badge
                               variant="outline"
-                              className="border-destructive/50 text-destructive px-1.5 py-0 text-[11px]"
+                              className="border-destructive/50 text-destructive px-1.5 py-0 text-xs"
                             >
                               必填
                             </Badge>

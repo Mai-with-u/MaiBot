@@ -21,9 +21,17 @@ import { Input } from '@/components/ui/input'
 import { KeyValueEditor } from '@/components/ui/key-value-editor'
 import { Label } from '@/components/ui/label'
 import { MultiSelect } from '@/components/ui/multi-select'
+import { MultiSelectChips } from '@/components/ui/multi-select-chips'
 import { NestedKeyValueEditor } from '@/components/ui/nested-key-value-editor'
 import { PasswordInput } from '@/components/ui/password-input'
+import { ScrubberInput } from '@/components/ui/scrubber-input'
 import { SplitDropdownSelect } from '@/components/ui/split-dropdown-select'
+import {
+  CopyButton,
+  StatefulButton,
+  UndoButton,
+  type StatefulButtonStatus,
+} from '@/components/ui/stateful-button'
 import { TimeRangeTicks, TimeRangeTrack } from '@/components/ui/time-range-track'
 import { formatTalkTimeRange, getTimelineSegments } from '@/lib/time-range'
 
@@ -173,6 +181,136 @@ function MultiSelectExample() {
   )
 }
 
+function MultiSelectChipsExample() {
+  const chipOptions = [
+    { value: 'planner', label: '规划器', count: 12, swatchColor: '#3b82f6' },
+    { value: 'replyer', label: '回复器', count: 8, swatchColor: '#10b981' },
+    { value: 'memory', label: '记忆检索', count: 5, swatchColor: '#f59e0b' },
+  ]
+  const [chipSelected, setChipSelected] = useState(() => new Set(['planner', 'replyer']))
+  const [popoverSelected, setPopoverSelected] = useState(() => new Set(['planner']))
+  const toggleChip = (value: string) =>
+    setChipSelected((current) => {
+      const next = new Set(current)
+      if (next.has(value)) next.delete(value)
+      else next.add(value)
+      return next
+    })
+  const togglePopover = (value: string) =>
+    setPopoverSelected((current) => {
+      const next = new Set(current)
+      if (next.has(value)) next.delete(value)
+      else next.add(value)
+      return next
+    })
+  return (
+    <div className="space-y-3">
+      <MultiSelectChips
+        ariaLabel="内联多选胶囊示例"
+        mode="chips"
+        options={chipOptions}
+        selected={chipSelected}
+        onToggle={toggleChip}
+      />
+      <MultiSelectChips
+        ariaLabel="弹层多选芯片示例"
+        mode="popover"
+        triggerLabel="筛选模块"
+        options={chipOptions}
+        selected={popoverSelected}
+        onToggle={togglePopover}
+        onSelectAll={() => setPopoverSelected(new Set(chipOptions.map((item) => item.value)))}
+        onSelectNone={() => setPopoverSelected(new Set())}
+      />
+    </div>
+  )
+}
+
+function ScrubberInputExample() {
+  const [windowMinutes, setWindowMinutes] = useState(30)
+  const [temperature, setTemperature] = useState(7)
+  return (
+    <div className="flex flex-wrap items-center gap-3">
+      <ScrubberInput
+        label="时间窗"
+        value={windowMinutes}
+        min={5}
+        max={120}
+        step={5}
+        formatValue={(v) => `${v} 分钟`}
+        onChange={setWindowMinutes}
+      />
+      <ScrubberInput
+        label="温度"
+        value={temperature}
+        min={0}
+        max={20}
+        step={1}
+        formatValue={(v) => (v / 10).toFixed(1)}
+        onChange={setTemperature}
+      />
+    </div>
+  )
+}
+
+function StatefulButtonExample() {
+  const [items, setItems] = useState(3)
+  const [snapshot, setSnapshot] = useState(3)
+  const [status, setStatus] = useState<StatefulButtonStatus>('idle')
+  const cycleStatus = () => {
+    setStatus((current) =>
+      current === 'idle'
+        ? 'loading'
+        : current === 'loading'
+          ? 'success'
+          : current === 'success'
+            ? 'error'
+            : 'idle'
+    )
+  }
+  return (
+    <div className="space-y-3">
+      <div className="flex flex-wrap items-center gap-2">
+        <UndoButton
+          label={`清空 (${items})`}
+          doneLabel="已清空"
+          undoLabel="撤销"
+          disabled={items === 0}
+          onAction={() => {
+            setSnapshot(items)
+            setItems(0)
+          }}
+          onUndo={() => setItems(snapshot)}
+        />
+        <CopyButton
+          variant="outline"
+          size="sm"
+          label="复制示例"
+          copiedLabel="已复制"
+          onCopy={() => true}
+        />
+        <StatefulButton
+          size="sm"
+          status={status}
+          idleLabel="保存设置"
+          loadingLabel="保存中"
+          successLabel="已保存"
+          errorLabel="保存失败"
+          onClick={cycleStatus}
+        />
+        {status !== 'idle' && (
+          <Button type="button" variant="ghost" size="xs" onClick={() => setStatus('idle')}>
+            重置状态
+          </Button>
+        )}
+      </div>
+      <p className="text-muted-foreground text-xs">
+        当前剩余 {items} 条；点击态变按钮依次预览 idle → loading → success → error。
+      </p>
+    </div>
+  )
+}
+
 function SplitSelectExample() {
   const [value, setValue] = useState('one')
   return (
@@ -287,6 +425,13 @@ export const formExamples: ComponentExample[] = [
     preview: <MultiSelectExample />,
   },
   {
+    file: 'multi-select-chips',
+    name: 'MultiSelectChips',
+    category: '表单',
+    description: '带弹性勾选反馈的内联多选胶囊与弹层多选控件。',
+    preview: <MultiSelectChipsExample />,
+  },
+  {
     file: 'nested-key-value-editor',
     name: 'NestedKeyValueEditor',
     category: '表单',
@@ -308,11 +453,25 @@ export const formExamples: ComponentExample[] = [
     ),
   },
   {
+    file: 'scrubber-input',
+    name: 'ScrubberInput',
+    category: '表单',
+    description: '支持横向拖拽与方向键调节的紧凑数值滑条。',
+    preview: <ScrubberInputExample />,
+  },
+  {
     file: 'split-dropdown-select',
     name: 'SplitDropdownSelect',
     category: '表单',
     description: '将操作与选项分栏排列的下拉选择器。',
     preview: <SplitSelectExample />,
+  },
+  {
+    file: 'stateful-button',
+    name: 'UndoButton / CopyButton / StatefulButton',
+    category: '基础',
+    description: '态变按钮组：支持撤销倒计时、复制翻转与加载完成态切换。',
+    preview: <StatefulButtonExample />,
   },
   {
     file: 'time-range-track',

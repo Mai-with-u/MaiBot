@@ -65,12 +65,12 @@ body:has([data-other-models-menu][data-side='right']) [data-other-models-trigger
   overflow: hidden;
   text-overflow: ellipsis;
   white-space: nowrap;
-  font-family: var(--font-mono, ui-monospace, monospace);
+  font-variant-numeric: tabular-nums;
   font-size: 0.875rem;
 }
 
 [data-library-row-count] {
-  font-family: var(--font-mono, ui-monospace, monospace);
+  font-variant-numeric: tabular-nums;
   font-size: 0.75rem;
   color: hsl(var(--muted-foreground));
 }
@@ -80,8 +80,8 @@ body:has([data-other-models-menu][data-side='right']) [data-other-models-trigger
   overflow: hidden;
   text-overflow: ellipsis;
   white-space: nowrap;
-  font-family: var(--font-mono, ui-monospace, monospace);
-  font-size: 0.6875rem;
+  font-variant-numeric: tabular-nums;
+  font-size: 0.75rem;
   color: hsl(var(--muted-foreground));
 }
 
@@ -216,6 +216,17 @@ tr:hover [data-model-row-actions],
   [data-model-row-actions] {
     opacity: 1;
   }
+}
+
+/* ---------- 现代风格 ---------- */
+:root[data-dashboard-style='modern'] [data-library-label] > b {
+  display: none;
+}
+
+:root[data-dashboard-style='modern'] [data-library-label] > h2 {
+  font-size: 0.875rem;
+  font-weight: 600;
+  color: hsl(var(--foreground));
 }
 
 /* ---------- 千禧风格 ---------- */

@@ -30,7 +30,14 @@ export function ThinkingIllustration({ className, size = 'md' }: ThinkingIllustr
       aria-label="加载中"
       className={cn('inline-flex items-center justify-center text-primary', gapClasses[size], className)}
     >
-      {modernPulse ? (
+      {!enabled ? (
+        [0, 1, 2].map((index) => (
+          <span
+            key={index}
+            className={cn('rounded-full bg-current opacity-60', dotSizeClasses[size])}
+          />
+        ))
+      ) : modernPulse ? (
         [0, 1, 2].map((index) => (
           <motion.span
             key={index}

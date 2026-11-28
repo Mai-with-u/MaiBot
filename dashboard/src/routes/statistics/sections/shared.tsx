@@ -1,9 +1,32 @@
 import type { ReactNode } from 'react'
 import { useTranslation } from 'react-i18next'
 
-import { Button } from '@/components/ui/button'
+import { MultiSelectChips } from '@/components/ui/multi-select-chips'
+import { PillNav } from '@/components/ui/pill-nav'
+import { cn } from '@/lib/utils'
 
 import { formatPercent, type SummaryDelta } from '../statistics-model'
+
+/** 统一图表提示框外壳，确保现代主题毛玻璃表面样式一致生效 */
+export function ChartTooltipBox({
+  children,
+  className,
+}: {
+  children: ReactNode
+  className?: string
+}) {
+  return (
+    <div
+      data-dashboard-chart-tooltip="true"
+      className={cn(
+        'border-border/50 bg-background text-foreground rounded-lg border px-2.5 py-1.5 text-xs shadow-xl',
+        className
+      )}
+    >
+      {children}
+    </div>
+  )
+}
 
 export function EmptyState({ children }: { children?: ReactNode }) {
   const { t } = useTranslation()
@@ -55,6 +78,7 @@ export function OptionSwitch<T extends string>({
   options,
   onChange,
   multiple,
+  className,
 }: {
   label: string
   value: T
@@ -62,25 +86,35 @@ export function OptionSwitch<T extends string>({
   onChange: (value: T) => void
   /** 多选模式：按下状态取自该集合，value 被忽略 */
   multiple?: Set<T>
+  className?: string
 }) {
+  if (multiple) {
+    return (
+      <MultiSelectChips
+        mode="chips"
+        size="xs"
+        ariaLabel={label}
+        options={options}
+        selected={multiple}
+        onToggle={onChange}
+        data-stats-switch="true"
+        className={className}
+      />
+    )
+  }
+
   return (
-    <div role="group" aria-label={label} data-stats-switch="true">
-      {options.map((option) => (
-        <Button
-          key={option.value}
-          type="button"
-          size="sm"
-          variant="outline"
-          aria-pressed={multiple ? multiple.has(option.value) : option.value === value}
-          aria-label={option.ariaLabel}
-          title={option.ariaLabel}
-          disabled={option.disabled}
-          onClick={() => onChange(option.value)}
-        >
-          {option.label}
-        </Button>
-      ))}
-    </div>
+    <PillNav
+      variant="segmented"
+      size="xs"
+      scrollable
+      ariaLabel={label}
+      value={value}
+      options={options}
+      onChange={onChange}
+      data-stats-switch="true"
+      className={className}
+    />
   )
 }
 
@@ -90,7 +124,11 @@ export function SparkBars({ values, label }: { values: number[]; label: string }
   return (
     <div data-stats-spark="true" role="img" aria-label={label}>
       {values.map((value, index) => (
-        <span key={index} style={{ height: maximum > 0 ? `${(value / maximum) * 100}%` : '1px' }} />
+        <span
+          key={index}
+          className="rounded-t-[1px] opacity-80 transition-[height,opacity] duration-200 ease-out hover:opacity-100"
+          style={{ height: maximum > 0 ? `${(value / maximum) * 100}%` : '1px' }}
+        />
       ))}
     </div>
   )

@@ -8,7 +8,6 @@ import {
   CardHeader,
   CardTitle,
 } from '@/components/ui/card'
-import { Separator } from '@/components/ui/separator'
 import { resolveLocalizedText } from '@/lib/config-label'
 import { fieldHooks, type FieldHookRegistry } from '@/lib/field-hooks'
 import { cn } from '@/lib/utils'
@@ -206,40 +205,38 @@ function NestedDynamicConfigSection({
   const contentVisible = !collapsible || !collapsed
 
   return (
-    <Card
-      className="min-w-0 border-border/70 bg-muted/20 shadow-none"
+    <section
+      className="min-w-0 space-y-3 border-t border-border/60 pt-4"
       data-config-field-path={basePath}
     >
-      <CardHeader className={contentVisible ? 'border-b border-border/50 px-3 py-2.5' : 'px-3 py-2.5'}>
-        <div className="flex items-start justify-between gap-3">
-          <div className="space-y-1">
-            <div className="flex items-center gap-2">
-              <CardTitle className="text-sm text-primary">{sectionTitle}</CardTitle>
-            </div>
+      <div className="flex items-start justify-between gap-3">
+        <div className="space-y-1">
+          <div className="flex items-center gap-2">
+            <h4 className="text-sm font-semibold text-primary">{sectionTitle}</h4>
           </div>
-          {collapsible && (
-            <Button
-              type="button"
-              size="sm"
-              variant="outline"
-              className="h-7 w-7 px-0"
-              aria-label={collapsed ? '展开' : '收起'}
-              aria-controls={contentId}
-              aria-expanded={!collapsed}
-              title={collapsed ? '展开' : '收起'}
-              onClick={() => setCollapsed((current) => !current)}
-            >
-              {collapsed ? (
-                <ChevronDown className="h-4 w-4" aria-hidden="true" />
-              ) : (
-                <ChevronUp className="h-4 w-4" aria-hidden="true" />
-              )}
-            </Button>
-          )}
         </div>
-      </CardHeader>
+        {collapsible && (
+          <Button
+            type="button"
+            size="sm"
+            variant="outline"
+            className="h-7 w-7 px-0"
+            aria-label={collapsed ? '展开' : '收起'}
+            aria-controls={contentId}
+            aria-expanded={!collapsed}
+            title={collapsed ? '展开' : '收起'}
+            onClick={() => setCollapsed((current) => !current)}
+          >
+            {collapsed ? (
+              <ChevronDown className="h-4 w-4" aria-hidden="true" />
+            ) : (
+              <ChevronUp className="h-4 w-4" aria-hidden="true" />
+            )}
+          </Button>
+        )}
+      </div>
       {contentVisible && (
-        <CardContent id={contentId} className="px-3 pb-3 pt-3">
+        <div id={contentId} className="pl-3 sm:pl-4">
           <DynamicConfigForm
             schema={nestedSchema}
             values={values}
@@ -250,9 +247,9 @@ function NestedDynamicConfigSection({
             advancedVisible={advancedVisible}
             sectionColumns={1}
           />
-        </CardContent>
+        </div>
       )}
-    </Card>
+    </section>
   )
 }
 
@@ -512,14 +509,6 @@ export const DynamicConfigForm: React.FC<DynamicConfigFormProps> = ({
     </>
   )
 
-  const isFullWidthControlRow = (row: FieldSchema[]) => {
-    if (row.length !== 1) return false
-    const field = row[0]
-    return field['x-layout'] !== 'inline-right' &&
-      ['input', 'number', 'password', 'select', 'textarea', undefined].includes(field['x-widget']) &&
-      ['string', 'number', 'integer', 'select', 'textarea'].includes(field.type)
-  }
-
   /** 相邻且 x-column-group 相同的字段，按 x-column 分成并排的几列，每列带标题。 */
   const splitColumnBlocks = (fields: FieldSchema[]) => {
     const blocks: { key?: string; fields: FieldSchema[]; columns?: { title: string; fields: FieldSchema[] }[] }[] = []
@@ -542,10 +531,9 @@ export const DynamicConfigForm: React.FC<DynamicConfigFormProps> = ({
   }
 
   const renderFieldList = (fields: FieldSchema[]) => (
-    <>
-      {splitColumnBlocks(fields).map((block, blockIndex) => (
+    <div className="min-w-0 space-y-4">
+      {splitColumnBlocks(fields).map((block) => (
         <React.Fragment key={block.key ?? block.fields.map((field) => field.name).join('|')}>
-          {blockIndex > 0 && <Separator className="my-1.5 bg-border/50" />}
           {block.columns ? (
             <div
               data-config-columns={block.key}
@@ -558,7 +546,7 @@ export const DynamicConfigForm: React.FC<DynamicConfigFormProps> = ({
                   className={cn("min-w-0", columnIndex > 0 && "lg:border-l lg:border-border/50 lg:pl-6")}
                 >
                   {column.title && (
-                    <h3 className="mb-1 border-b border-border/50 pb-2 text-sm font-semibold tracking-wide">
+                    <h3 className="mb-3 border-b border-border/50 pb-2 text-sm font-semibold tracking-wide">
                       {column.title}
                     </h3>
                   )}
@@ -571,18 +559,13 @@ export const DynamicConfigForm: React.FC<DynamicConfigFormProps> = ({
           )}
         </React.Fragment>
       ))}
-    </>
+    </div>
   )
 
   const renderPlainFieldList = (fields: FieldSchema[]) => (
-    <>
-      {groupFieldsByRow(fields).map((row, index, rows) => (
-        <React.Fragment key={row.map((field) => field.name).join('|')}>
-          {index > 0 && basePath !== 'personality' && (
-            isFullWidthControlRow(rows[index - 1]) && isFullWidthControlRow(row)
-              ? <div className="h-3" aria-hidden="true" />
-              : <Separator className="my-1.5 bg-border/50" />
-          )}
+    <div className={cn('min-w-0', basePath === 'personality' ? 'space-y-2' : 'space-y-4')}>
+      {groupFieldsByRow(fields).map((row) => (
+        <div key={row.map((field) => field.name).join('|')} className="min-w-0">
           {renderRows([row])}
           {row.map((field) => {
             const fieldPath = buildFieldPath(basePath, field.name)
@@ -593,9 +576,9 @@ export const DynamicConfigForm: React.FC<DynamicConfigFormProps> = ({
               </div>
             ) : null
           })}
-        </React.Fragment>
+        </div>
       ))}
-    </>
+    </div>
   )
 
 

@@ -290,7 +290,7 @@ export function JargonList({
                       )}
                       <TableCell title={version.meaning || undefined}>
                         {version.meaning ? (
-                          <span className="line-clamp-2 border-l-2 border-orange-500/80 px-2 break-words whitespace-normal">
+                          <span className="line-clamp-2 break-words whitespace-normal">
                             {version.meaning}
                           </span>
                         ) : (
@@ -388,7 +388,7 @@ export function JargonList({
                   {visibleVersions.map((version) => (
                     <div
                       key={version.id}
-                      className="space-y-1 border-l-2 border-orange-500/80 pl-2"
+                      className="bg-muted/30 space-y-1 rounded-md px-2.5 py-2"
                     >
                       <p className="line-clamp-3 text-sm break-words">
                         {version.meaning || '暂无释义'}

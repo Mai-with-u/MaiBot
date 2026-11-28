@@ -2,7 +2,7 @@
 
 import * as React from 'react'
 import * as SelectPrimitive from '@radix-ui/react-select'
-import { Check, ChevronDown, ChevronUp } from 'lucide-react'
+import { Check, ChevronDown, ChevronsUpDown, ChevronUp } from 'lucide-react'
 
 import { ModernGlideHighlight, MotionFloating } from '@/components/motion'
 import { cn } from '@/lib/utils'
@@ -22,7 +22,8 @@ const SelectTrigger = React.forwardRef<
     ref={ref}
     data-dashboard-select-trigger="true"
     className={cn(
-      'border-input ring-offset-background data-[placeholder]:text-muted-foreground focus:ring-ring flex w-full cursor-pointer items-center justify-between rounded-md border bg-transparent px-3 py-2 text-sm whitespace-nowrap shadow-sm focus:ring-1 focus:outline-none disabled:cursor-not-allowed disabled:opacity-50 [&>span]:line-clamp-1',
+      'group border-input ring-offset-background data-[placeholder]:text-muted-foreground focus:ring-ring flex w-full cursor-pointer items-center justify-between gap-2 rounded-md border bg-transparent text-sm whitespace-nowrap shadow-sm transition-[color,background-color,border-color,transform] duration-150 active:scale-[0.985] focus:ring-1 focus:outline-none disabled:cursor-not-allowed disabled:opacity-50 [&>span]:line-clamp-1',
+      controlSize === 'xs' || controlSize === 'sm' ? 'px-2.5 py-1' : 'py-2 pr-2.5 pl-3',
       controlSizeClassNames[controlSize],
       className
     )}
@@ -30,7 +31,14 @@ const SelectTrigger = React.forwardRef<
   >
     {children}
     <SelectPrimitive.Icon asChild>
-      <ChevronDown data-select-chevron="true" className="h-4 w-4 opacity-50" />
+      <ChevronsUpDown
+        data-select-chevron="true"
+        strokeWidth={1.75}
+        className={cn(
+          'shrink-0 text-muted-foreground/70 transition-colors group-hover:text-foreground/80',
+          controlSize === 'xs' ? 'size-3' : 'size-3.5'
+        )}
+      />
     </SelectPrimitive.Icon>
   </SelectPrimitive.Trigger>
 ))
@@ -86,7 +94,7 @@ const SelectContent = React.forwardRef<
           variant="select"
           data-dashboard-select-content="true"
           className={cn(
-            'border-border relative z-[100] min-w-[8rem] origin-[var(--radix-select-content-transform-origin)] overflow-hidden rounded-md border bg-white text-gray-900 shadow-lg dark:bg-gray-900 dark:text-gray-100',
+            'border-border relative z-[100] min-w-[8rem] origin-[var(--radix-select-content-transform-origin)] overflow-hidden rounded-lg border bg-white text-gray-900 shadow-lg dark:bg-gray-900 dark:text-gray-100',
             position === 'popper' &&
               'data-[side=bottom]:translate-y-1 data-[side=left]:-translate-x-1 data-[side=right]:translate-x-1 data-[side=top]:-translate-y-1',
             className
@@ -144,14 +152,14 @@ const SelectItem = React.forwardRef<
     ref={ref}
     data-dashboard-select-item="true"
     className={cn(
-      'relative flex w-full cursor-pointer items-center rounded-sm bg-white py-2 pr-8 pl-2 text-sm outline-none select-none hover:bg-gray-100 focus:bg-gray-100 data-[disabled]:pointer-events-none data-[disabled]:opacity-50 dark:bg-gray-900 dark:hover:bg-gray-800 dark:focus:bg-gray-800',
+      'relative flex w-full cursor-pointer items-center rounded-sm bg-white py-2 pr-8 pl-2 text-sm outline-none select-none transition-colors hover:bg-gray-100 focus:bg-gray-100 data-[state=checked]:font-medium data-[disabled]:pointer-events-none data-[disabled]:opacity-50 dark:bg-gray-900 dark:hover:bg-gray-800 dark:focus:bg-gray-800',
       className
     )}
     {...props}
   >
     <span className="absolute right-2 flex h-3.5 w-3.5 items-center justify-center">
       <SelectPrimitive.ItemIndicator>
-        <Check className="h-4 w-4" />
+        <Check className="h-3.5 w-3.5 text-primary" strokeWidth={2.25} />
       </SelectPrimitive.ItemIndicator>
     </span>
     <SelectPrimitive.ItemText>{children}</SelectPrimitive.ItemText>

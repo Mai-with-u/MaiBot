@@ -64,16 +64,16 @@ export function createJsonFieldHook(options: JsonFieldHookOptions): FieldHookCom
     }
 
     const label = resolveLabel(schema, fieldPath)
-    const description = resolveDescription(schema)
+    const rawDescription = resolveDescription(schema)
+    const summaryText = (rawDescription && rawDescription !== label ? rawDescription : '') || options.helperText
 
     return (
       <Card className="space-y-3 p-4 sm:p-6">
         <div className="space-y-1">
           <h3 className={fieldTitleClassName(schema, 'text-base font-semibold')}>{label}</h3>
-          {description && (
-            <p className="text-sm text-muted-foreground whitespace-pre-line">{description}</p>
+          {summaryText && (
+            <p className="text-xs text-muted-foreground whitespace-pre-line">{summaryText}</p>
           )}
-          <p className="text-xs text-muted-foreground">{options.helperText}</p>
         </div>
 
         <Textarea

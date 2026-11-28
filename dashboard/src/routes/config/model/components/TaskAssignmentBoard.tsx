@@ -3,7 +3,7 @@
  * 基础工作用卡片放在最前面，进阶工作默认收起；点开任一项在右侧抽屉里编辑模型顺序、使用方式和参数。
  */
 import { type ReactNode, useState } from 'react'
-import { ChevronDown, Pencil, Plus, X } from 'lucide-react'
+import { ChevronDown, ChevronsUpDown, Pencil, Plus, X } from 'lucide-react'
 
 import { Button } from '@/components/ui/button'
 import { Command, CommandEmpty, CommandGroup, CommandInput, CommandItem, CommandList } from '@/components/ui/command'
@@ -20,6 +20,7 @@ import {
 import { FormRow, FormSection, FormUnit } from '@/components/ui/form-section'
 import { Input } from '@/components/ui/input'
 import { OrderControls } from '@/components/ui/order-controls'
+import { PillNav } from '@/components/ui/pill-nav'
 import { Popover, PopoverContent, PopoverTrigger } from '@/components/ui/popover'
 import { StatusLight } from '@/components/ui/status-light'
 import { DataPanel } from '@/components/ui/surface'
@@ -562,12 +563,18 @@ function TaskEditor({
                       role="combobox"
                       aria-label="添加模型"
                       aria-expanded={addMenuOpen}
-                      className="min-w-0 flex-1 justify-start gap-1.5 text-muted-foreground"
+                      className="group min-w-0 flex-1 justify-between gap-2 text-muted-foreground"
                     >
-                      <Plus className="h-3.5 w-3.5 shrink-0" aria-hidden="true" />
-                      {/* 仅截断文字，保留加号和下拉图标的位置 */}
-                      <span className="truncate">{single && list.length > 0 ? '换成…' : isWeb ? '选择联网服务' : '添加模型'}</span>
-                      <ChevronDown className="ml-auto h-4 w-4 shrink-0 opacity-50" aria-hidden="true" />
+                      <span className="flex min-w-0 items-center gap-1.5">
+                        <Plus className="h-3.5 w-3.5 shrink-0" aria-hidden="true" />
+                        {/* 仅截断文字，保留加号和下拉图标的位置 */}
+                        <span className="truncate">{single && list.length > 0 ? '换成…' : isWeb ? '选择联网服务' : '添加模型'}</span>
+                      </span>
+                      <ChevronsUpDown
+                        strokeWidth={1.75}
+                        className="size-3.5 shrink-0 text-muted-foreground/70 transition-colors group-hover:text-foreground/80"
+                        aria-hidden="true"
+                      />
                     </Button>
                   </PopoverTrigger>
                   <PopoverContent align="start" className="w-[var(--radix-popover-trigger-width)] p-0">
@@ -624,20 +631,18 @@ function TaskEditor({
 
           {!isWeb && !meta.hideStrategy && list.length > 1 && (
             <FormSection title="使用方式">
-              <DataPanel padding="none" role="group" aria-label="使用方式" data-task-strategy="true">
-                {STRATEGIES.map((item) => (
-                  <Button
-                    key={item.value}
-                    type="button"
-                    size="sm"
-                    variant={strategy === item.value ? 'default' : 'outline'}
-                    aria-pressed={strategy === item.value}
-                    onClick={() => onChange('selection_strategy', item.value)}
-                  >
-                    {item.label}
-                  </Button>
-                ))}
-              </DataPanel>
+              <PillNav
+                variant="segmented"
+                size="sm"
+                ariaLabel="使用方式"
+                value={strategy}
+                onChange={(value) => onChange('selection_strategy', value)}
+                options={STRATEGIES.map((item) => ({
+                  value: item.value,
+                  label: item.label,
+                }))}
+                className="mt-1.5"
+              />
               <p className="pt-2 text-xs text-muted-foreground">
                 {STRATEGIES.find((item) => item.value === strategy)?.hint}
               </p>

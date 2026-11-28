@@ -6,6 +6,7 @@ import { useTranslation } from 'react-i18next'
 import { Alert, AlertDescription, AlertTitle } from '@/components/ui/alert'
 import { Board, BoardRule } from '@/components/ui/board'
 import { Button } from '@/components/ui/button'
+import { Checkbox } from '@/components/ui/checkbox'
 import { Skeleton } from '@/components/ui/skeleton'
 import '@/styles/statistics.css'
 
@@ -119,32 +120,42 @@ export function StatisticsPage({ embedded = false, toolbarContainerId, toolbarVi
         ) : data && period ? (
           <Board sections>
             <BoardRule code="PERIOD">
-              <span data-board-label="true">{t('statisticsPage.sections.period')}</span>
-              <span data-board-label="true" className="max-md:hidden">
+              <span data-board-label="true" className="shrink-0 whitespace-nowrap">
+                {t('statisticsPage.sections.period')}
+              </span>
+              <span data-board-label="true" className="shrink-0 whitespace-nowrap max-xl:hidden">
                 {t('statisticsPage.periodRange', {
                   start: formatDateTime(period.start_time, locale),
                   end: formatDateTime(period.end_time, locale),
                 })}
               </span>
-              <OptionSwitch
-                label={t('statisticsPage.sections.period')}
-                value={period.key}
-                onChange={setPeriodKey}
-                options={periods.map((item) => ({
-                  value: item.key,
-                  label: PERIOD_CODES[item.key] ?? item.key,
-                  ariaLabel: t(`statisticsPage.periods.${item.key}`),
-                }))}
-              />
-              <label className="flex items-center gap-1.5 text-xs">
-                <input
-                  type="checkbox"
-                  checked={compare}
-                  disabled={!period.previous_summary}
-                  onChange={(event) => setCompare(event.target.checked)}
+              <div className="flex min-w-0 max-w-full items-center gap-2 max-sm:flex-wrap">
+                <OptionSwitch
+                  label={t('statisticsPage.sections.period')}
+                  value={period.key}
+                  onChange={setPeriodKey}
+                  className="min-w-0 max-w-full"
+                  options={periods.map((item) => ({
+                    value: item.key,
+                    label: PERIOD_CODES[item.key] ?? item.key,
+                    ariaLabel: t(`statisticsPage.periods.${item.key}`),
+                  }))}
                 />
-                {t('statisticsPage.actions.compare')}
-              </label>
+                <label
+                  htmlFor="stats-compare-previous"
+                  data-stats-toggle-pill="true"
+                  className="inline-flex h-8 shrink-0 cursor-pointer items-center gap-2 whitespace-nowrap rounded-lg border border-border/70 bg-muted/45 px-2.5 text-xs font-medium text-foreground transition-colors hover:bg-muted/75 has-[:disabled]:pointer-events-none has-[:disabled]:opacity-50"
+                >
+                  <Checkbox
+                    id="stats-compare-previous"
+                    size="sm"
+                    checked={compare}
+                    disabled={!period.previous_summary}
+                    onCheckedChange={(checked) => setCompare(checked === true)}
+                  />
+                  <span>{t('statisticsPage.actions.compare')}</span>
+                </label>
+              </div>
             </BoardRule>
             <OverviewSection
               period={period}

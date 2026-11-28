@@ -853,7 +853,7 @@ describe('PromptManagementPage', () => {
     expect(screen.getByText('请选择提示词')).toBeVisible()
     await user.click(englishFile)
     await screen.findByDisplayValue('english.prompt current')
-    expect(screen.getByText(/en · 2\.0 KB/)).toBeInTheDocument()
+    expect(screen.getByText('2.0 KB')).toBeInTheDocument()
   })
 
   it('刷新目录时会按当前语言回退，并在当前文件消失后清空选择', async () => {
@@ -887,7 +887,7 @@ describe('PromptManagementPage', () => {
     expect(screen.getByText('请选择提示词')).toBeVisible()
     await user.click(englishFile)
     await screen.findByDisplayValue('english.prompt current')
-    expect(screen.getByText(/en · 2\.0 MB/)).toBeInTheDocument()
+    expect(screen.getByText('2.0 MB')).toBeInTheDocument()
   })
 
   it('会读取本地保存的版本：默认模板、指定版本、无效记录分别走不同加载路径', async () => {

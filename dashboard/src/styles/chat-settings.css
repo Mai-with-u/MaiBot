@@ -319,3 +319,21 @@
 :root[data-dashboard-style='millennium'] :is([data-capability-cell], [data-capability-sub]) {
   border-color: var(--mil-lo);
 }
+
+/* ---------- 现代桌面：分栏与分组刻线收细至 1px ---------- */
+@media (min-width: 1024px) {
+  :root[data-dashboard-style='modern'] [data-chat-settings-column] + [data-chat-settings-column] {
+    border-left-width: 1px;
+  }
+
+  :root[data-dashboard-style='modern'] [data-chat-settings-heading],
+  :root[data-dashboard-style='modern'] [data-capability-switches] {
+    border-bottom-width: 1px;
+  }
+}
+
+@media (min-width: 1024px) and (max-width: 1100px) {
+  :root[data-dashboard-style='modern'] [data-visual-settings] [data-chat-settings-column] + [data-chat-settings-column] {
+    border-top-width: 1px;
+  }
+}

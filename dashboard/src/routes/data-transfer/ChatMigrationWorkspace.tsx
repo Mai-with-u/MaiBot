@@ -9,6 +9,7 @@ import { Button } from '@/components/ui/button'
 import { Checkbox } from '@/components/ui/checkbox'
 import { Input } from '@/components/ui/input'
 import { Label } from '@/components/ui/label'
+import { PillNav } from '@/components/ui/pill-nav'
 import {
   Select,
   SelectContent,
@@ -230,7 +231,12 @@ export function ChatMigrationWorkspace({ headerActions }: { headerActions?: Reac
             </div>
             <details className="rounded-lg border p-3">
               <summary className="cursor-pointer text-sm font-medium">
-                数据范围 · {job.counts.length} 类 · 查看数量明细
+                <span className="inline-flex items-center gap-2">
+                  <span>数据范围</span>
+                  <span className="text-muted-foreground font-normal tabular-nums">
+                    {job.counts.length} 类
+                  </span>
+                </span>
               </summary>
               <div className="mt-3 overflow-x-auto">
                 <table className="w-full text-left text-sm">
@@ -274,7 +280,12 @@ export function ChatMigrationWorkspace({ headerActions }: { headerActions?: Reac
             {!!job.automatic_config?.length && (
               <details className="rounded-lg border p-3">
                 <summary className="cursor-pointer text-sm">
-                  自动覆盖默认配置 · {job.automatic_config.length} 项
+                  <span className="inline-flex items-center gap-2">
+                    <span>自动覆盖默认配置</span>
+                    <span className="text-muted-foreground tabular-nums">
+                      {job.automatic_config.length} 项
+                    </span>
+                  </span>
                 </summary>
                 <div className="mt-3 space-y-4">
                   {job.automatic_config.map((item) => (
@@ -301,8 +312,11 @@ export function ChatMigrationWorkspace({ headerActions }: { headerActions?: Reac
           </DataPanel>
           {job.status === 'preview' && (
             <DataPanel className="space-y-4 p-4">
-              <h2 className="font-semibold">
-                逐条处理冲突 · 剩余 {unresolved} / {job.conflicts.length}
+              <h2 className="flex flex-wrap items-baseline gap-x-2 font-semibold">
+                <span>逐条处理冲突</span>
+                <span className="text-muted-foreground text-sm font-normal tabular-nums">
+                  剩余 {unresolved} / {job.conflicts.length}
+                </span>
               </h2>
               <Input
                 aria-label="搜索冲突"
@@ -314,28 +328,24 @@ export function ChatMigrationWorkspace({ headerActions }: { headerActions?: Reac
                 }}
               />
               <div className="flex flex-wrap items-center justify-between gap-3">
-                <div role="group" aria-label="冲突类型" className="flex flex-wrap gap-2">
-                  {[
-                    ['all', '全部'],
-                    ['config', '配置'],
-                    ['expressions', '表达'],
-                    ['jargons', '黑话'],
-                    ['learned_commands', '命令'],
-                  ].map(([kind, label]) => (
-                    <Button
-                      key={kind}
-                      size="sm"
-                      variant={kindFilter === kind ? 'default' : 'outline'}
-                      aria-pressed={kindFilter === kind}
-                      onClick={() => {
-                        setKindFilter(kind)
-                        setConflictPage(1)
-                      }}
-                    >
-                      {label}
-                    </Button>
-                  ))}
-                </div>
+                <PillNav
+                  variant="segmented"
+                  size="xs"
+                  scrollable
+                  ariaLabel="冲突类型"
+                  value={kindFilter}
+                  onChange={(kind) => {
+                    setKindFilter(kind)
+                    setConflictPage(1)
+                  }}
+                  options={[
+                    { value: 'all', label: '全部' },
+                    { value: 'config', label: '配置' },
+                    { value: 'expressions', label: '表达' },
+                    { value: 'jargons', label: '黑话' },
+                    { value: 'learned_commands', label: '命令' },
+                  ]}
+                />
                 <Label className="flex items-center gap-2">
                   <Checkbox
                     checked={onlyPending}
@@ -395,8 +405,8 @@ export function ChatMigrationWorkspace({ headerActions }: { headerActions?: Reac
                       <div key={side} className="bg-muted/20 min-w-0 rounded-lg border p-3">
                         <h4 className="text-muted-foreground mb-2 text-sm">
                           {side === 'source'
-                            ? `来源 · ${name(job.source)}`
-                            : `目标 · ${name(job.target)}`}
+                            ? `来源：${name(job.source)}`
+                            : `目标：${name(job.target)}`}
                         </h4>
                         <MigrationValue
                           value={item[side]}
@@ -456,8 +466,9 @@ export function ChatMigrationWorkspace({ headerActions }: { headerActions?: Reac
               <Button variant="link" disabled={busy} onClick={() => open(item)}>
                 {name(item.source)} → {name(item.target)}
               </Button>
-              <span className="text-muted-foreground text-sm">
-                {stages[item.status] || item.status} · {new Date(item.created_at).toLocaleString()}
+              <span className="text-muted-foreground inline-flex items-center gap-2 text-sm">
+                <span>{stages[item.status] || item.status}</span>
+                <span className="tabular-nums">{new Date(item.created_at).toLocaleString()}</span>
               </span>
               {item.status === 'recovery_required' && (
                 <Button

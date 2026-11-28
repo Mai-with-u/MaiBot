@@ -1,9 +1,11 @@
+import { motion } from 'motion/react'
 import { useState } from 'react'
 import { useTranslation } from 'react-i18next'
 import { Cell, Pie, PieChart, Tooltip } from 'recharts'
 
-import { BoardModule, BoardRule, BoardScreen } from '@/components/ui/board'
-import { ChartContainer } from '@/components/ui/chart'
+import { BoardGrid, BoardModule, BoardRule, BoardScreen } from '@/components/ui/board'
+import { ChartContainer, type ChartConfig } from '@/components/ui/chart'
+import { useMotion } from '@/lib/motion'
 
 import {
   formatCurrency,
@@ -14,15 +16,16 @@ import {
 } from '../statistics-model'
 import type { DetailedDistributionItem, DetailedStatisticsPeriod } from '../types'
 import type { DetailDimension } from './DetailSection'
-import { EmptyState, OptionSwitch, Swatch } from './shared'
+import { ChartTooltipBox, EmptyState, OptionSwitch, Swatch } from './shared'
 
 type DistributionMetric = 'costs' | 'tokens'
+type DistributionKey = 'module' | 'taskGroup' | 'requestType' | 'chat' | 'model' | 'owner'
 
-/** 环形图单独展示的扇区数，其余合并为「其他」 */
-const PIE_SLICE_LIMIT = 7
+/** 环形图单独展示的扇区数，其余合并为「其他」（最多 6 块扇区） */
+const PIE_SLICE_LIMIT = 5
 
 interface PieDefinition {
-  key: string
+  key: DistributionKey
   code: string
   /** 点击图例时联动的明细表维度；调用来源没有对应的明细表 */
   dimension: DetailDimension | null
@@ -36,17 +39,17 @@ function buildPies(period: DetailedStatisticsPeriod, metric: DistributionMetric)
     value: metric === 'costs' ? row.total_cost : row.total_tokens,
   }))
   return [
-    { key: 'owner', code: 'SOURCE', dimension: null, entries: distributions[`owner_${metric}`] },
-    { key: 'model', code: 'MODEL', dimension: 'models', entries: distributions[`model_${metric}`] },
     { key: 'module', code: 'MODULE', dimension: 'modules', entries: distributions[`module_${metric}`] },
+    { key: 'taskGroup', code: 'TASK', dimension: 'taskGroups', entries: taskEntries },
     {
       key: 'requestType',
       code: 'REQUEST',
       dimension: 'requestTypes',
       entries: distributions[`request_type_${metric}`],
     },
-    { key: 'taskGroup', code: 'TASK', dimension: 'taskGroups', entries: taskEntries },
     { key: 'chat', code: 'CHAT', dimension: 'chats', entries: distributions[`chat_${metric}`] },
+    { key: 'model', code: 'MODEL', dimension: 'models', entries: distributions[`model_${metric}`] },
+    { key: 'owner', code: 'SOURCE', dimension: null, entries: distributions[`owner_${metric}`] },
   ]
 }
 
@@ -61,14 +64,20 @@ export function DistributionSection({
 }) {
   const { t } = useTranslation()
   const [metric, setMetric] = useState<DistributionMetric>('costs')
+  const [selectedKey, setSelectedKey] = useState<DistributionKey>('module')
   const pies = buildPies(period, metric)
+  const activePie = pies.find((item) => item.key === selectedKey) ?? pies[0]
   const formatValue = (value: number) =>
     metric === 'costs' ? formatCurrency(value, locale) : formatNumber(value, locale)
+  const dimensionLabel = (key: DistributionKey) =>
+    t(`statisticsPage.distributions.titles.${key}`, { metric: '' }).replace(/\s{2,}/g, ' ').trim()
 
   return (
     <>
       <BoardRule code="BREAKDOWN">
-        <span data-board-label="true">{t('statisticsPage.sections.distributions')}</span>
+        <span data-board-label="true" className="shrink-0 whitespace-nowrap">
+          {t('statisticsPage.sections.distributions')}
+        </span>
         <span data-board-label="true" className="max-md:hidden">
           {t('statisticsPage.distributions.hint')}
         </span>
@@ -82,29 +91,34 @@ export function DistributionSection({
           }))}
         />
       </BoardRule>
-      <div data-stats-pies="true">
-        {pies.map((pie, index) => (
-          <PieModule
-            key={pie.key}
-            pie={pie}
-            tone={index}
-            title={t(`statisticsPage.distributions.titles.${pie.key}`, {
-              metric: t(`statisticsPage.distributions.${metric}`),
-            })}
-            totalLabel={t(`statisticsPage.distributions.totals.${metric}`)}
-            ranked={rankWithOther(pie.entries, PIE_SLICE_LIMIT)}
-            formatValue={formatValue}
-            onSelect={onSelect}
-          />
-        ))}
-      </div>
+      <BoardGrid>
+        <PieModule
+          pie={activePie}
+          pies={pies}
+          selectedKey={activePie.key}
+          transitionKey={`${metric}:${activePie.key}`}
+          onSelectDimension={setSelectedKey}
+          dimensionLabel={dimensionLabel}
+          title={t(`statisticsPage.distributions.titles.${activePie.key}`, {
+            metric: t(`statisticsPage.distributions.${metric}`),
+          })}
+          totalLabel={t(`statisticsPage.distributions.totals.${metric}`)}
+          ranked={rankWithOther(activePie.entries, PIE_SLICE_LIMIT)}
+          formatValue={formatValue}
+          onSelect={onSelect}
+        />
+      </BoardGrid>
     </>
   )
 }
 
 function PieModule({
   pie,
-  tone,
+  pies,
+  selectedKey,
+  transitionKey,
+  onSelectDimension,
+  dimensionLabel,
   title,
   totalLabel,
   ranked,
@@ -112,7 +126,11 @@ function PieModule({
   onSelect,
 }: {
   pie: PieDefinition
-  tone: number
+  pies: PieDefinition[]
+  selectedKey: DistributionKey
+  transitionKey: string
+  onSelectDimension: (key: DistributionKey) => void
+  dimensionLabel: (key: DistributionKey) => string
   title: string
   totalLabel: string
   ranked: RankedItems
@@ -120,31 +138,57 @@ function PieModule({
   onSelect: (dimension: DetailDimension, name: string) => void
 }) {
   const { t } = useTranslation()
-  const [activeIndex, setActiveIndex] = useState<number | null>(null)
+  const { enabled, transitions } = useMotion()
+  const [hovered, setHovered] = useState<{ key: string; index: number } | null>(null)
+  const activeIndex = hovered?.key === transitionKey ? hovered.index : null
+  const setActiveIndex = (index: number | null) =>
+    setHovered(index === null ? null : { key: transitionKey, index })
   const label = (index: number) =>
     ranked.items[index].other ? t('statisticsPage.other', { count: ranked.otherCount }) : ranked.items[index].name
   const single = ranked.items.length === 1 && !ranked.items[0].other
+  const chartConfig = Object.fromEntries(
+    ranked.items.map((item, index) => [
+      item.other ? 'other' : `slice-${index}`,
+      { label: label(index), color: item.color },
+    ])
+  ) satisfies ChartConfig
 
   return (
     <BoardModule
       code={pie.code}
       title={title}
-      span={1}
-      spanNarrow={1}
-      tone={tone}
+      span={12}
+      spanNarrow={12}
+      tone={0}
       actions={
         pie.entries.length > 1 ? (
           <span data-board-label="true">{t('statisticsPage.distributions.itemCount', { count: pie.entries.length })}</span>
         ) : undefined
       }
     >
-      <BoardScreen>
+      <BoardScreen className="flex flex-col gap-4">
+        <OptionSwitch
+          label={t('statisticsPage.sections.distributions')}
+          value={selectedKey}
+          onChange={onSelectDimension}
+          options={pies.map((item) => ({
+            value: item.key,
+            label: dimensionLabel(item.key),
+          }))}
+        />
         {ranked.items.length === 0 ? (
           <EmptyState />
         ) : (
-          <div data-stats-pie="true">
+          <motion.div
+            key={transitionKey}
+            initial={enabled ? { opacity: 0, y: 4 } : false}
+            animate={{ opacity: 1, y: 0 }}
+            transition={transitions.fast}
+            data-stats-pie="true"
+            className="w-full max-w-4xl gap-6"
+          >
             <div data-stats-pie-chart="true">
-              <ChartContainer config={{}} className="aspect-square h-full w-full">
+              <ChartContainer config={chartConfig} className="aspect-square h-full w-full">
                 <PieChart>
                   <Tooltip
                     isAnimationActive={false}
@@ -153,12 +197,12 @@ function PieModule({
                       const item = payload[0]
                       const value = Number(item.value)
                       return (
-                        <div className="border-border/50 bg-background text-foreground rounded-md border px-2.5 py-1.5 text-xs shadow-xl">
+                        <ChartTooltipBox>
                           <div className="font-medium">{item.name}</div>
-                          <div className="font-mono tabular-nums">
+                          <div className="font-medium tabular-nums">
                             {formatValue(value)} · {formatPercent(value / ranked.total)}
                           </div>
-                        </div>
+                        </ChartTooltipBox>
                       )
                     }}
                   />
@@ -184,7 +228,7 @@ function PieModule({
               </ChartContainer>
               <div data-stats-pie-center="true">
                 <span>{totalLabel}</span>
-                <strong>{formatValue(ranked.total)}</strong>
+                <strong className="whitespace-nowrap tabular-nums">{formatValue(ranked.total)}</strong>
               </div>
             </div>
             <div data-stats-pie-legend="true" data-chart-legend="true">
@@ -195,8 +239,10 @@ function PieModule({
                     <span data-stats-row-name="true" title={label(index)}>
                       {label(index)}
                     </span>
-                    <span data-board-number="true">{formatValue(item.value)}</span>
-                    <span data-board-label="true" className="w-12 text-right">
+                    <span data-board-number="true" className="whitespace-nowrap tabular-nums">
+                      {formatValue(item.value)}
+                    </span>
+                    <span data-board-label="true" className="w-12 shrink-0 whitespace-nowrap text-right tabular-nums">
                       {formatPercent(item.value / ranked.total)}
                     </span>
                   </>
@@ -241,7 +287,7 @@ function PieModule({
                 </p>
               )}
             </div>
-          </div>
+          </motion.div>
         )}
       </BoardScreen>
     </BoardModule>

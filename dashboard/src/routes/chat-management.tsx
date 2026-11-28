@@ -15,6 +15,7 @@ import {
 } from '@/components/ui/dialog'
 import { Input } from '@/components/ui/input'
 import { Label } from '@/components/ui/label'
+import { MultiSelectChips } from '@/components/ui/multi-select-chips'
 import { Switch } from '@/components/ui/switch'
 import {
   RelationshipGraph,
@@ -398,15 +399,21 @@ function GroupEditor({
                 layout="overview"
                 toolbarActions={
                   <>
-                {(Object.keys(labels) as SharingCapability[]).map((key) => (
-                  <Label key={key} className="flex items-center gap-1">
-                    <Checkbox
-                      checked={layers[key]}
-                      onCheckedChange={(checked) => setLayers({ ...layers, [key]: checked === true })}
-                    />
-                    {labels[key]}层
-                  </Label>
-                ))}
+                <MultiSelectChips<SharingCapability>
+                  mode="chips"
+                  size="xs"
+                  ariaLabel="关系图层"
+                  selected={
+                    new Set(
+                      (Object.keys(labels) as SharingCapability[]).filter((key) => layers[key])
+                    )
+                  }
+                  onToggle={(key) => setLayers((prev) => ({ ...prev, [key]: !prev[key] }))}
+                  options={(Object.keys(labels) as SharingCapability[]).map((key) => ({
+                    value: key,
+                    label: `${labels[key]}层`,
+                  }))}
+                />
                 <Button onClick={() => setEditing('new')}>
                   <Plus className="h-4 w-4" />
                   新建相通组

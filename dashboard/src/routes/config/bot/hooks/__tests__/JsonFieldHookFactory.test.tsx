@@ -108,7 +108,7 @@ describe('createJsonFieldHook', () => {
         value={[]}
       />,
     )
-    expect(screen.getAllByText('类文档标题').length).toBeGreaterThan(1)
+    expect(screen.getByText('类文档标题')).toBeInTheDocument()
 
     rerender(
       <JsonHook

@@ -1,5 +1,5 @@
 import { type KeyboardEvent, type ReactNode, useId, useMemo, useState } from 'react'
-import { Check, ChevronDown, Loader2, RefreshCw } from 'lucide-react'
+import { Check, ChevronsUpDown, Loader2, RefreshCw } from 'lucide-react'
 
 import { Input } from '@/components/ui/input'
 import { Popover, PopoverAnchor, PopoverContent } from '@/components/ui/popover'
@@ -118,10 +118,17 @@ export function ComboboxInput({
               tabIndex={-1}
               aria-label={open ? '收起列表' : '展开列表'}
               data-combobox-toggle="true"
-              className="absolute inset-y-0 right-0 flex w-9 items-center justify-center text-muted-foreground hover:text-foreground"
+              className="group absolute inset-y-0 right-0 flex w-9 items-center justify-center text-muted-foreground hover:text-foreground"
               onClick={() => (open ? setOpen(false) : openList(false))}
             >
-              {loading ? <Loader2 className="h-4 w-4 animate-spin" /> : <ChevronDown className="h-4 w-4" />}
+              {loading ? (
+                <Loader2 className="h-4 w-4 animate-spin" />
+              ) : (
+                <ChevronsUpDown
+                  strokeWidth={1.75}
+                  className="size-3.5 shrink-0 text-muted-foreground/70 transition-colors group-hover:text-foreground/80"
+                />
+              )}
             </button>
           )}
         </div>

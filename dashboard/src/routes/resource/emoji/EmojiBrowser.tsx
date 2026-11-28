@@ -12,6 +12,7 @@ import {
   StatusIndicator,
 } from '@/components/ui/data-browser'
 import { DataPagination } from '@/components/ui/data-pagination'
+import { PillNav } from '@/components/ui/pill-nav'
 import { DataPanel, PageFrame } from '@/components/ui/surface'
 import { SelectionListItem } from '@/components/ui/selection-list-item'
 import {
@@ -181,20 +182,18 @@ export function EmojiBrowser({
             </section>
             <section className="space-y-2" aria-label="格式">
               <h3 className="text-muted-foreground text-xs">格式</h3>
-              <div className="flex flex-wrap gap-1">
-                {['all', ...Object.keys(stats?.formats ?? {})].map((format) => (
-                  <Button
-                    key={format}
-                    variant="outline"
-                    size="xs"
-                    className="px-0.5"
-                    aria-pressed={filters.format === format}
-                    onClick={() => onFilterChange('format', format)}
-                  >
-                    {format === 'all' ? '全部' : format.toUpperCase()}
-                  </Button>
-                ))}
-              </div>
+              <PillNav
+                variant="pill"
+                size="xs"
+                scrollable
+                ariaLabel="格式"
+                value={filters.format}
+                onChange={(format) => onFilterChange('format', format)}
+                options={['all', ...Object.keys(stats?.formats ?? {})].map((format) => ({
+                  value: format,
+                  label: format === 'all' ? '全部' : format.toUpperCase(),
+                }))}
+              />
             </section>
             <section className="space-y-2">
               <h3 className="text-muted-foreground text-xs">排序</h3>

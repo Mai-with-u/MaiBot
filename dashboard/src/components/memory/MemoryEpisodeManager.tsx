@@ -546,7 +546,7 @@ export function MemoryEpisodeManager({
                               {item.person_name && item.person_id ? <span className="font-mono"> · {String(item.person_id)}</span> : null}
                             </div>
                           ) : null}
-                          <div className="font-mono text-[11px] text-muted-foreground break-all">{episodeId || '-'}</div>
+                          <div className="font-mono text-xs text-muted-foreground break-all">{episodeId || '-'}</div>
                         </TableCell>
                         <TableCell className="max-w-[180px] truncate">{String(item.source ?? '-')}</TableCell>
                         <TableCell>{formatMemoryTime(item.updated_at ?? item.created_at)}</TableCell>
@@ -601,11 +601,11 @@ export function MemoryEpisodeManager({
                   <div className="space-y-2">
                     <div className="text-sm font-medium">关联段落</div>
                     {selectedEpisodeParagraphs.length > 0 ? (
-                      <ScrollArea className="h-[220px] rounded-lg border bg-background/60">
-                        <div className="space-y-2 p-3">
+                      <ScrollArea className="h-[220px] rounded-md border">
+                        <div className="divide-y divide-border/60">
                           {selectedEpisodeParagraphs.map((paragraph, index) => (
-                            <div key={String(paragraph.hash ?? index)} className="rounded-lg border bg-muted/20 p-3">
-                              <div className="font-mono text-[11px] text-muted-foreground break-all">{String(paragraph.hash ?? '-')}</div>
+                            <div key={String(paragraph.hash ?? index)} className="p-3">
+                              <div className="font-mono text-xs text-muted-foreground break-all">{String(paragraph.hash ?? '-')}</div>
                               <div className="mt-2 text-sm break-words">{String(paragraph.preview ?? paragraph.content ?? '')}</div>
                             </div>
                           ))}

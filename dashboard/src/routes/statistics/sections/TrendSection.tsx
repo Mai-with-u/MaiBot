@@ -1,9 +1,12 @@
+import { motion } from 'motion/react'
 import { useMemo, useState } from 'react'
 import { useTranslation } from 'react-i18next'
 import { Bar, BarChart, CartesianGrid, Line, LineChart, Tooltip, XAxis, YAxis } from 'recharts'
 
 import { BoardGrid, BoardModule, BoardRule, BoardScreen } from '@/components/ui/board'
 import { ChartContainer, type ChartConfig } from '@/components/ui/chart'
+import { useMotion } from '@/lib/motion'
+import { cn } from '@/lib/utils'
 
 import {
   buildInsights,
@@ -15,7 +18,7 @@ import {
   seriesColor,
 } from '../statistics-model'
 import type { DetailedPeriodTrend, DetailedStatisticsPeriod } from '../types'
-import { EmptyState, OptionSwitch, Swatch } from './shared'
+import { ChartTooltipBox, EmptyState, OptionSwitch, Swatch } from './shared'
 
 export type TrendMetric = 'cost' | 'tokens' | 'requests' | 'messages'
 export type TrendGroup = 'total' | 'model' | 'module' | 'chat'
@@ -36,8 +39,8 @@ const METRIC_CODES: Record<TrendMetric, string> = {
   messages: 'MESSAGES',
 }
 
-/** 趋势图单独展示的系列数，其余合并为「其他」 */
-const TREND_SERIES_LIMIT = 6
+/** 趋势图单独展示的系列数，其余合并为「其他」（最多 5 条系列） */
+const TREND_SERIES_LIMIT = 4
 
 interface TrendSeries {
   key: string
@@ -116,10 +119,14 @@ export function TrendSection({ period, locale }: TrendSectionProps) {
     setHidden(new Set())
   }
 
+  const activeMode = activeGroup === 'total' && mode === 'percent' ? 'stack' : mode
+
   return (
     <>
       <BoardRule code="TREND">
-        <span data-board-label="true">{t('statisticsPage.sections.trend')}</span>
+        <span data-board-label="true" className="shrink-0 whitespace-nowrap">
+          {t('statisticsPage.sections.trend')}
+        </span>
         <OptionSwitch
           label={t('statisticsPage.trend.metric')}
           value={metric}
@@ -129,33 +136,16 @@ export function TrendSection({ period, locale }: TrendSectionProps) {
             label: t(`statisticsPage.trend.metrics.${value}`),
           }))}
         />
-        <OptionSwitch
-          label={t('statisticsPage.trend.group')}
-          value={activeGroup}
-          onChange={changeGroup}
-          options={(['total', 'model', 'module', 'chat'] as const).map((value) => ({
-            value,
-            label: t(`statisticsPage.trend.groups.${value}`),
-            disabled: !availableGroups.includes(value),
-          }))}
-        />
-        <OptionSwitch
-          label={t('statisticsPage.trend.mode')}
-          value={mode}
-          onChange={setMode}
-          options={(['stack', 'line', 'percent'] as const).map((value) => ({
-            value,
-            label: t(`statisticsPage.trend.modes.${value}`),
-            disabled: value === 'percent' && activeGroup === 'total',
-          }))}
-        />
       </BoardRule>
       <BoardGrid>
         <TrendChartModule
           trend={period.trend}
           metric={metric}
           group={activeGroup}
-          mode={activeGroup === 'total' && mode === 'percent' ? 'stack' : mode}
+          availableGroups={availableGroups}
+          mode={activeMode}
+          onGroupChange={changeGroup}
+          onModeChange={setMode}
           hidden={hidden}
           onToggle={(key) =>
             setHidden((current) => {
@@ -177,7 +167,10 @@ function TrendChartModule({
   trend,
   metric,
   group,
+  availableGroups,
   mode,
+  onGroupChange,
+  onModeChange,
   hidden,
   onToggle,
   locale,
@@ -185,12 +178,16 @@ function TrendChartModule({
   trend: DetailedPeriodTrend
   metric: TrendMetric
   group: TrendGroup
+  availableGroups: TrendGroup[]
   mode: TrendMode
+  onGroupChange: (group: TrendGroup) => void
+  onModeChange: (mode: TrendMode) => void
   hidden: Set<string>
   onToggle: (key: string) => void
   locale: string
 }) {
   const { t } = useTranslation()
+  const { enabled, transitions } = useMotion()
   const series = useMemo(
     () =>
       buildTrendSeries(trend, metric, group, t(`statisticsPage.trend.totals.${metric}`), (count) =>
@@ -211,7 +208,7 @@ function TrendChartModule({
     metric === 'cost' ? formatCurrency(value, locale) : formatNumber(value, locale)
   const sum = totalSeries(trend, metric).reduce((total, value) => total + value, 0)
 
-  const axisTick = { fontSize: 11 }
+  const axisTick = { fontSize: 12 }
   const tooltip = (
     <Tooltip
       isAnimationActive={false}
@@ -221,7 +218,7 @@ function TrendChartModule({
         const rows = [...payload].sort((a, b) => Number(b.value) - Number(a.value))
         const total = rows.reduce((value, item) => value + Number(item.value ?? 0), 0)
         return (
-          <div className="border-border/50 bg-background text-foreground min-w-44 rounded-md border px-2.5 py-1.5 text-xs shadow-xl">
+          <ChartTooltipBox className="min-w-44">
             <div className="mb-1 font-medium">{label}</div>
             {rows.map((item) => (
               <div key={String(item.dataKey)} className="flex items-center justify-between gap-3 leading-6">
@@ -229,7 +226,7 @@ function TrendChartModule({
                   <Swatch color={String(item.color)} />
                   <span className="truncate">{item.name}</span>
                 </span>
-                <span className="font-mono tabular-nums">
+                <span className="font-medium tabular-nums">
                   {formatValue(Number(item.value))}
                   {mode === 'percent' && total > 0 && (
                     <span className="text-muted-foreground ml-1">{formatPercent(Number(item.value) / total)}</span>
@@ -240,10 +237,10 @@ function TrendChartModule({
             {rows.length > 1 && (
               <div className="mt-1 flex justify-between border-t border-dashed pt-1 font-medium">
                 <span>{t('statisticsPage.trend.sum')}</span>
-                <span className="font-mono tabular-nums">{formatValue(total)}</span>
+                <span className="font-medium tabular-nums">{formatValue(total)}</span>
               </div>
             )}
-          </div>
+          </ChartTooltipBox>
         )
       }}
     />
@@ -277,7 +274,38 @@ function TrendChartModule({
         </span>
       }
     >
-      <BoardScreen flush className="flex flex-col gap-2">
+      <BoardScreen flush className="flex flex-col gap-2.5">
+        <div className="flex flex-wrap items-center justify-between gap-x-4 gap-y-2">
+          <div className="flex min-w-0 flex-wrap items-center gap-2">
+            <span data-board-label="true" className="shrink-0 whitespace-nowrap">
+              {t('statisticsPage.trend.group')}
+            </span>
+            <OptionSwitch
+              label={t('statisticsPage.trend.group')}
+              value={group}
+              onChange={onGroupChange}
+              options={availableGroups.map((value) => ({
+                value,
+                label: t(`statisticsPage.trend.groups.${value}`),
+              }))}
+            />
+          </div>
+          <div className="flex min-w-0 flex-wrap items-center gap-2">
+            <span data-board-label="true" className="shrink-0 whitespace-nowrap">
+              {t('statisticsPage.trend.mode')}
+            </span>
+            <OptionSwitch
+              label={t('statisticsPage.trend.mode')}
+              value={mode}
+              onChange={onModeChange}
+              options={(['stack', 'line', 'percent'] as const).map((value) => ({
+                value,
+                label: t(`statisticsPage.trend.modes.${value}`),
+                disabled: value === 'percent' && group === 'total',
+              }))}
+            />
+          </div>
+        </div>
         {trend.truncated && (
           <p data-board-label="true">
             {t('statisticsPage.trend.truncated', { start: formatDateTime(trend.start_time, locale) })}
@@ -287,47 +315,55 @@ function TrendChartModule({
           <EmptyState />
         ) : (
           <>
-            <ChartContainer config={config} className="aspect-auto h-[300px] w-full min-w-0">
-              {mode === 'line' ? (
-                <LineChart data={data} margin={{ top: 8, right: 8, left: 0, bottom: 0 }}>
-                  {axes}
-                  {tooltip}
-                  {visible.map((item) => (
-                    <Line
-                      key={item.key}
-                      dataKey={item.key}
-                      name={item.name}
-                      stroke={item.color}
-                      strokeWidth={2}
-                      dot={false}
-                      isAnimationActive={false}
-                    />
-                  ))}
-                </LineChart>
-              ) : (
-                <BarChart
-                  data={data}
-                  margin={{ top: 8, right: 8, left: 0, bottom: 0 }}
-                  stackOffset={mode === 'percent' ? 'expand' : 'none'}
-                  barCategoryGap="18%"
-                >
-                  {axes}
-                  {tooltip}
-                  {visible.map((item) => (
-                    <Bar
-                      key={item.key}
-                      dataKey={item.key}
-                      name={item.name}
-                      stackId="trend"
-                      fill={item.color}
-                      isAnimationActive={false}
-                    />
-                  ))}
-                </BarChart>
-              )}
-            </ChartContainer>
+            <motion.div
+              key={`${metric}:${group}:${mode}`}
+              initial={enabled ? { opacity: 0, y: 4 } : false}
+              animate={{ opacity: 1, y: 0 }}
+              transition={transitions.fast}
+              className="min-w-0"
+            >
+              <ChartContainer config={config} className="aspect-auto h-[300px] w-full min-w-0">
+                {mode === 'line' ? (
+                  <LineChart data={data} margin={{ top: 8, right: 8, left: 0, bottom: 0 }}>
+                    {axes}
+                    {tooltip}
+                    {visible.map((item) => (
+                      <Line
+                        key={item.key}
+                        dataKey={item.key}
+                        name={item.name}
+                        stroke={item.color}
+                        strokeWidth={2}
+                        dot={false}
+                        isAnimationActive={false}
+                      />
+                    ))}
+                  </LineChart>
+                ) : (
+                  <BarChart
+                    data={data}
+                    margin={{ top: 8, right: 8, left: 0, bottom: 0 }}
+                    stackOffset={mode === 'percent' ? 'expand' : 'none'}
+                    barCategoryGap="18%"
+                  >
+                    {axes}
+                    {tooltip}
+                    {visible.map((item) => (
+                      <Bar
+                        key={item.key}
+                        dataKey={item.key}
+                        name={item.name}
+                        stackId="trend"
+                        fill={item.color}
+                        isAnimationActive={false}
+                      />
+                    ))}
+                  </BarChart>
+                )}
+              </ChartContainer>
+            </motion.div>
             {group !== 'total' && (
-              <div data-chart-legend="true" className="flex flex-wrap gap-1">
+              <div data-chart-legend="true" className="flex flex-wrap gap-1.5 pt-0.5">
                 {series.map((item) => {
                   const off = hidden.has(item.key)
                   return (
@@ -337,7 +373,12 @@ function TrendChartModule({
                       aria-pressed={!off}
                       title={t('statisticsPage.charts.toggleSeries', { name: item.name })}
                       onClick={() => onToggle(item.key)}
-                      className={`hover:bg-muted inline-flex max-w-60 items-center gap-1.5 px-2 py-0.5 text-xs ${off ? 'line-through opacity-50' : ''}`}
+                      className={cn(
+                        'inline-flex max-w-60 cursor-pointer items-center gap-1.5 rounded-full border px-2.5 py-1 text-xs font-medium transition-all duration-150',
+                        off
+                          ? 'border-border/50 bg-transparent text-muted-foreground line-through opacity-50 hover:opacity-75'
+                          : 'border-border/75 bg-muted/45 text-foreground hover:border-border hover:bg-muted/80'
+                      )}
                     >
                       <Swatch color={item.color} />
                       <span className="truncate">{item.name}</span>

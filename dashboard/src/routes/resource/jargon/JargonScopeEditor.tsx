@@ -1,9 +1,10 @@
 import { useMutation, useQuery, useQueryClient } from '@tanstack/react-query'
-import { useEffect, useState, type ReactNode } from 'react'
+import { useEffect, useId, useState, type ReactNode } from 'react'
 
 import { Button } from '@/components/ui/button'
 import { Checkbox } from '@/components/ui/checkbox'
 import { Label } from '@/components/ui/label'
+import { RadioGroup, RadioGroupItem } from '@/components/ui/radio-group'
 import {
   Select,
   SelectContent,
@@ -50,6 +51,7 @@ export function JargonScopeEditor({
   onChange: (value: Jargon | null) => void
 }) {
   const queryClient = useQueryClient()
+  const inheritGroupId = useId()
   const [page, setPage] = useState(0)
   const [action, setAction] = useState<JargonScopeAction>(jargon.archived ? 'split' : 'move')
   const [destination, setDestination] = useState('')
@@ -269,23 +271,37 @@ export function JargonScopeEditor({
                 </Label>
               ))}
           {merging && (
-            <fieldset className="space-y-1">
-              <legend>继承释义与推断进度</legend>
-              {sources.map((r) => (
-                <Label key={r.id} className="flex gap-2 text-xs">
-                  <input
-                    type="radio"
-                    name="inherit-jargon"
-                    checked={winner?.id === r.id}
-                    onChange={() => setInherit(r.id)}
-                  />
-                  <span>
-                    {r.scope_name} · {!r.allow_update ? '已暂停更新 · ' : ''}
-                    遇见 {r.count} 次，上次推断 {r.last_inference_count} 次<br />
-                    {r.meaning || '暂无释义'}
-                  </span>
-                </Label>
-              ))}
+            <fieldset className="space-y-1.5">
+              <legend className="text-xs font-medium">继承释义与推断进度</legend>
+              <RadioGroup
+                name="inherit-jargon"
+                value={winner ? String(winner.id) : ''}
+                onValueChange={(value) => setInherit(Number(value))}
+                className="gap-2"
+              >
+                {sources.map((r) => {
+                  const optionId = `${inheritGroupId}-${r.id}`
+                  return (
+                    <div key={r.id} className="flex items-start gap-2">
+                      <RadioGroupItem
+                        id={optionId}
+                        value={String(r.id)}
+                        size="sm"
+                        className="mt-0.5"
+                      />
+                      <Label
+                        htmlFor={optionId}
+                        className="cursor-pointer text-xs leading-relaxed font-normal"
+                      >
+                        {r.scope_name} · {!r.allow_update ? '已暂停更新 · ' : ''}
+                        遇见 {r.count} 次，上次推断 {r.last_inference_count} 次
+                        <br />
+                        {r.meaning || '暂无释义'}
+                      </Label>
+                    </div>
+                  )
+                })}
+              </RadioGroup>
             </fieldset>
           )}
           {change.error && <p role="alert">{change.error.message}</p>}

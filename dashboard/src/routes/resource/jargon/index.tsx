@@ -1,12 +1,12 @@
-import { Settings } from 'lucide-react'
 import { useMutation, useQuery, useQueryClient } from '@tanstack/react-query'
-import { Check, ChevronDown, Trash2, Upload, X } from 'lucide-react'
+import { Check, ChevronDown, Settings, Trash2, Upload, X } from 'lucide-react'
 import { useEffect, useImperativeHandle, useRef, useState } from 'react'
 import type { Ref } from 'react'
 
 import { ChatScopeFilterPanel } from '@/components/chat-scope-filter-panel'
-import { LearningExportDialog } from '@/components/learning-export-dialog'
 import { LearningCreateDialog } from '@/components/learning-create-dialog'
+import { LearningExportDialog } from '@/components/learning-export-dialog'
+import { ActionBar } from '@/components/ui/action-bar'
 import { Button } from '@/components/ui/button'
 import {
   DataBrowserHeader,
@@ -430,13 +430,18 @@ export function JargonManagementPage({
               <Button
                 variant="outline"
                 size="sm"
+                className="group gap-1.5"
                 aria-label={`黑话分类：${activeSummary.label} ${activeSummary.count}`}
               >
                 <span>{activeSummary.label}</span>
                 <span className={cn('tabular-nums', activeSummary.className)}>
                   {activeCount?.toLocaleString() ?? '…'}
                 </span>
-                <ChevronDown className="h-4 w-4" />
+                <ChevronDown
+                  strokeWidth={1.75}
+                  className="size-3.5 shrink-0 text-muted-foreground/75 transition-transform duration-150 group-data-[state=open]:rotate-180"
+                  aria-hidden="true"
+                />
               </Button>
             </DropdownMenuTrigger>
             <DropdownMenuContent align="end" className="min-w-52">
@@ -467,31 +472,7 @@ export function JargonManagementPage({
           </Button>
         </>
       }
-    >
-      {/* 跨页选择保留，批量操作与搜索共用窗口内部的工具栏。 */}
-      {selectedIds.size > 0 && (
-        <div className="mt-3 flex flex-wrap items-center gap-2 border-t pt-3">
-          <span className="text-muted-foreground mr-auto text-xs">
-            已选择 {selectedIds.size} 个
-          </span>
-          <Button variant="outline" size="xs" onClick={() => handleBatchSetJargon(true)}>
-            <Check className="h-3 w-3" />
-            标记为黑话
-          </Button>
-          <Button variant="outline" size="xs" onClick={() => handleBatchSetJargon(false)}>
-            <X className="h-3 w-3" />
-            标记为不是黑话
-          </Button>
-          <Button variant="outline" size="xs" onClick={list.clearSelection}>
-            取消选择
-          </Button>
-          <Button variant="destructive" size="xs" onClick={() => setIsBatchDeleteDialogOpen(true)}>
-            <Trash2 className="h-3 w-3" />
-            批量删除
-          </Button>
-        </div>
-      )}
-    </DataToolbar>
+    />
   )
 
   const summary = (
@@ -721,6 +702,27 @@ export function JargonManagementPage({
         onOpenChange={() => setDeleteConfirmJargon(null)}
         onConfirm={handleDelete}
       />
+
+      {/* 跨页选择保留，使用悬浮操作弹条避免生硬顶动正文列表。 */}
+      <ActionBar
+        open={selectedIds.size > 0}
+        count={selectedIds.size}
+        countLabel="个黑话"
+        onClear={list.clearSelection}
+      >
+        <Button variant="outline" size="xs" onClick={() => handleBatchSetJargon(true)}>
+          <Check className="h-3 w-3" />
+          标记为黑话
+        </Button>
+        <Button variant="outline" size="xs" onClick={() => handleBatchSetJargon(false)}>
+          <X className="h-3 w-3" />
+          标记为不是黑话
+        </Button>
+        <Button variant="destructive" size="xs" onClick={() => setIsBatchDeleteDialogOpen(true)}>
+          <Trash2 className="h-3 w-3" />
+          批量删除
+        </Button>
+      </ActionBar>
 
       {/* 批量删除确认对话框 */}
       <BatchDeleteConfirmDialog

@@ -48,6 +48,7 @@ import {
 } from '@/components/ui/management'
 import { Markdown } from '@/components/ui/markdown'
 import { OrderControls } from '@/components/ui/order-controls'
+import { PillNav } from '@/components/ui/pill-nav'
 import {
   RelationshipGraph,
   type RelationshipEdge,
@@ -301,6 +302,41 @@ function OrderExample() {
   )
 }
 
+function PillNavExample() {
+  const [segment, setSegment] = useState<'all' | 'active' | 'archived'>('all')
+  const [variant, setVariant] = useState<'segmented' | 'pill' | 'underline'>('pill')
+  return (
+    <div className="space-y-3">
+      <PillNav
+        ariaLabel="导航样式切换"
+        variant="segmented"
+        size="xs"
+        value={variant}
+        options={[
+          { value: 'segmented', label: 'Segmented' },
+          { value: 'pill', label: 'Pill' },
+          { value: 'underline', label: 'Underline' },
+        ]}
+        onChange={setVariant}
+      />
+      <PillNav
+        as="nav"
+        ariaLabel="示例状态导航"
+        variant={variant}
+        size="sm"
+        scrollable
+        value={segment}
+        options={[
+          { value: 'all', label: '全部', count: 24 },
+          { value: 'active', label: '进行中', count: 9 },
+          { value: 'archived', label: '已归档', count: 15 },
+        ]}
+        onChange={setSegment}
+      />
+    </div>
+  )
+}
+
 function SelectionExample() {
   const [selected, setSelected] = useState('one')
   return (
@@ -465,6 +501,13 @@ export const layoutExamples: ComponentExample[] = [
     category: '表单',
     description: '上下移动列表项，首尾自动禁用。',
     preview: <OrderExample />,
+  },
+  {
+    file: 'pill-nav',
+    name: 'PillNav',
+    category: '布局',
+    description: '带共享滑块动效的分段 / 药丸 / 下划线导航条。',
+    preview: <PillNavExample />,
   },
   {
     file: 'relationship-graph',

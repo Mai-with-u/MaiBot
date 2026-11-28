@@ -1,15 +1,19 @@
-import { useEffect, useMemo, useState } from 'react'
 import { Download, Plus, Wrench } from 'lucide-react'
+import { AnimatePresence, motion } from 'motion/react'
+import { useEffect, useMemo, useState } from 'react'
 
-import { Button } from '@/components/ui/button'
+import { MotionHoldButton } from '@/components/motion'
 import { AlertDialog, AlertDialogAction, AlertDialogCancel, AlertDialogContent, AlertDialogDescription, AlertDialogFooter, AlertDialogHeader, AlertDialogTitle } from '@/components/ui/alert-dialog'
+import { Button } from '@/components/ui/button'
 import { Dialog, DialogBody, DialogContent, DialogDescription, DialogHeader, DialogTitle } from '@/components/ui/dialog'
 import { Input } from '@/components/ui/input'
 import { Label } from '@/components/ui/label'
+import { PillNav } from '@/components/ui/pill-nav'
 import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from '@/components/ui/select'
 import { Textarea } from '@/components/ui/textarea'
 import { useTheme } from '@/components/use-theme'
 import { useToast } from '@/hooks/use-toast'
+import { useMotion } from '@/lib/motion'
 import {
   clearPersonalityImport, parsePersonalityImport, PERSONALITY_IMPORT_EVENT, PERSONALITY_IMPORT_EXAMPLE,
   readPersonalityImport, type PersonalityProfile as Profile,
@@ -39,6 +43,7 @@ export function PersonalityProfiles({ values, onChange }: {
   const [confirmDelete, setConfirmDelete] = useState(false)
   const [confirmMarket, setConfirmMarket] = useState(false)
   const { toast } = useToast()
+  const { enabled: motionEnabled, transitions } = useMotion()
   const { themeConfig, resolvedTheme } = useTheme()
   const profiles = (values.profiles ?? []) as Profile[]
   const selected = profiles.find((profile) => profile.name === values.selected_profile)
@@ -184,12 +189,30 @@ export function PersonalityProfiles({ values, onChange }: {
                   {profiles.some((profile) => profile.name === imported.profile?.name) && <p className="text-sm text-destructive">已有同名人设，请在下一步修改名称。</p>}
                 </div>}
               </div>}
-              {panel === 'manage' && <div className="flex flex-wrap gap-2">
-                {profiles.map((profile) => <Button type="button" key={profile.name} size="sm" variant={originalName === profile.name ? 'default' : 'outline'} onClick={() => editProfile(profile)}>
-                  {profile.name}{selected?.name === profile.name ? ' · 使用中' : ''}
-                </Button>)}
-                <Button type="button" size="sm" variant="outline" onClick={createProfile}><Plus className="mr-1 h-4 w-4" />新建</Button>
-              </div>}
+              {panel === 'manage' && (
+                <div className="flex flex-wrap items-center gap-2">
+                  {profiles.length > 0 && (
+                    <PillNav
+                      ariaLabel="选择人设"
+                      variant="pill"
+                      size="xs"
+                      scrollable
+                      value={originalName ?? ''}
+                      options={profiles.map((profile) => ({
+                        value: profile.name,
+                        label: `${profile.name}${selected?.name === profile.name ? ' · 使用中' : ''}`,
+                      }))}
+                      onChange={(name) => {
+                        const target = profiles.find((profile) => profile.name === name)
+                        if (target) editProfile(target)
+                      }}
+                    />
+                  )}
+                  <Button type="button" size="xs" variant="outline" onClick={createProfile}>
+                    <Plus className="mr-1 h-3.5 w-3.5" />新建
+                  </Button>
+                </div>
+              )}
               {!draft && panel !== 'import' && <p className="py-6 text-center text-sm text-muted-foreground">暂无选中的人设，选择已有的人设或新建一套。</p>}
               {draft && <>
                 <div className="space-y-2">
@@ -214,19 +237,51 @@ export function PersonalityProfiles({ values, onChange }: {
               </>}
             </div>
           </DialogBody>
-          {confirmDelete ? <div className="flex flex-wrap items-center justify-end gap-2">
-            <p className="mr-auto text-sm">删除“{originalName}”？当前生效的设定会保留。</p>
-            <Button type="button" variant="outline" onClick={() => setConfirmDelete(false)}>取消</Button>
-            <Button type="button" variant="destructive" onClick={deleteProfile}>确认删除</Button>
-          </div> : <div className="flex items-center justify-end gap-2">
-            {originalName !== null && <Button type="button" variant="destructive" className="mr-auto" onClick={() => setConfirmDelete(true)}>删除人设</Button>}
-            <Button type="button" variant="outline" onClick={closePanel}>取消</Button>
-            {panel === 'import' && <Button type="button" disabled={!imported.profile} onClick={() => {
-              if (!imported.profile) return
-              setDraft(imported.profile); setOriginalName(null); setConfirmDelete(false); setPanel('create')
-            }}>继续编辑</Button>}
-            {draft && <Button type="button" onClick={saveProfile}>{panel === 'create' ? '创建人设' : '保存修改'}</Button>}
-          </div>}
+          <AnimatePresence mode="wait" initial={false}>
+            {confirmDelete ? (
+              <motion.div
+                key="confirm-delete"
+                initial={motionEnabled ? { opacity: 0, y: 4 } : false}
+                animate={{ opacity: 1, y: 0 }}
+                exit={motionEnabled ? { opacity: 0, y: -4 } : undefined}
+                transition={transitions.fast}
+                className="flex flex-wrap items-center justify-end gap-2"
+              >
+                <p className="mr-auto text-sm">删除“{originalName}”？当前生效的设定会保留。</p>
+                <Button type="button" variant="outline" onClick={() => setConfirmDelete(false)}>取消</Button>
+                <MotionHoldButton
+                  variant="destructive"
+                  holdingLabel="继续按住确认删除…"
+                  onComplete={deleteProfile}
+                >
+                  长按确认删除
+                </MotionHoldButton>
+              </motion.div>
+            ) : (
+              <motion.div
+                key="default-actions"
+                initial={motionEnabled ? { opacity: 0, y: 4 } : false}
+                animate={{ opacity: 1, y: 0 }}
+                exit={motionEnabled ? { opacity: 0, y: -4 } : undefined}
+                transition={transitions.fast}
+                className="flex items-center justify-end gap-2"
+              >
+                {originalName !== null && (
+                  <Button type="button" variant="destructive" className="mr-auto" onClick={() => setConfirmDelete(true)}>
+                    删除人设
+                  </Button>
+                )}
+                <Button type="button" variant="outline" onClick={closePanel}>取消</Button>
+                {panel === 'import' && (
+                  <Button type="button" disabled={!imported.profile} onClick={() => {
+                    if (!imported.profile) return
+                    setDraft(imported.profile); setOriginalName(null); setConfirmDelete(false); setPanel('create')
+                  }}>继续编辑</Button>
+                )}
+                {draft && <Button type="button" onClick={saveProfile}>{panel === 'create' ? '创建人设' : '保存修改'}</Button>}
+              </motion.div>
+            )}
+          </AnimatePresence>
         </DialogContent>
       </Dialog>
       <AlertDialog open={confirmMarket} onOpenChange={setConfirmMarket}>

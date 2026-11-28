@@ -7,6 +7,7 @@ import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest'
 import { backendApi } from '@/lib/http'
 
 import { StatisticsPage } from '../index'
+import { buildTrendSeries } from '../sections/TrendSection'
 import type {
   DetailedPeriodTrend,
   DetailedReliabilityData,
@@ -421,7 +422,7 @@ describe('StatisticsPage', () => {
     expect(view.container.querySelector('.animate-pulse')).toBeNull()
   })
 
-  it('空分类、空聊天与空分布展示空状态，并可切换双明细表维度', async () => {
+  it('空分类、空聊天与空分布展示空状态，并可切换明细表维度', async () => {
     const user = userEvent.setup()
     vi.mocked(backendApi.get).mockResolvedValue(
       makeData({
@@ -460,13 +461,12 @@ describe('StatisticsPage', () => {
 
     expect(screen.getAllByText('statisticsPage.empty').length).toBeGreaterThan(0)
 
-    const dimensionGroups = screen.getAllByRole('group', { name: 'statisticsPage.detail.dimension' })
-    expect(dimensionGroups).toHaveLength(2)
-    await user.click(within(dimensionGroups[0]).getByRole('button', { name: 'statisticsPage.breakdowns.chats' }))
+    const dimensionGroup = screen.getByRole('group', { name: 'statisticsPage.detail.dimension' })
+    await user.click(within(dimensionGroup).getByRole('button', { name: 'statisticsPage.breakdowns.chats' }))
     expect(screen.getAllByText('statisticsPage.empty').length).toBeGreaterThan(0)
   })
 
-  it('可切换统一趋势图的指标、拆分维度与模式，并切换可靠性维度', async () => {
+  it('可切换统一趋势图的指标、拆分维度与模式，并切换可靠性维度与失败趋势指标', async () => {
     const user = userEvent.setup()
     await renderFreshPage()
     await waitForPageData()
@@ -490,6 +490,14 @@ describe('StatisticsPage', () => {
       within(reliabilityGroup).getByRole('button', { name: 'statisticsPage.reliability.dimensions.provider' })
     )
     expect(screen.getByText('provider-a')).toBeInTheDocument()
+
+    const failureTrendGroup = screen.getByRole('group', { name: 'statisticsPage.modules.failureTrend' })
+    await user.click(
+      within(failureTrendGroup).getByRole('button', { name: 'statisticsPage.reliability.failures' })
+    )
+    expect(
+      within(failureTrendGroup).getByRole('button', { name: 'statisticsPage.reliability.failures' })
+    ).toHaveAttribute('aria-pressed', 'true')
   })
 
   it('展示缓存命中率与环比，按周期排序，并支持点击饼图图例联动筛选明细表', async () => {
@@ -550,11 +558,19 @@ describe('StatisticsPage', () => {
     expect(screen.getByText(/1天 1小时 1分钟/)).toBeInTheDocument()
     expect(screen.getAllByText('50.0%').length).toBeGreaterThan(0)
 
-    // 点击饼图图例联动筛选 TABLE A
+    // 点击饼图图例联动筛选明细表
     const filterButtons = screen.getAllByTitle('filter:replyer')
     await user.click(filterButtons[0])
-    const searchInputs = screen.getAllByRole('textbox', { name: 'statisticsPage.detail.search' })
-    expect(searchInputs[0]).toHaveValue('replyer')
+    const searchInput = screen.getByRole('textbox', { name: 'statisticsPage.detail.search' })
+    expect(searchInput).toHaveValue('replyer')
+
+    // 切换分布维度到模型并联动筛选明细表
+    const distributionSwitch = screen.getByRole('group', { name: 'statisticsPage.sections.distributions' })
+    await user.click(
+      within(distributionSwitch).getByRole('button', { name: 'statisticsPage.distributions.titles.model' })
+    )
+    await user.click(screen.getByTitle('filter:model-a'))
+    expect(searchInput).toHaveValue('model-a')
 
     await user.click(
       within(periodGroup).getByRole('button', { name: 'statisticsPage.periods.last_15_minutes' })
@@ -648,6 +664,54 @@ describe('StatisticsPage', () => {
       delete document.documentElement.dataset.dashboardStyle
       style.remove()
     }
+  })
+
+  it('统一图表提示框、收紧系列与扇区上限，并仅在明细表花费列保留内联进度条', async () => {
+    const manyEntries = Array.from({ length: 8 }, (_, index) => ({
+      name: `mod-${index + 1}`,
+      value: 8 - index,
+    }))
+    const manyModelCosts = Object.fromEntries(
+      Array.from({ length: 7 }, (_, index) => [`m-${index + 1}`, [7 - index, 1]])
+    )
+    const series = buildTrendSeries(
+      makePeriodTrend({ cost_by_model: manyModelCosts }),
+      'cost',
+      'model',
+      'total',
+      (count) => `other:${count}`
+    )
+    expect(series).toHaveLength(5)
+    expect(series.at(-1)?.name).toBe('other:3')
+
+    vi.mocked(backendApi.get).mockResolvedValue(
+      makeData({
+        periods: [
+          makePeriod({
+            distributions: {
+              ...makePeriod().distributions,
+              module_costs: manyEntries,
+            },
+          }),
+        ],
+      })
+    )
+    const view = await renderFreshPage()
+    await waitForPageData()
+
+    // 每次仅展示一个聚焦环形图，且扇区数限制在 5 + 其他 = 6 项
+    expect(view.container.querySelectorAll('[data-stats-pie="true"]')).toHaveLength(1)
+    expect(
+      view.container.querySelectorAll('[data-stats-pie-legend="true"] [data-stats-row="true"]')
+    ).toHaveLength(6)
+
+    // 仅渲染单张明细表，且每条花费非零的行只在花费列保留 1 个 MiniBar
+    expect(screen.getAllByRole('table')).toHaveLength(1)
+    expect(view.container.querySelectorAll('[data-stats-bar="true"]')).toHaveLength(1)
+
+    // 自定义图表提示框统一携带 data-dashboard-chart-tooltip，且统计区块无非代码 font-mono
+    expect(view.container.querySelectorAll('[data-dashboard-chart-tooltip="true"]').length).toBeGreaterThanOrEqual(3)
+    expect(view.container.querySelectorAll('.font-mono')).toHaveLength(0)
   })
 
   it('没有周期数据时展示空状态', async () => {

@@ -1,7 +1,8 @@
-import { useEffect, useRef, useState } from 'react'
 import { useQuery, useQueryClient } from '@tanstack/react-query'
-import { ArrowLeftRight, Copy, Check, RefreshCw } from 'lucide-react'
+import { ArrowLeftRight, RefreshCw } from 'lucide-react'
+import { useEffect, useRef, useState } from 'react'
 
+import { QQMappingTable } from '@/components/qq-mapping-table'
 import { Alert, AlertDescription } from '@/components/ui/alert'
 import { Badge } from '@/components/ui/badge'
 import { Button } from '@/components/ui/button'
@@ -22,6 +23,7 @@ import {
   SelectTrigger,
   SelectValue,
 } from '@/components/ui/select'
+import { CopyButton } from '@/components/ui/stateful-button'
 import {
   Table,
   TableBody,
@@ -34,7 +36,6 @@ import { Tabs, TabsContent, TabsList, TabsTrigger } from '@/components/ui/tabs'
 import { useHostRuntime } from '@/host/state'
 import { getPersonList } from '@/lib/person-api'
 import { invokeQQWebUI } from '@/lib/qq-webui'
-import { QQMappingTable } from '@/components/qq-mapping-table'
 
 const query = (name: string) => invokeQQWebUI('queries', name)
 
@@ -143,7 +144,6 @@ function UserDirectory({ mapping }: { mapping: boolean }) {
   const [search, setSearch] = useState('')
   const [page, setPage] = useState(1)
   const [pageSize, setPageSize] = useState(30)
-  const [copied, setCopied] = useState('')
   const [copyError, setCopyError] = useState('')
   const viewport = useRef<HTMLDivElement>(null)
   useEffect(() => {
@@ -161,13 +161,14 @@ function UserDirectory({ mapping }: { mapping: boolean }) {
       }),
     refetchInterval: 30000,
   })
-  async function copy(id: string) {
+  async function copy(id: string): Promise<boolean> {
     try {
       await navigator.clipboard.writeText(id)
-      setCopied(id)
       setCopyError('')
+      return true
     } catch (error) {
       setCopyError(`复制失败：${String(error)}`)
+      return false
     }
   }
   return (
@@ -226,18 +227,14 @@ function UserDirectory({ mapping }: { mapping: boolean }) {
                   {user.user_id}
                 </TableCell>
                 <TableCell>
-                  <Button
+                  <CopyButton
+                    iconOnly
                     variant="ghost"
                     size="icon-xs"
                     aria-label={`复制 ${user.user_id}`}
-                    onClick={() => void copy(user.user_id)}
-                  >
-                    {copied === user.user_id ? (
-                      <Check className="size-4" />
-                    ) : (
-                      <Copy className="size-4" />
-                    )}
-                  </Button>
+                    iconClassName="size-4"
+                    onCopy={() => copy(user.user_id)}
+                  />
                 </TableCell>
               </TableRow>
             ))}

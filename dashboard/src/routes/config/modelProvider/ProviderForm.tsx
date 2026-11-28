@@ -1,5 +1,5 @@
+import { Check, ChevronsUpDown, Eye, EyeOff, Info } from 'lucide-react'
 import { useCallback, useEffect, useMemo, useState } from 'react'
-import { Check, ChevronsUpDown, Copy, Eye, EyeOff, Info } from 'lucide-react'
 
 import { MotionCollapse } from '@/components/motion'
 import { Button } from '@/components/ui/button'
@@ -8,11 +8,12 @@ import { Dialog, DialogBody, DialogContent, DialogFooter, DialogHeader, DialogTi
 import { FoldSection, FormRow, FormSection, FormUnit } from '@/components/ui/form-section'
 import { HelpTooltip } from '@/components/ui/help-tooltip'
 import { Input } from '@/components/ui/input'
-import { Label } from '@/components/ui/label'
 import { KeyValueEditor } from '@/components/ui/key-value-editor'
+import { Label } from '@/components/ui/label'
 import { Popover, PopoverContent, PopoverTrigger } from '@/components/ui/popover'
 import { ScrollArea } from '@/components/ui/scroll-area'
 import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from '@/components/ui/select'
+import { CopyButton } from '@/components/ui/stateful-button'
 import { Tooltip, TooltipContent, TooltipProvider, TooltipTrigger } from '@/components/ui/tooltip'
 import { useToast } from '@/hooks/use-toast'
 import { fetchModelClientTypes, type ModelClientType } from '@/lib/config-api'
@@ -218,20 +219,22 @@ export function ProviderForm({
     }
   }, [handleTemplateChange, isUsingTemplate, lastTemplateId, selectedTemplate])
 
-  const copyApiKey = useCallback(async () => {
-    if (!localProvider?.api_key) return
+  const copyApiKey = useCallback(async (): Promise<boolean> => {
+    if (!localProvider?.api_key) return false
     try {
       await navigator.clipboard.writeText(localProvider.api_key)
       toast({
         title: '复制成功',
         description: 'API Key 已复制到剪贴板',
       })
+      return true
     } catch {
       toast({
         title: '复制失败',
         description: '无法访问剪贴板',
         variant: 'destructive',
       })
+      return false
     }
   }, [localProvider?.api_key, toast])
 
@@ -548,17 +551,16 @@ export function ProviderForm({
                       >
                         {showApiKey ? <EyeOff className="h-4 w-4" /> : <Eye className="h-4 w-4" />}
                       </Button>
-                      <Button
-                        type="button"
+                      <CopyButton
+                        iconOnly
                         variant="outline"
                         size="icon"
                         className="shrink-0"
-                        onClick={copyApiKey}
+                        onCopy={copyApiKey}
                         title="复制密钥"
                         aria-label="复制密钥"
-                      >
-                        <Copy className="h-4 w-4" />
-                      </Button>
+                        iconClassName="h-4 w-4"
+                      />
                     </div>
                   </FormRow>
                 </div>

@@ -318,32 +318,32 @@ function SnapshotSummarySection({
   emptyText,
 }: {
   title: string
-  description: string
+  description?: string
   entries: ReadableSnapshotEntry[]
   technicalCount: number
   technicalNote: string
   emptyText: string
 }) {
   return (
-    <section className="space-y-3 rounded-md border bg-muted/15 p-4">
+    <section className="space-y-2.5">
       <div>
         <div className="text-sm font-medium">{title}</div>
-        <div className="text-xs text-muted-foreground">{description}</div>
+        {description ? <div className="text-xs text-muted-foreground">{description}</div> : null}
       </div>
       {entries.length > 0 ? (
         <div className="grid gap-2 md:grid-cols-2">
           {entries.map((entry) => (
-            <div key={entry.path} className="min-w-0 rounded-md border bg-background px-3 py-2">
+            <div key={entry.path} className="min-w-0 rounded-sm border border-border/60 bg-muted/15 px-3 py-2">
               <div className="text-xs leading-5 text-muted-foreground">{entry.label}</div>
               <div className="break-all text-sm leading-6">{entry.value}</div>
             </div>
           ))}
         </div>
       ) : (
-        <div className="rounded-md border border-dashed p-3 text-sm text-muted-foreground">{emptyText}</div>
+        <div className="rounded-sm border border-dashed p-3 text-sm text-muted-foreground">{emptyText}</div>
       )}
       {technicalCount > 0 ? (
-        <div className="rounded-md border border-dashed bg-background/60 p-3 text-xs text-muted-foreground">
+        <div className="rounded-sm border border-dashed bg-muted/20 p-3 text-xs text-muted-foreground">
           {technicalNote}
         </div>
       ) : null}
@@ -781,10 +781,9 @@ export function TuningTab({ tuning }: TuningTabProps) {
                         </Button>
                       </div>
                       <div className="max-h-[30vh] overflow-y-auto overscroll-contain border-t px-4 py-4 pr-3">
-                        <div className="space-y-4">
+                        <div className="space-y-5">
                           <SnapshotSummarySection
                             title={t('memory.tuning.snapshot.runtimeTitle')}
-                            description={t('memory.tuning.snapshot.runtimeDescription')}
                             entries={readableRuntimeEntries}
                             technicalCount={runtimeTechnicalCount}
                             technicalNote={t('memory.tuning.snapshot.technicalCount', { count: runtimeTechnicalCount })}
@@ -792,40 +791,36 @@ export function TuningTab({ tuning }: TuningTabProps) {
                           />
                           <SnapshotSummarySection
                             title={t('memory.tuning.snapshot.persistableTitle')}
-                            description={t('memory.tuning.snapshot.persistableDescription')}
                             entries={readablePersistableEntries}
                             technicalCount={persistableTechnicalCount}
                             technicalNote={t('memory.tuning.snapshot.technicalCount', { count: persistableTechnicalCount })}
                             emptyText={t('memory.tuning.snapshot.empty')}
                           />
-                          <section className="space-y-3 rounded-md border bg-background p-4">
-                            <div>
-                              <div className="text-sm font-medium">{t('memory.tuning.snapshot.diffTitle')}</div>
-                              <div className="text-xs text-muted-foreground">{t('memory.tuning.snapshot.diffDescription')}</div>
-                            </div>
+                          <section className="space-y-2.5">
+                            <div className="text-sm font-medium">{t('memory.tuning.snapshot.diffTitle')}</div>
                             {readableDiffs.length > 0 ? (
                               <div className="space-y-2">
                                 {readableDiffs.map((entry) => (
-                                  <div key={entry.path} className="grid gap-2 rounded-md border bg-background p-3 lg:grid-cols-[minmax(0,1fr)_minmax(0,1fr)]">
+                                  <div key={entry.path} className="grid gap-2 rounded-sm border border-border/60 bg-muted/15 p-3 lg:grid-cols-[minmax(0,1fr)_minmax(0,1fr)]">
                                     <div className="text-xs leading-5 text-muted-foreground lg:col-span-2">{entry.label}</div>
                                     <div className="min-w-0">
-                                      <div className="text-[11px] text-muted-foreground">{t('memory.tuning.snapshot.runtimeShort')}</div>
+                                      <div className="text-xs text-muted-foreground">{t('memory.tuning.snapshot.runtimeShort')}</div>
                                       <div className="break-all text-sm leading-6">{entry.runtime}</div>
                                     </div>
                                     <div className="min-w-0">
-                                      <div className="text-[11px] text-muted-foreground">{t('memory.tuning.snapshot.persistableShort')}</div>
+                                      <div className="text-xs text-muted-foreground">{t('memory.tuning.snapshot.persistableShort')}</div>
                                       <div className="break-all text-sm leading-6">{entry.persistable}</div>
                                     </div>
                                   </div>
                                 ))}
                               </div>
                             ) : (
-                              <div className="rounded-md border border-dashed p-3 text-sm text-muted-foreground">
+                              <div className="rounded-sm border border-dashed p-3 text-sm text-muted-foreground">
                                 {t('memory.tuning.snapshot.noDiff')}
                               </div>
                             )}
                             {technicalDiffCount > 0 ? (
-                              <div className="rounded-md border border-dashed bg-background/60 p-3 text-xs text-muted-foreground">
+                              <div className="rounded-sm border border-dashed bg-muted/20 p-3 text-xs text-muted-foreground">
                                 {t('memory.tuning.snapshot.technicalDiffCount', { count: technicalDiffCount })}
                               </div>
                             ) : null}

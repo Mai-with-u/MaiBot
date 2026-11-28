@@ -34,6 +34,7 @@ import {
 } from '@/components/ui/dialog'
 import { Input } from '@/components/ui/input'
 import { Label } from '@/components/ui/label'
+import { PillNav } from '@/components/ui/pill-nav'
 import { Progress } from '@/components/ui/progress'
 import { Slider } from '@/components/ui/slider'
 import { Skeleton } from '@/components/ui/skeleton'
@@ -580,26 +581,18 @@ function TalkFrequencyEditor({ detail }: { detail: ChatStreamDetail }) {
         <div className="text-sm font-medium">当前聊天流规则</div>
         <div className="flex shrink-0 items-center gap-2">
           <AddTalkFrequencyRuleButton detail={detail} />
-          <div className="bg-background inline-flex shrink-0 rounded-md border p-1">
-            <Button
-              type="button"
-              size="sm"
-              variant={mode === 'timeline' ? 'secondary' : 'ghost'}
-              className="h-7"
-              onClick={() => setMode('timeline')}
-            >
-              时间轴
-            </Button>
-            <Button
-              type="button"
-              size="sm"
-              variant={mode === 'input' ? 'secondary' : 'ghost'}
-              className="h-7"
-              onClick={() => setMode('input')}
-            >
-              普通
-            </Button>
-          </div>
+          <PillNav<TalkFrequencyEditMode>
+            variant="segmented"
+            size="xs"
+            ariaLabel="编辑模式"
+            value={mode}
+            onChange={setMode}
+            options={[
+              { value: 'timeline', label: '时间轴' },
+              { value: 'input', label: '普通' },
+            ]}
+            className="shrink-0"
+          />
         </div>
       </div>
 

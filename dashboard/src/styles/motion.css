@@ -267,15 +267,6 @@
   animation: motion-choice-pop var(--motion-duration-fast) var(--motion-ease);
 }
 
-/* Select 触发器箭头旋转 */
-[data-dashboard-select-trigger='true'] [data-select-chevron='true'] {
-  transition: transform var(--motion-duration-fast) var(--motion-ease);
-}
-
-[data-dashboard-select-trigger='true'][data-state='open'] [data-select-chevron='true'] {
-  transform: rotate(180deg);
-}
-
 /* Tabs 触发器过渡节奏对齐当前风格 */
 [data-dashboard-tabs-trigger='true'] {
   transition:
@@ -335,7 +326,6 @@
   [data-dashboard-option-card='true'],
   [data-dashboard-switch='true'],
   [data-dashboard-switch-thumb='true'],
-  [data-dashboard-select-trigger='true'] [data-select-chevron='true'],
   .dashboard-button {
     animation: none !important;
     transition: none !important;

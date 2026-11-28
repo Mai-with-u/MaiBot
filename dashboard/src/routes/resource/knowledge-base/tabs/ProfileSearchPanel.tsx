@@ -24,6 +24,7 @@ import {
 } from '@/components/ui/dialog'
 import { Input } from '@/components/ui/input'
 import { Label } from '@/components/ui/label'
+import { PillNav } from '@/components/ui/pill-nav'
 import { ScrollArea } from '@/components/ui/scroll-area'
 import { Textarea } from '@/components/ui/textarea'
 import { ThinkingIllustration } from '@/components/ui/thinking-illustration'
@@ -291,24 +292,17 @@ export function ProfileSearchPanel({ profile, searchModeTabs }: ProfileSearchPan
                   ) : null}
                 </div>
                 {currentProfileEvidence?.has_manual_override ? (
-                  <div className="flex flex-wrap gap-2">
-                    <Button
-                      type="button"
-                      variant={!showAutoProfile ? 'default' : 'outline'}
-                      size="sm"
-                      onClick={() => setShowAutoProfile(false)}
-                    >
-                      画像覆写
-                    </Button>
-                    <Button
-                      type="button"
-                      variant={showAutoProfile ? 'default' : 'outline'}
-                      size="sm"
-                      onClick={() => setShowAutoProfile(true)}
-                    >
-                      自动画像
-                    </Button>
-                  </div>
+                  <PillNav<'override' | 'auto'>
+                    variant="segmented"
+                    size="xs"
+                    ariaLabel="画像来源"
+                    value={showAutoProfile ? 'auto' : 'override'}
+                    onChange={(mode) => setShowAutoProfile(mode === 'auto')}
+                    options={[
+                      { value: 'override', label: '画像覆写' },
+                      { value: 'auto', label: '自动画像' },
+                    ]}
+                  />
                 ) : null}
                 <Textarea
                   value={displayedProfileText}

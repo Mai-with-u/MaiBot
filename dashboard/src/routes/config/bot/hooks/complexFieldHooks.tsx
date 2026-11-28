@@ -7,6 +7,7 @@ import {
   Check,
   ChevronDown,
   ChevronUp,
+  ChevronsUpDown,
   ExternalLink,
   GripVertical,
   Pencil,
@@ -757,12 +758,12 @@ function ResolvedChatTargetInfo({ chat }: { chat: ChatStream }) {
     <div className="flex min-w-0 items-center gap-2 text-xs text-muted-foreground">
       <Avatar className="h-5 w-5">
         {avatarUrl && <AvatarImage src={avatarUrl} alt={`${chat.display_name} 的头像`} />}
-        <AvatarFallback className="text-[10px]">{fallbackText}</AvatarFallback>
+        <AvatarFallback className="text-xs">{fallbackText}</AvatarFallback>
       </Avatar>
       <span className="min-w-0 truncate text-foreground">
         {formatChatDisplayName(chat.display_name, chat.account_id)}
       </span>
-      <span className="shrink-0 font-mono text-[11px] text-muted-foreground">
+      <span className="shrink-0 font-mono text-xs text-muted-foreground">
         {chat.platform}:{chat.target_id}
       </span>
     </div>
@@ -796,7 +797,7 @@ function LearningScopeFields({
   if (scopeKind === 'target') {
     return (
       <div className="flex min-w-0 items-center gap-2">
-        <Label className="shrink-0 whitespace-nowrap text-[11px] leading-none text-muted-foreground">聊天流 ID</Label>
+        <Label className="shrink-0 whitespace-nowrap text-xs leading-none text-muted-foreground">聊天流 ID</Label>
         <Input
           className="h-8 w-40 min-w-0 font-mono"
           value={itemId === '*' ? '' : itemId}
@@ -811,7 +812,7 @@ function LearningScopeFields({
     <div className="min-w-0 space-y-1.5">
       <div className="flex min-w-0 flex-wrap items-center gap-3">
         <div className="flex min-w-0 items-center gap-2">
-          <Label className={scopeKind === 'chat' ? 'shrink-0 whitespace-nowrap text-[11px] leading-none text-muted-foreground' : 'sr-only'}>平台</Label>
+          <Label className={scopeKind === 'chat' ? 'shrink-0 whitespace-nowrap text-xs leading-none text-muted-foreground' : 'sr-only'}>平台</Label>
           <div className="w-28 min-w-0">
             <LearningPlatformControl
               invalid={invalidChatTarget}
@@ -824,7 +825,7 @@ function LearningScopeFields({
         </div>
         {scopeKind === 'chat' && (
           <div className="flex min-w-0 items-center gap-2">
-            <Label className="shrink-0 whitespace-nowrap text-[11px] leading-none text-muted-foreground">聊天流 ID</Label>
+            <Label className="shrink-0 whitespace-nowrap text-xs leading-none text-muted-foreground">聊天流 ID</Label>
             <Input
               className={`h-8 w-40 min-w-0 font-mono ${invalidChatTarget ? 'border-destructive focus-visible:ring-destructive' : ''}`}
               value={itemId === '*' ? '' : itemId}
@@ -865,7 +866,7 @@ function GroupScopeFields({
   if (scopeKind === 'target') {
     return (
       <div className="flex min-w-0 items-center gap-2">
-        <Label className="shrink-0 whitespace-nowrap text-[11px] leading-none text-muted-foreground">聊天流 ID</Label>
+        <Label className="shrink-0 whitespace-nowrap text-xs leading-none text-muted-foreground">聊天流 ID</Label>
         <Input
           className="h-8 w-40 min-w-0 font-mono"
           value={itemId === '*' ? '' : itemId}
@@ -880,7 +881,7 @@ function GroupScopeFields({
     <div className="min-w-0 space-y-1.5">
       <div className="flex min-w-0 flex-wrap items-center gap-3">
         <div className="flex min-w-0 items-center gap-2">
-          <Label className="shrink-0 whitespace-nowrap text-[11px] leading-none text-muted-foreground">平台</Label>
+          <Label className="shrink-0 whitespace-nowrap text-xs leading-none text-muted-foreground">平台</Label>
           <div className="w-28 min-w-0">
             <LearningPlatformControl
               invalid={invalidChatTarget}
@@ -893,7 +894,7 @@ function GroupScopeFields({
         </div>
         {scopeKind === 'chat' && (
           <div className="flex min-w-0 items-center gap-2">
-            <Label className="shrink-0 whitespace-nowrap text-[11px] leading-none text-muted-foreground">聊天流 ID</Label>
+            <Label className="shrink-0 whitespace-nowrap text-xs leading-none text-muted-foreground">聊天流 ID</Label>
             <Input
               className={`h-8 w-40 min-w-0 font-mono ${invalidChatTarget ? 'border-destructive focus-visible:ring-destructive' : ''}`}
               value={itemId === '*' ? '' : itemId}
@@ -969,7 +970,7 @@ function SharedMemoryChatStreamSelect({
 
   return (
     <div className="flex min-w-0 items-center gap-2">
-      <Label className="shrink-0 whitespace-nowrap text-[11px] leading-none text-muted-foreground">
+      <Label className="shrink-0 whitespace-nowrap text-xs leading-none text-muted-foreground">
         选择群聊/私聊
       </Label>
       <Popover open={open} onOpenChange={setOpen}>
@@ -989,7 +990,7 @@ function SharedMemoryChatStreamSelect({
                 {chats.length > 0 ? '搜索或选择已知聊天流' : '暂无已知聊天流'}
               </span>
             )}
-            <ChevronDown className="ml-2 h-4 w-4 shrink-0 opacity-50" />
+            <ChevronsUpDown strokeWidth={1.75} className="size-3.5 shrink-0 text-muted-foreground/70" />
           </Button>
         </PopoverTrigger>
         <PopoverContent
@@ -1042,7 +1043,7 @@ function ChatTargetFields({
     <div className="rounded-md border bg-muted/20 p-2.5">
       <div className="grid min-w-0 gap-2 sm:grid-cols-[minmax(8rem,0.8fr)_minmax(10rem,1fr)_minmax(8rem,0.7fr)]">
         <div className="min-w-0 space-y-1">
-          <Label className="text-[11px] leading-none text-muted-foreground">平台</Label>
+          <Label className="text-xs leading-none text-muted-foreground">平台</Label>
           <Input
             className="h-8 min-w-0"
             value={platform}
@@ -1051,7 +1052,7 @@ function ChatTargetFields({
           />
         </div>
         <div className="min-w-0 space-y-1">
-          <Label className="text-[11px] leading-none text-muted-foreground">群号或用户 ID</Label>
+          <Label className="text-xs leading-none text-muted-foreground">群号或用户 ID</Label>
           <Input
             className="h-8 min-w-0 font-mono"
             value={itemId === '*' ? '' : itemId}
@@ -1060,7 +1061,7 @@ function ChatTargetFields({
           />
         </div>
         <div className="min-w-0 space-y-1">
-          <Label className="text-[11px] leading-none text-muted-foreground">聊天类型</Label>
+          <Label className="text-xs leading-none text-muted-foreground">聊天类型</Label>
           <Select
             value={target.rule_type}
             onValueChange={(value) => onChange({ rule_type: normalizeExpressionRuleType(value) })}
@@ -1134,7 +1135,7 @@ function AddTargetScopeDialog<TScopeKind extends string>({
             ))}
           </div>
           <div className="max-w-40 space-y-1">
-            <Label className="text-[11px] leading-none text-muted-foreground">聊天类型</Label>
+            <Label className="text-xs leading-none text-muted-foreground">聊天类型</Label>
             <Select value={ruleType} onValueChange={(nextRuleType) => setRuleType(normalizeExpressionRuleType(nextRuleType))}>
               <SelectTrigger className="h-8">
                 <SelectValue />
@@ -1499,10 +1500,10 @@ function ExpressionGroupMemberItem({
                 <span className="max-w-[24rem] truncate text-sm font-semibold">
                   {sharedMemoryChat.display_name || chatStreamTargetId(sharedMemoryChat)}
                 </span>
-                <Badge variant="secondary" className="px-1.5 py-0 text-[11px]">
+                <Badge variant="secondary" className="px-1.5 py-0 text-xs">
                   {chatStreamTypeLabel(sharedMemoryChat.chat_type)}
                 </Badge>
-                <span className="max-w-[18rem] truncate font-mono text-[11px] text-muted-foreground">
+                <span className="max-w-[18rem] truncate font-mono text-xs text-muted-foreground">
                   {sharedMemoryChat.platform}:{chatStreamTargetId(sharedMemoryChat)}
                 </span>
               </>
@@ -1511,7 +1512,7 @@ function ExpressionGroupMemberItem({
                 <span className="truncate text-sm font-semibold text-muted-foreground">
                   {hasSharedMemoryTarget ? `${platform}:${itemId}` : '未选择聊天流'}
                 </span>
-                <Badge variant="secondary" className="px-1.5 py-0 text-[11px]">
+                <Badge variant="secondary" className="px-1.5 py-0 text-xs">
                   {hasSharedMemoryTarget ? '未匹配' : '待选择'}
                 </Badge>
               </>
@@ -1521,7 +1522,7 @@ function ExpressionGroupMemberItem({
               <span className="truncate text-sm font-semibold">
                 {groupScopeLabel(member)}
               </span>
-              <Badge variant="secondary" className="px-1.5 py-0 text-[11px]">
+              <Badge variant="secondary" className="px-1.5 py-0 text-xs">
                 {ruleTypeLabel(member.rule_type)}
               </Badge>
               {scopeKind === 'chat' && <ChatTargetResolutionPreview state={chatTargetState} />}
@@ -1776,7 +1777,7 @@ function TalkGroupTargetLabel({ group }: { group: TalkRuleTimelineGroup }) {
   const target = platformLabel({ platform: group.platform, item_id: group.itemId })
   const { session } = useExactChatTargetResolution(group.platform, group.itemId, 'group', group.scopeLabel === '精确')
   return (
-    <span className="min-w-0 truncate font-mono text-sm font-semibold" title={target}>
+    <span className="min-w-0 truncate text-sm font-semibold" title={target}>
       {session ? formatChatDisplayName(session.display_name, session.account_id) : target}
     </span>
   )
@@ -1831,7 +1832,7 @@ function TalkValueTimelineOverview({
   return (
     <div className="overflow-x-auto">
       <div className="min-w-[600px]">
-        <div className={`${TALK_TRACK_GRID_CLASS} pb-1.5 text-[11px] text-muted-foreground`}>
+        <div className={`${TALK_TRACK_GRID_CLASS} pb-1.5 text-xs text-muted-foreground`}>
           <div>时段</div>
           <TimeRangeTicks />
           <div>频率</div>
@@ -2007,8 +2008,9 @@ function TalkValueGroupedRuleEditor({
         <section key={group.items[0]?.index} className="space-y-3 py-4" aria-label={group.label}>
           <div className="flex flex-wrap items-baseline gap-x-2">
             <TalkGroupTargetLabel group={group} />
-            <span className="text-xs text-muted-foreground">
-              {group.scopeLabel} · {group.items.length} 条轨道
+            <span className="inline-flex items-center gap-2 text-xs text-muted-foreground">
+              <span>{group.scopeLabel}</span>
+              <span className="tabular-nums">{group.items.length} 条轨道</span>
             </span>
           </div>
 
@@ -2213,8 +2215,9 @@ function TalkValueRuleEditor({
           添加规则
         </Button>
         {items.length > 0 && (
-          <span className="text-xs text-muted-foreground">
-            {groupCount} 个聊天 · {items.length} 条轨道
+          <span className="inline-flex items-center gap-2 text-xs text-muted-foreground">
+            <span className="tabular-nums">{groupCount} 个聊天</span>
+            <span className="tabular-nums">{items.length} 条轨道</span>
           </span>
         )}
         <SegmentedControl
@@ -2562,7 +2565,21 @@ const GroupTalkValueRulesHook = createListItemEditorHook({
     const time = rawTime === '' ? '兜底' : rawTime === '*' ? '强制全天' : rawTime
     const value =
       typeof item.value === 'number' ? item.value.toFixed(2) : '—'
-    return `${platformLabel(item)} · ${ruleTypeLabel(item.rule_type)} · ${time} · 频率 ${value}`
+    return `${platformLabel(item)}（${ruleTypeLabel(item.rule_type)}）${time} 频率 ${value}`
+  },
+  renderItemTitle: (item) => {
+    const rawTime = typeof item.time === 'string' ? item.time.trim() : ''
+    const time = rawTime === '' ? '兜底' : rawTime === '*' ? '强制全天' : rawTime
+    const value =
+      typeof item.value === 'number' ? item.value.toFixed(2) : '—'
+    return (
+      <span className="flex flex-wrap items-center gap-x-2">
+        <span>{platformLabel(item)}</span>
+        <span className="font-normal text-muted-foreground">{ruleTypeLabel(item.rule_type)}</span>
+        <span className="font-mono text-xs font-normal text-muted-foreground">{time}</span>
+        <span className="font-normal text-muted-foreground tabular-nums">频率 {value}</span>
+      </span>
+    )
   },
 })
 

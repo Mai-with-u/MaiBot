@@ -118,26 +118,31 @@ export function InstallDialog({ open, plugin, loadProgress, onOpenChange, onInst
           {isReleaseInstall ? (
             <div className="space-y-2">
               <label htmlFor="plugin-install-version" className="text-sm font-medium">安装版本</label>
-              <select
-                id="plugin-install-version"
-                data-dashboard-select-trigger="true"
-                className="bg-background flex h-9 w-full rounded-md border border-input px-3 py-2 text-sm disabled:cursor-not-allowed disabled:opacity-50"
-                value={selectedVersion}
+              <Select
+                value={selectedVersion || undefined}
                 disabled={isInstalling}
-                onChange={(event) => {
-                  if (plugin) setReleaseSelection({ pluginId: plugin.id, version: event.target.value })
+                onValueChange={(version) => {
+                  if (plugin) setReleaseSelection({ pluginId: plugin.id, version })
                 }}
               >
-                {!selectedVersion && <option value="" disabled>选择兼容版本</option>}
-                {releaseCatalog.versions.map((release) => (
-                  <option key={release.version} value={release.version} disabled={release.yanked || !release.compatible}>
-                    v{release.version}
-                    {release.version === releaseCatalog.recommended_version ? '（推荐）' : ''}
-                    {release.prerelease ? '（预发布）' : ''}
-                    {release.yanked ? '（已撤回）' : !release.compatible ? '（不兼容）' : ''}
-                  </option>
-                ))}
-              </select>
+                <SelectTrigger id="plugin-install-version">
+                  <SelectValue placeholder="选择兼容版本" />
+                </SelectTrigger>
+                <SelectContent>
+                  {releaseCatalog.versions.map((release) => (
+                    <SelectItem
+                      key={release.version}
+                      value={release.version}
+                      disabled={release.yanked || !release.compatible}
+                    >
+                      v{release.version}
+                      {release.version === releaseCatalog.recommended_version ? '（推荐）' : ''}
+                      {release.prerelease ? '（预发布）' : ''}
+                      {release.yanked ? '（已撤回）' : !release.compatible ? '（不兼容）' : ''}
+                    </SelectItem>
+                  ))}
+                </SelectContent>
+              </Select>
               {!canInstallRelease && <p className="text-sm text-destructive">请选择可用的兼容版本</p>}
             </div>
           ) : (

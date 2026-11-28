@@ -603,10 +603,7 @@ export function AppearanceTab() {
             })}
           />
           <div>
-            <h3 className="mb-1 text-base font-semibold sm:text-lg">像素字体 · 英文与数字</h3>
-            <p className="text-muted-foreground mb-3 text-sm sm:mb-4">
-              千禧风格里英文和数字使用的字体，切换后立即生效。
-            </p>
+            <h3 className="mb-3 text-base font-semibold sm:mb-4 sm:text-lg">像素字体（英文与数字）</h3>
             <div className="grid grid-cols-1 gap-3 sm:grid-cols-2 sm:gap-4">
               {millenniumFontOptions.map((option) => (
                 <MillenniumFontCard
@@ -622,10 +619,7 @@ export function AppearanceTab() {
             </div>
           </div>
           <div>
-            <h3 className="mb-1 text-base font-semibold sm:text-lg">像素字体 · 中文</h3>
-            <p className="text-muted-foreground mb-3 text-sm sm:mb-4">
-              千禧风格里中文使用的字体，切换后立即生效。
-            </p>
+            <h3 className="mb-3 text-base font-semibold sm:mb-4 sm:text-lg">像素字体（中文）</h3>
             <div className="grid grid-cols-1 gap-3 sm:grid-cols-2 sm:gap-4">
               {millenniumCjkFontOptions.map((option) => (
                 <MillenniumFontCard
@@ -1284,7 +1278,7 @@ export function AppearanceTab() {
                 step={1}
                 onValueChange={([paperWarmth]) => updateFutureRetroConfig({ paperWarmth })}
               />
-              <div className="text-muted-foreground mt-2 flex justify-between text-[11px]">
+              <div className="text-muted-foreground mt-2 flex justify-between text-xs">
                 <span>{t('settings.appearance.retroPaperWhite')}</span>
                 <span>{t('settings.appearance.retroPaperWarm')}</span>
               </div>

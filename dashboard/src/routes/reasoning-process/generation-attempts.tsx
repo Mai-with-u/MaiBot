@@ -131,7 +131,7 @@ export function GenerationTraceCard({ trace }: { trace: GenerationTraceSnapshot 
         <Badge variant="outline">{trace.status || 'unknown'}</Badge>
         <Badge variant="secondary">{trace.output_item_ids.length} Items</Badge>
         {trace.response_id && (
-          <span className="text-muted-foreground ml-auto font-mono text-[11px]">
+          <span className="text-muted-foreground ml-auto font-mono text-xs">
             {trace.response_id}
           </span>
         )}
@@ -148,7 +148,7 @@ export function GenerationTraceCard({ trace }: { trace: GenerationTraceSnapshot 
         </span>
       </div>
       {trace.output_item_ids.length > 0 && (
-        <div className="text-muted-foreground font-mono text-[10px] break-all">
+        <div className="text-muted-foreground font-mono text-xs break-all">
           output_item_ids: {trace.output_item_ids.join(', ')}
         </div>
       )}
@@ -176,7 +176,7 @@ export function ProviderResponseTimeline({ response }: { response: ProviderRespo
           <span className="text-muted-foreground text-xs">{String(response.model)}</span>
         )}
         {response.id !== undefined && (
-          <span className="text-muted-foreground ml-auto font-mono text-[11px]">
+          <span className="text-muted-foreground ml-auto font-mono text-xs">
             {String(response.id)}
           </span>
         )}
@@ -206,16 +206,16 @@ export function ProviderResponseTimeline({ response }: { response: ProviderRespo
                 className="bg-background/75 space-y-2 rounded-md border p-2.5 sm:p-3"
               >
                 <div className="flex flex-wrap items-center gap-2">
-                  <Badge variant="outline">#{index + 1}</Badge>
-                  <Badge variant="secondary" className="font-mono">
+                  <span className="text-muted-foreground text-xs font-medium tabular-nums">#{index + 1}</span>
+                  <Badge variant="secondary">
                     {getProviderItemTypeLabel(itemType)}
                   </Badge>
                   {itemType && (
-                    <span className="text-muted-foreground font-mono text-[11px]">{itemType}</span>
+                    <span className="text-muted-foreground font-mono text-xs">{itemType}</span>
                   )}
                   {itemStatus && <Badge variant="outline">{itemStatus}</Badge>}
                   {itemId && (
-                    <span className="text-muted-foreground ml-auto font-mono text-[11px]">
+                    <span className="text-muted-foreground ml-auto font-mono text-xs">
                       {itemId}
                     </span>
                   )}

@@ -1,13 +1,14 @@
-import { Component } from 'react'
-import { useTranslation } from 'react-i18next'
+import { AlertTriangle, Bug, ChevronDown, ChevronUp, Home, RefreshCw } from 'lucide-react'
+import { Component, useState } from 'react'
 import type { ErrorInfo, ReactNode } from 'react'
-import { AlertTriangle, RefreshCw, Home, ChevronDown, ChevronUp, Copy, Check, Bug } from 'lucide-react'
+import { useTranslation } from 'react-i18next'
+
+import { Alert, AlertDescription } from '@/components/ui/alert'
 import { Button } from '@/components/ui/button'
 import { Card, CardContent, CardDescription, CardHeader, CardTitle } from '@/components/ui/card'
-import { Alert, AlertDescription } from '@/components/ui/alert'
-import { ScrollArea } from '@/components/ui/scroll-area'
 import { Collapsible, CollapsibleContent, CollapsibleTrigger } from '@/components/ui/collapsible'
-import { useState } from 'react'
+import { ScrollArea } from '@/components/ui/scroll-area'
+import { CopyButton } from '@/components/ui/stateful-button'
 
 interface Props {
   children: ReactNode
@@ -66,12 +67,11 @@ function parseStackTrace(stack: string): StackFrame[] {
 function ErrorDetails({ error, errorInfo }: { error: Error; errorInfo: ErrorInfo | null }) {
   const [isStackOpen, setIsStackOpen] = useState(true)
   const [isComponentStackOpen, setIsComponentStackOpen] = useState(false)
-  const [copied, setCopied] = useState(false)
   const { t } = useTranslation()
 
   const stackFrames = error.stack ? parseStackTrace(error.stack) : []
 
-  const copyErrorInfo = async () => {
+  const copyErrorInfo = async (): Promise<boolean> => {
     const errorText = `
 Error: ${error.name}
 Message: ${error.message}
@@ -89,10 +89,10 @@ Time: ${new Date().toISOString()}
 
     try {
       await navigator.clipboard.writeText(errorText)
-      setCopied(true)
-      setTimeout(() => setCopied(false), 2000)
+      return true
     } catch (err) {
       console.error('Failed to copy:', err)
+      return false
     }
   }
 
@@ -177,24 +177,16 @@ Time: ${new Date().toISOString()}
       )}
 
       {/* 复制按钮 */}
-      <Button
+      <CopyButton
         variant="outline"
         size="sm"
-        onClick={copyErrorInfo}
+        onCopy={copyErrorInfo}
+        label={t('errorBoundary.copyError')}
+        copiedLabel={t('errorBoundary.copiedToClipboard')}
+        copiedDurationMs={2000}
+        iconClassName="h-4 w-4"
         className="w-full"
-      >
-        {copied ? (
-          <>
-            <Check className="mr-2 h-4 w-4 text-green-500" />
-            {t('errorBoundary.copiedToClipboard')}
-          </>
-        ) : (
-          <>
-            <Copy className="mr-2 h-4 w-4" />
-            {t('errorBoundary.copyError')}
-          </>
-        )}
-      </Button>
+      />
     </div>
   )
 }

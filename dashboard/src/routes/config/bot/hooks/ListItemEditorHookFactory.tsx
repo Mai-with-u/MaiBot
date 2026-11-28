@@ -29,8 +29,10 @@ import type { ConfigSchema, FieldSchema } from '@/types/config-schema'
  * 适用于 `List[ConfigBase]` 类型字段（schema.nested 中存在对应子配置类）。
  */
 export interface ListItemEditorOptions {
-  /** 用于生成每个 item 的标题，如 `${index+1} · ${item.platform}` */
+  /** 用于生成每个 item 的标题文本（用于无障碍标签和默认展示） */
   itemTitle?: (item: Record<string, unknown>, index: number) => string
+  /** 可选的富标题渲染，覆盖默认的单行字符串展示 */
+  renderItemTitle?: (item: Record<string, unknown>, index: number) => ReactNode
   /** 添加按钮文案 */
   addLabel?: string
   /** 顶部辅助说明 */
@@ -333,7 +335,8 @@ export function createListItemEditorHook(
     }
 
     const label = resolveLabel(schema, fieldPath)
-    const description = resolveDescription(schema)
+    const rawDescription = resolveDescription(schema)
+    const summaryText = options.helperText || (rawDescription && rawDescription !== label ? rawDescription : '')
     const addButtonPlacement = options.addButtonPlacement ?? 'bottom'
     const shouldCollapse = options.collapseWhen?.({ parentValues }) ?? false
     const [manuallyExpanded, setManuallyExpanded] = useState(false)
@@ -440,14 +443,15 @@ export function createListItemEditorHook(
             items.map((item, index) => {
               const title =
                 options.itemTitle?.(item, index) ?? `条目 ${index + 1}`
+              const renderedTitle = options.renderItemTitle?.(item, index)
               return (
                 <div
                   key={index}
                   className="space-y-3 rounded-lg border bg-card/40 p-4"
                 >
                   <div className="flex items-center justify-between gap-2">
-                    <div className="flex items-center gap-2 text-sm font-semibold">
-                      <span className="truncate">{title}</span>
+                    <div className="flex min-w-0 flex-wrap items-center gap-x-2 text-sm font-semibold">
+                      {renderedTitle ?? <span className="truncate">{title}</span>}
                     </div>
                     <Button
                       type="button"
@@ -476,11 +480,10 @@ export function createListItemEditorHook(
       // 弹窗已经给出标题与外框，这里只保留说明和内容，避免卡片层层嵌套。
       return (
         <div className="space-y-4">
-          {(description || options.helperText || shouldCollapse) && (
+          {(summaryText || shouldCollapse) && (
             <div className="flex items-start gap-3">
-              <div className="min-w-0 flex-1 space-y-1 text-muted-foreground">
-                {description && <p className="whitespace-pre-line text-sm">{description}</p>}
-                {options.helperText && <p className="text-xs">{options.helperText}</p>}
+              <div className="min-w-0 flex-1 text-muted-foreground">
+                {summaryText && <p className="whitespace-pre-line text-xs">{summaryText}</p>}
               </div>
               {collapseControl}
             </div>
@@ -521,11 +524,8 @@ export function createListItemEditorHook(
             </div>
             {collapseControl}
           </div>
-          {description && (
-            <CardDescription className="whitespace-pre-line">{description}</CardDescription>
-          )}
-          {options.helperText && (
-            <p className="text-xs text-muted-foreground">{options.helperText}</p>
+          {summaryText && (
+            <CardDescription className="whitespace-pre-line">{summaryText}</CardDescription>
           )}
         </CardHeader>
         <CardContent className="space-y-3">

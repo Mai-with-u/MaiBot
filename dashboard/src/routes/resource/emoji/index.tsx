@@ -1,20 +1,13 @@
-import type { LearningBrowserTabs } from '../learning'
+import { skipToken, useMutation, useQuery } from '@tanstack/react-query'
+import { ArrowUpDown, Ban, Lock, Search, SlidersHorizontal, Trash2 } from 'lucide-react'
+import { AnimatePresence, motion } from 'motion/react'
 import { useEffect, useRef, useState } from 'react'
 import { createPortal } from 'react-dom'
 
-import { skipToken, useMutation, useQuery } from '@tanstack/react-query'
-import { ArrowUpDown, Ban, Lock, Search, SlidersHorizontal, Trash2 } from 'lucide-react'
-
-import { Button } from '@/components/ui/button'
-import { Input } from '@/components/ui/input'
-import { Label } from '@/components/ui/label'
-import {
-  Select,
-  SelectContent,
-  SelectItem,
-  SelectTrigger,
-  SelectValue,
-} from '@/components/ui/select'
+import { MOBILE_GLASS_CLASS } from '@/components/layout/mobile-glass'
+import { MobileHeaderActions } from '@/components/layout/MobileHeaderActions'
+import { useHideMobileTabBar, useMobileTitleOverride } from '@/components/layout/mobile-nav-context'
+import { ActionBar } from '@/components/ui/action-bar'
 import {
   AlertDialog,
   AlertDialogAction,
@@ -25,6 +18,7 @@ import {
   AlertDialogHeader,
   AlertDialogTitle,
 } from '@/components/ui/alert-dialog'
+import { Button } from '@/components/ui/button'
 import {
   Dialog,
   DialogContent,
@@ -33,10 +27,16 @@ import {
   DialogHeader,
   DialogTitle,
 } from '@/components/ui/dialog'
-
-import { MOBILE_GLASS_CLASS } from '@/components/layout/mobile-glass'
-import { MobileHeaderActions } from '@/components/layout/MobileHeaderActions'
-import { useHideMobileTabBar, useMobileTitleOverride } from '@/components/layout/mobile-nav-context'
+import { Input } from '@/components/ui/input'
+import { Label } from '@/components/ui/label'
+import { PillNav } from '@/components/ui/pill-nav'
+import {
+  Select,
+  SelectContent,
+  SelectItem,
+  SelectTrigger,
+  SelectValue,
+} from '@/components/ui/select'
 import { useMediaQuery } from '@/hooks/use-media-query'
 import { useDataList } from '@/hooks/useDataList'
 import { useToast } from '@/hooks/use-toast'
@@ -51,15 +51,17 @@ import {
   registerEmoji,
   updateEmoji,
 } from '@/lib/emoji-api'
+import { useMotion } from '@/lib/motion'
 import { cn } from '@/lib/utils'
 import type { Emoji, EmojiStats } from '@/types/emoji'
 
+import type { LearningBrowserTabs } from '../learning'
+import { EmojiBrowser, type EmojiFilters } from './EmojiBrowser'
 import { EmojiCacheMaintenancePanel } from './EmojiCacheMaintenancePanel'
 import { EmojiDetailDialog, EmojiEditDialog, EmojiUploadDialog } from './EmojiDialogs'
-import { EmojiBrowser, type EmojiFilters } from './EmojiBrowser'
 import { EmojiQuickSettings } from './EmojiQuickSettings'
-import { emojiPageSizes, useEmojiPageSize } from './useEmojiPageSize'
 import { MobileEmojiGrid } from './MobileEmojiGrid'
+import { emojiPageSizes, useEmojiPageSize } from './useEmojiPageSize'
 
 // 页面可见时每 10 秒同步后台收录和使用状态，离开页面后停止轮询。
 const EMOJI_REFRESH_INTERVAL = 10_000
@@ -90,6 +92,7 @@ export function EmojiManagementPage({ browserTabs, uploadOpen, onUploadOpenChang
   const [mobileFilterOpen, setMobileFilterOpen] = useState(false)
   const selecting = isMobile && mobileSelecting
 
+  const { enabled: motionEnabled, transitions } = useMotion()
   const { toast } = useToast()
 
   // 表情包列表：分页/搜索/筛选/排序/多选统一由 useDataList 承载，
@@ -379,37 +382,40 @@ export function EmojiManagementPage({ browserTabs, uploadOpen, onUploadOpenChang
           onOpenCache={() => setCacheOpen(true)}
           error={list.isError ? list.error?.message : undefined}
           onRetry={() => list.refetch()}
-          batchActions={
-            list.selectedCount > 0 && (
-              <div className="mt-3 flex flex-wrap items-center gap-2 border-t pt-3">
-                <span className="text-muted-foreground mr-auto text-xs">
-                  已选择 {list.selectedCount} 个表情包
-                </span>
-                <Button variant="outline" size="xs" disabled={batchStatusMutation.isPending} onClick={list.clearSelection}>
-                  取消选择
-                </Button>
-                {(['lock', 'ban'] as const).map(action => (
-                  <Button key={action} variant="outline" size="xs" disabled={batchStatusMutation.isPending}
-                    onClick={() => batchStatusMutation.mutate({ ids: Array.from(list.selectedIds), action })}>
-                    {action === 'lock' ? <Lock /> : <Ban />}
-                    {batchStatusMutation.isPending && batchStatusMutation.variables.action === action
-                      ? `${batchStatusLabels[action]}中…` : `批量${batchStatusLabels[action]}`}
-                  </Button>
-                ))}
-                <Button
-                  variant="destructive"
-                  size="xs"
-                  disabled={batchStatusMutation.isPending}
-                  onClick={() => setBatchDeleteDialogOpen(true)}
-                >
-                  <Trash2 />
-                  批量删除
-                </Button>
-              </div>
-            )
-          }
         />
       )}
+      <ActionBar
+        open={!isMobile && list.selectedCount > 0}
+        count={list.selectedCount}
+        countLabel="个表情包"
+        onClear={() => {
+          if (!batchStatusMutation.isPending) list.clearSelection()
+        }}
+      >
+        {(['lock', 'ban'] as const).map((action) => (
+          <Button
+            key={action}
+            variant="outline"
+            size="xs"
+            disabled={batchStatusMutation.isPending}
+            onClick={() => batchStatusMutation.mutate({ ids: Array.from(list.selectedIds), action })}
+          >
+            {action === 'lock' ? <Lock /> : <Ban />}
+            {batchStatusMutation.isPending && batchStatusMutation.variables.action === action
+              ? `${batchStatusLabels[action]}中…`
+              : `批量${batchStatusLabels[action]}`}
+          </Button>
+        ))}
+        <Button
+          variant="destructive"
+          size="xs"
+          disabled={batchStatusMutation.isPending}
+          onClick={() => setBatchDeleteDialogOpen(true)}
+        >
+          <Trash2 />
+          批量删除
+        </Button>
+      </ActionBar>
       <div className="space-y-4 lg:hidden">
         {isMobile && (
           <div data-mobile-emoji-toolbar="true" className="space-y-3">
@@ -424,31 +430,22 @@ export function EmojiManagementPage({ browserTabs, uploadOpen, onUploadOpenChang
               />
             </div>
             {stats && (
-              <nav
-                aria-label="表情包状态"
+              <div
                 data-mobile-pill-nav="true"
-                className="-mx-4 flex gap-2 overflow-x-auto overflow-y-hidden px-4 py-1 [scrollbar-width:none]"
+                className="-mx-4 overflow-x-auto overflow-y-hidden px-4 py-1 [scrollbar-width:none]"
                 style={{ touchAction: 'pan-x pan-y' }}
               >
-                {statusOptions.map((option) => {
-                  const active = list.filters.status === option.value
-                  return (
-                    <button
-                      key={option.value}
-                      type="button"
-                      aria-pressed={active}
-                      data-active={active ? 'true' : 'false'}
-                      onClick={() => list.setFilter('status', option.value)}
-                      className={cn(
-                        'h-9 shrink-0 rounded-full px-4 text-[15px]',
-                        active ? 'bg-foreground text-background font-semibold' : 'bg-card'
-                      )}
-                    >
-                      {option.label} {option.count}
-                    </button>
-                  )
-                })}
-              </nav>
+                <PillNav<EmojiFilters['status']>
+                  as="nav"
+                  ariaLabel="表情包状态"
+                  variant="pill"
+                  size="xs"
+                  scrollable
+                  value={list.filters.status}
+                  options={statusOptions}
+                  onChange={(status) => list.setFilter('status', status)}
+                />
+              </div>
             )}
           </div>
         )}
@@ -605,46 +602,59 @@ export function EmojiManagementPage({ browserTabs, uploadOpen, onUploadOpenChang
       </MobileHeaderActions>
 
       {/* 手机多选的批量操作栏，占据底部标签栏的位置；页面外层有 transform，需挂到 body 上才能贴底 */}
-      {selecting &&
+      {typeof document !== 'undefined' &&
         createPortal(
-          <div
-            role="toolbar"
-            aria-label="批量操作"
-            data-mobile-batch-toolbar="true"
-            className={cn(
-              'fixed inset-x-4 bottom-[calc(env(safe-area-inset-bottom)+14px)] z-40 grid h-[62px] grid-cols-4 items-center rounded-full px-2',
-              MOBILE_GLASS_CLASS
-            )}
-          >
-            {([
-              { key: 'register', label: '注册' },
-              { key: 'lock', label: '锁定' },
-              { key: 'ban', label: '禁用' },
-              { key: 'delete', label: '删除' },
-            ] as const).map((action) => (
-              <button
-                key={action.key}
-                type="button"
-                data-mobile-batch-action={action.key}
-                disabled={list.selectedCount === 0 || batchStatusMutation.isPending}
-                onClick={() => {
-                  const ids = Array.from(list.selectedIds)
-                  if (action.key === 'delete') setBatchDeleteDialogOpen(true)
-                  else
-                    batchStatusMutation.mutate({
-                      ids,
-                      action: action.key,
-                    })
-                }}
+          <AnimatePresence initial={false}>
+            {selecting && (
+              <motion.div
+                key="mobile-batch-toolbar"
+                role="toolbar"
+                aria-label="批量操作"
+                data-mobile-batch-toolbar="true"
+                initial={motionEnabled ? { opacity: 0, y: 24, scale: 0.96 } : false}
+                animate={{ opacity: 1, y: 0, scale: 1 }}
+                exit={
+                  motionEnabled
+                    ? { opacity: 0, y: 20, scale: 0.96, transition: transitions.exit }
+                    : undefined
+                }
+                transition={transitions.snappy}
                 className={cn(
-                  'h-12 rounded-full text-[15px] font-medium disabled:opacity-40',
-                  action.key === 'delete' && 'text-[#ff3b30]'
+                  'fixed inset-x-4 bottom-[calc(env(safe-area-inset-bottom)+14px)] z-40 grid h-[62px] grid-cols-4 items-center rounded-full px-2',
+                  MOBILE_GLASS_CLASS
                 )}
               >
-                {action.label}
-              </button>
-            ))}
-          </div>,
+                {([
+                  { key: 'register', label: '注册' },
+                  { key: 'lock', label: '锁定' },
+                  { key: 'ban', label: '禁用' },
+                  { key: 'delete', label: '删除' },
+                ] as const).map((action) => (
+                  <button
+                    key={action.key}
+                    type="button"
+                    data-mobile-batch-action={action.key}
+                    disabled={list.selectedCount === 0 || batchStatusMutation.isPending}
+                    onClick={() => {
+                      const ids = Array.from(list.selectedIds)
+                      if (action.key === 'delete') setBatchDeleteDialogOpen(true)
+                      else
+                        batchStatusMutation.mutate({
+                          ids,
+                          action: action.key,
+                        })
+                    }}
+                    className={cn(
+                      'h-12 rounded-full text-[15px] font-medium disabled:opacity-40',
+                      action.key === 'delete' && 'text-[#ff3b30]'
+                    )}
+                  >
+                    {action.label}
+                  </button>
+                ))}
+              </motion.div>
+            )}
+          </AnimatePresence>,
           document.body
         )}
 

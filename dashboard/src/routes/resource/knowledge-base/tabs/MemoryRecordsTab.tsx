@@ -283,14 +283,9 @@ function RecordButton({
             ) : null}
             {/* 只展示可读来源（聊天流名称 / 人物姓名 / 导入来源），不暴露内部来源标记 */}
             {record.source_label ? (
-              <>
-                {knowledgeTypeLabel || record.status !== 'active' ? (
-                  <span aria-hidden="true">·</span>
-                ) : null}
-                <span className="max-w-full truncate" title={record.source_label}>
-                  来自 {record.source_label}
-                </span>
-              </>
+              <span className="max-w-full truncate" title={record.source_label}>
+                来自 {record.source_label}
+              </span>
             ) : null}
           </span>
         ) : null}
@@ -900,7 +895,7 @@ export function MemoryRecordsTab({ onAction, onCorrectionPlan, searchModeTabs }:
                       来源：{detail.record.source_label || detail.record.source}
                       {detail.record.source_label &&
                       detail.record.source_label !== detail.record.source ? (
-                        <code className="ml-1 text-[11px]">{detail.record.source}</code>
+                        <code className="ml-1 text-xs">{detail.record.source}</code>
                       ) : null}
                     </div>
                   ) : null}

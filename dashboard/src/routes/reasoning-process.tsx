@@ -9,7 +9,6 @@ import {
   ChevronRight,
   Clock,
   Code2,
-  Copy,
   Cpu,
   Download,
   FileCode2,
@@ -37,6 +36,7 @@ import {
 import { Badge } from '@/components/ui/badge'
 import { Button } from '@/components/ui/button'
 import { FilterPanel, FilterPanelToggle } from '@/components/ui/filter-panel'
+import { CopyButton } from '@/components/ui/stateful-button'
 import { StatusLight } from '@/components/ui/status-light'
 import { DataPanel } from '@/components/ui/surface'
 import '@/styles/data-rows.css'
@@ -915,7 +915,7 @@ export function ReasoningProcessPage({
     }
   }
 
-  async function handleCopyPrompt() {
+  async function handleCopyPrompt(): Promise<boolean> {
     const copyContent =
       textContent || buildStructuredPromptCopyText(structuredPrompt) || jsonContent
     if (!copyContent || contentLoading) {
@@ -924,7 +924,7 @@ export function ReasoningProcessPage({
         description: '请先选择一条包含 prompt 内容的记录',
         variant: 'destructive',
       })
-      return
+      return false
     }
 
     try {
@@ -933,12 +933,14 @@ export function ReasoningProcessPage({
         title: '已复制完整 Prompt',
         description: selected ? getReasoningRecordTitle(selected, selectedSessionInfo) : undefined,
       })
+      return true
     } catch (err) {
       toast({
         title: '复制失败',
         description: err instanceof Error ? err.message : '请手动选择文本复制',
         variant: 'destructive',
       })
+      return false
     }
   }
 
@@ -1276,7 +1278,7 @@ export function ReasoningProcessPage({
           <span data-reasoning-status="true" className="flex items-center gap-2 text-xs whitespace-nowrap">
             <StatusLight status={recentStageNames.size > 0 ? 'on' : 'off'} decorative />
             一小时内有请求
-            <span className="text-muted-foreground font-mono">
+            <span className="text-muted-foreground tabular-nums">
               {recentStageNames.size} / {stageCards.length} 个模块
             </span>
           </span>,
@@ -1304,7 +1306,7 @@ export function ReasoningProcessPage({
           <div role="row" data-rows-group="true">
             <span role="cell">
               <span>{row.label}</span>
-              <span className="font-mono font-normal"> · {row.items.length} 个模块</span>
+              <span className="text-muted-foreground ml-2 font-normal tabular-nums">{row.items.length} 个模块</span>
             </span>
           </div>
           {row.items.map((item) => {
@@ -1340,8 +1342,8 @@ export function ReasoningProcessPage({
                     {item.session_count} 个会话
                   </span>
                 </span>
-                <span role="cell" className="text-right font-mono max-sm:hidden">{item.session_count}</span>
-                <span role="cell" className="text-muted-foreground font-mono text-xs max-sm:hidden">
+                <span role="cell" className="text-right tabular-nums max-sm:hidden">{item.session_count}</span>
+                <span role="cell" className="text-muted-foreground text-xs tabular-nums max-sm:hidden">
                   {item.latest_modified_at > 0 ? formatTime(null, item.latest_modified_at) : '—'}
                 </span>
                 <span role="cell" className="relative z-10 flex justify-end">
@@ -1669,7 +1671,7 @@ export function ReasoningProcessPage({
                         <div className="min-w-0 flex-1">
                           <div className="truncate text-sm font-medium">{selectedTitle}</div>
                           {(headerMeta.sessionId || headerMeta.callId || selectedTokenText) && (
-                            <div className="text-muted-foreground mt-0.5 flex min-w-0 flex-wrap gap-x-3 gap-y-0 text-[11px] leading-4">
+                            <div className="text-muted-foreground mt-0.5 flex min-w-0 flex-wrap gap-x-3 gap-y-0 text-xs leading-4">
                               {headerMeta.sessionId && (
                                 <span className="min-w-0 truncate">
                                   会话ID: {headerMeta.sessionId}
@@ -1717,11 +1719,13 @@ export function ReasoningProcessPage({
                                 )}
                               </TabsList>
                             )}
-                            <Button
+                            <CopyButton
                               variant="outline"
                               size="sm"
-                              className="h-8 gap-1.5"
-                              onClick={handleCopyPrompt}
+                              className="h-8"
+                              onCopy={handleCopyPrompt}
+                              label="复制"
+                              copiedLabel="已复制"
                               disabled={
                                 contentLoading ||
                                 !(
@@ -1731,10 +1735,7 @@ export function ReasoningProcessPage({
                                 )
                               }
                               title="复制完整 Prompt"
-                            >
-                              <Copy className="h-3.5 w-3.5" />
-                              复制
-                            </Button>
+                            />
                             <Popover>
                               <PopoverTrigger asChild>
                                 <Button

@@ -24,7 +24,10 @@ export function ChatConversationHeader({ tab, onClear, onObserve }: { tab: ChatT
       avatar={<ConversationAvatar src={avatar} name={name} bot={!virtual} />}
       subtitle={
         <StatusIndicator variant="inline" status={tab.isConnected ? 'on' : 'off'}>
-          {virtual ? t('chat.sidebar.virtualBadge') : '本地聊天室'} · {connection}
+          <span className="inline-flex items-center gap-2">
+            <span>{virtual ? t('chat.sidebar.virtualBadge') : '本地聊天室'}</span>
+            <span>{connection}</span>
+          </span>
         </StatusIndicator>
       }
       actions={
@@ -38,8 +41,9 @@ export function ChatConversationHeader({ tab, onClear, onObserve }: { tab: ChatT
             </PopoverTrigger>
             <PopoverContent align="end">
               <p className="text-sm">{name}</p>
-              <p className="text-muted-foreground mt-2 text-xs">
-                {tab.messages.length} 条消息 · {connection}
+              <p className="text-muted-foreground mt-2 flex items-center gap-2 text-xs">
+                <span className="tabular-nums">{tab.messages.length} 条消息</span>
+                <span>{connection}</span>
               </p>
               {!virtual && <LocalBotAvatarSettings botQq={tab.sessionInfo.bot_qq} />}
             </PopoverContent>

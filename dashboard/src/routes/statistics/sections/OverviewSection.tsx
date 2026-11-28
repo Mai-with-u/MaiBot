@@ -116,18 +116,28 @@ function UsageModule({ period, locale, compare }: Omit<OverviewProps, 'onShowMod
       <BoardScreen>
         <div data-stats-kpis="true">
           {kpis.map((kpi) => (
-            <div key={kpi.key} data-stats-kpi="true">
+            <div
+              key={kpi.key}
+              data-stats-kpi="true"
+              className="rounded-lg transition-colors duration-150 hover:bg-muted/35"
+            >
               <div className="flex flex-wrap items-center gap-1.5">
-                <span data-board-label="true">{kpi.label}</span>
+                <span data-board-label="true" className="whitespace-nowrap">
+                  {kpi.label}
+                </span>
                 <DeltaBadge delta={kpi.delta} />
               </div>
-              <strong data-board-number="true" title={kpi.value}>
+              <strong
+                data-board-number="true"
+                className="whitespace-nowrap tabular-nums"
+                title={kpi.value}
+              >
                 {kpi.value}
               </strong>
               {kpi.details.map(([label, value]) => (
                 <div key={label} data-stats-kv="true">
-                  <span>{label}</span>
-                  <span>{value}</span>
+                  <span className="truncate">{label}</span>
+                  <span className="shrink-0 whitespace-nowrap tabular-nums">{value}</span>
                 </div>
               ))}
               <SparkBars values={kpi.spark} label={t('statisticsPage.summary.sparkLabel', { name: kpi.label })} />
@@ -162,7 +172,10 @@ function CacheModule({ period, locale }: { period: DetailedStatisticsPeriod; loc
               <span data-board-label="true" className="truncate" title={row.name}>
                 {row.name}
               </span>
-              <strong data-board-number="true" className={row.primary ? 'text-2xl' : 'text-sm'}>
+              <strong
+                data-board-number="true"
+                className={row.primary ? 'whitespace-nowrap text-2xl tabular-nums' : 'whitespace-nowrap text-sm tabular-nums'}
+              >
                 {formatPercent(row.rate)}
               </strong>
             </div>
@@ -219,7 +232,15 @@ function ModelCostModule({
           <>
             <div data-stats-stack="true" className="mb-1.5" aria-hidden="true">
               {ranked.items.map((item) => (
-                <span key={item.name || 'other'} style={{ flexGrow: item.value, background: item.color }} />
+                <span
+                  key={item.name || 'other'}
+                  className="transition-[width] duration-300 ease-out"
+                  style={{
+                    width: `${ranked.total > 0 ? (item.value / ranked.total) * 100 : 0}%`,
+                    minWidth: item.value > 0 ? '2px' : '0px',
+                    background: item.color,
+                  }}
+                />
               ))}
             </div>
             {ranked.items.map((item) => (
@@ -228,7 +249,9 @@ function ModelCostModule({
                 <span data-stats-row-name="true" title={item.name}>
                   {item.other ? t('statisticsPage.other', { count: ranked.otherCount }) : item.name}
                 </span>
-                <span data-board-number="true">{formatPercent(item.value / ranked.total)}</span>
+                <span data-board-number="true" className="whitespace-nowrap tabular-nums">
+                  {formatPercent(item.value / ranked.total)}
+                </span>
               </div>
             ))}
             {ranked.zeroCount > 0 && (
@@ -274,7 +297,12 @@ function TokenFlowModule({ period, locale }: { period: DetailedStatisticsPeriod;
                 <span
                   key={segment.key}
                   title={`${segment.label} ${formatNumber(segment.value, locale)}`}
-                  style={{ flexGrow: segment.value, background: segment.color }}
+                  className="transition-[width] duration-300 ease-out"
+                  style={{
+                    width: `${total > 0 ? (segment.value / total) * 100 : 0}%`,
+                    minWidth: segment.value > 0 ? '2px' : '0px',
+                    background: segment.color,
+                  }}
                 />
               ))}
             </div>
@@ -283,15 +311,17 @@ function TokenFlowModule({ period, locale }: { period: DetailedStatisticsPeriod;
                 <div key={segment.key} data-stats-row="true">
                   <Swatch color={segment.color} />
                   <span data-stats-row-name="true">{segment.label}</span>
-                  <span data-board-number="true">{formatNumber(segment.value, locale)}</span>
-                  <span data-board-label="true" className="w-12 text-right">
+                  <span data-board-number="true" className="whitespace-nowrap tabular-nums">
+                    {formatNumber(segment.value, locale)}
+                  </span>
+                  <span data-board-label="true" className="w-12 shrink-0 whitespace-nowrap text-right tabular-nums">
                     {formatPercent(segment.value / total)}
                   </span>
                 </div>
               ))}
               <div data-stats-row="true">
                 <span data-stats-row-name="true">{t('statisticsPage.flow.ioRatio')}</span>
-                <span data-board-number="true">
+                <span data-board-number="true" className="whitespace-nowrap tabular-nums">
                   {summary.output_tokens > 0 ? `${(summary.input_tokens / summary.output_tokens).toFixed(1)} : 1` : 'N/A'}
                 </span>
               </div>
@@ -363,8 +393,10 @@ function UnitCostModule({ period, locale, compare }: Omit<OverviewProps, 'onShow
         {rows.map((row) => (
           <div key={row.label} data-stats-row="true" className="text-sm">
             <span data-stats-row-name="true">{row.label}</span>
-            <span data-board-number="true">{row.value}</span>
-            <span className="inline-flex w-20 justify-end">
+            <span data-board-number="true" className="whitespace-nowrap tabular-nums">
+              {row.value}
+            </span>
+            <span className="inline-flex w-20 shrink-0 justify-end">
               <DeltaBadge delta={row.delta} />
             </span>
           </div>

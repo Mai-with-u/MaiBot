@@ -18,7 +18,6 @@ import { Input } from '@/components/ui/input'
 import { Label } from '@/components/ui/label'
 import { fieldTitleClassName } from '@/components/dynamic-form/fieldStyle'
 import { getChatStreams, type ChatStream } from '@/lib/chat-management-api'
-import { resolveLocalizedText } from '@/lib/config-label'
 import type { FieldHookComponent } from '@/lib/field-hooks'
 import {
   buildAMemorixRetrievalChatTokenOptions,
@@ -105,20 +104,12 @@ export const AMemorixRetrievalChatsHook: FieldHookComponent = ({
     setDialogOpen(false)
   }
 
-  const fieldLabel =
-    schema && 'label' in schema
-      ? resolveLocalizedText(schema.label, undefined, '聊天流列表')
-      : '聊天流列表'
   const retrievalCopy = resolveAMemorixRetrievalChatsCopy(fieldPath)
-  const isEntryFilter = fieldPath === 'a_memorix.filter.chats'
-  const defaultDescription = isEntryFilter
-    ? '选择要应用到入口聊天过滤的聊天流规则。'
-    : '选择要应用到当前跨聊天流检索结果类型的聊天流规则。'
   const rawDescription = schema && 'description' in schema ? schema.description : ''
-  const fieldDescription =
+  const customDescription =
     typeof rawDescription === 'string' && rawDescription && rawDescription !== '聊天流列表'
       ? rawDescription
-      : defaultDescription
+      : ''
 
   return (
     <div className="min-w-0 space-y-3">
@@ -132,13 +123,8 @@ export const AMemorixRetrievalChatsHook: FieldHookComponent = ({
           </Badge>
         </div>
         <p className="text-xs leading-5 text-muted-foreground">
-          {fieldDescription} {retrievalCopy.helperText}
+          {customDescription || retrievalCopy.helperText}
         </p>
-        {fieldLabel !== '聊天流列表' && fieldLabel !== retrievalCopy.title && (
-          <p className="text-[11px] leading-4 text-muted-foreground/80">
-            配置字段：{fieldLabel}
-          </p>
-        )}
       </div>
 
       <div className="flex min-w-0 flex-wrap items-center justify-between gap-2">

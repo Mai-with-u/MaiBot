@@ -74,7 +74,8 @@ describe('Select 包装层', () => {
     const trigger = document.querySelector('[data-dashboard-select-trigger="true"]')
     expect(trigger).not.toBeNull()
     expect(trigger).toHaveClass('extra-trigger')
-    expect(trigger?.querySelector('.lucide-chevron-down')).not.toBeNull()
+    expect(trigger?.querySelector('[data-select-chevron="true"]')).not.toBeNull()
+    expect(trigger?.querySelector('.lucide-chevrons-up-down')).not.toBeNull()
   })
 
   it('默认 popper 定位给内容和视口追加偏移与尺寸类', () => {

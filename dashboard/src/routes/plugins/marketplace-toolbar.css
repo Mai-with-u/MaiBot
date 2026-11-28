@@ -14,18 +14,15 @@
 
   .marketplace-toolbar-sticky > [data-plugin-market-toolbar] {
     pointer-events: auto;
-    transition: padding 240ms cubic-bezier(0.22, 1, 0.36, 1);
+    transition-property: background-color, box-shadow, opacity, transform;
+    transition-duration: var(--motion-duration-normal, 240ms);
+    transition-timing-function: var(--motion-ease, cubic-bezier(0.22, 1, 0.36, 1));
   }
 
   [data-plugin-market-toolbar] :is(input, [role='combobox'], [data-dashboard-button], [data-plugin-market-count-badge], [data-plugin-market-compat] label) {
-    transition-property: height, min-height, width, padding, font-size, background-color, color, box-shadow;
-    transition-duration: 240ms;
-    transition-timing-function: cubic-bezier(0.22, 1, 0.36, 1);
-  }
-
-  [data-plugin-market-toolbar] > .flex,
-  [data-plugin-market-toolbar] :is([data-plugin-market-controls], [data-plugin-market-compat]) {
-    transition: gap 240ms cubic-bezier(0.22, 1, 0.36, 1), padding 240ms cubic-bezier(0.22, 1, 0.36, 1);
+    transition-property: background-color, color, box-shadow, opacity, transform;
+    transition-duration: var(--motion-duration-normal, 240ms);
+    transition-timing-function: var(--motion-ease, cubic-bezier(0.22, 1, 0.36, 1));
   }
 
   .marketplace-toolbar-sticky > [data-compact='true'] {

@@ -16,6 +16,7 @@ import {
 import { Input } from '@/components/ui/input'
 import { Label } from '@/components/ui/label'
 import { ScrollArea } from '@/components/ui/scroll-area'
+import { StatefulButton } from '@/components/ui/stateful-button'
 import type {
   MemoryDeleteExecutePayload,
   MemoryDeletePreviewItemPayload,
@@ -48,20 +49,20 @@ function formatCountLabel(label: string, value: number): string {
 
 function PreviewItemList({ items }: { items: MemoryDeletePreviewItemPayload[] }) {
   if (items.length <= 0) {
-    return <p className="text-sm text-muted-foreground">当前预览没有可展示的明细项。</p>
+    return <p className="p-3 text-sm text-muted-foreground">当前预览没有可展示的明细项。</p>
   }
 
   return (
-    <div className="space-y-2">
+    <div className="divide-y divide-border/60">
       {items.slice(0, 16).map((item) => (
-        <div key={`${item.item_type}:${item.item_hash}:${item.item_key ?? ''}`} className="rounded-lg border bg-muted/30 p-3">
+        <div key={`${item.item_type}:${item.item_hash}:${item.item_key ?? ''}`} className="p-3">
           <div className="flex flex-wrap items-center gap-2">
             <Badge variant="outline">{item.item_type}</Badge>
             {item.source ? <Badge variant="secondary">{item.source}</Badge> : null}
           </div>
           <div className="mt-2 text-sm font-medium break-words">{item.label || item.item_key || item.item_hash}</div>
           {item.preview ? <div className="mt-1 text-xs text-muted-foreground break-words">{item.preview}</div> : null}
-          <code className="mt-2 block break-all text-[11px] text-muted-foreground">{item.item_hash || item.item_key}</code>
+          <code className="mt-2 block break-all text-xs text-muted-foreground">{item.item_hash || item.item_key}</code>
         </div>
       ))}
     </div>
@@ -105,6 +106,10 @@ export function MemoryDeleteDialog({
   const previewResetKey = `${open}:${preview?.mode ?? ''}:${preview?.item_count ?? ''}`
   const [seenPreviewResetKey, setSeenPreviewResetKey] = useState(previewResetKey)
   const [seenItemSearch, setSeenItemSearch] = useState(itemSearch)
+  const restoreSessionKey = `${open}:${result?.operation_id ?? ''}`
+  const [seenRestoreSessionKey, setSeenRestoreSessionKey] = useState(restoreSessionKey)
+  const [wasRestoring, setWasRestoring] = useState(restoring)
+  const [restored, setRestored] = useState(false)
   const counts = preview?.counts ?? result?.counts ?? {}
   const previewSources = Array.isArray(preview?.sources) ? preview.sources : []
   const previewItems = Array.isArray(preview?.items) ? preview.items : EMPTY_PREVIEW_ITEMS
@@ -151,6 +156,19 @@ export function MemoryDeleteDialog({
     setItemPage(itemPageCount)
   }
 
+  if (seenRestoreSessionKey !== restoreSessionKey) {
+    setSeenRestoreSessionKey(restoreSessionKey)
+    setWasRestoring(restoring)
+    setRestored(false)
+  } else if (wasRestoring !== restoring) {
+    setWasRestoring(restoring)
+    if (wasRestoring && !restoring && !error) {
+      setRestored(true)
+    } else if (restoring) {
+      setRestored(false)
+    }
+  }
+
   return (
     <Dialog open={open} onOpenChange={onOpenChange}>
       <DialogContent className="max-w-3xl max-h-[85vh] grid grid-rows-[auto_1fr_auto]" confirmOnEnter>
@@ -175,7 +193,7 @@ export function MemoryDeleteDialog({
 
           {preview ? (
             <>
-              <div className="rounded-xl border bg-muted/30 p-4">
+              <div className="rounded-lg border bg-muted/30 p-4">
                 <div className="flex flex-wrap items-center gap-2">
                   <Badge>{formatMode(preview.mode)}</Badge>
                   <Badge variant="secondary">{formatCountLabel('预览项', Number(preview.item_count ?? previewItems.length))}</Badge>
@@ -222,10 +240,8 @@ export function MemoryDeleteDialog({
                     </div>
                   </div>
                 </div>
-                <ScrollArea className="h-[320px] rounded-lg border bg-background/60">
-                  <div className="p-3">
-                    <PreviewItemList items={pagedPreviewItems} />
-                  </div>
+                <ScrollArea className="h-[320px] rounded-md border">
+                  <PreviewItemList items={pagedPreviewItems} />
                 </ScrollArea>
                 <div className="flex items-center justify-between gap-2">
                   <Button
@@ -282,10 +298,16 @@ export function MemoryDeleteDialog({
             关闭
           </Button>
           {result?.success && onRestore ? (
-            <Button variant="outline" onClick={onRestore} disabled={restoring}>
-              <RotateCcw className="mr-2 h-4 w-4" />
-              {restoring ? '恢复中...' : '恢复本次删除'}
-            </Button>
+            <StatefulButton
+              variant="outline"
+              status={restoring ? 'loading' : restored ? 'success' : 'idle'}
+              idleLabel="恢复本次删除"
+              loadingLabel="恢复中..."
+              successLabel="已恢复"
+              idleIcon={<RotateCcw className="h-4 w-4" />}
+              onClick={onRestore}
+              disabled={restoring}
+            />
           ) : null}
           {!result?.success ? (
             <Button

@@ -13,7 +13,7 @@ export function ExpressionScopeStatus({
     status === 'on' ? label : status === 'mixed' ? `部分${label}` : `${label}关闭`
 
   return (
-    <span className="flex flex-col text-[9px] leading-[10px] whitespace-nowrap">
+    <span className="flex flex-col text-xs leading-tight whitespace-nowrap">
       <StatusIndicator status={enableLearning} variant="inline">
         {statusLabel('学习', enableLearning)}
       </StatusIndicator>

@@ -506,7 +506,7 @@ function NodeRenderer({ node, ...props }: Omit<RendererProps, 'nodes'> & { node:
                   dataKey={y}
                   stroke={`var(--color-${y})`}
                   strokeWidth={2}
-                  dot={{ r: 3, fill: `var(--color-${y})` }}
+                  dot={value.length <= 30 ? { r: 3, fill: `var(--color-${y})` } : false}
                   isAnimationActive={false}
                 />
               </LineChart>

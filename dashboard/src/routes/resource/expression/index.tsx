@@ -1,9 +1,9 @@
-import { Settings } from 'lucide-react'
 import {
   ArrowLeft,
   FileClock,
   MoreHorizontal,
   Network,
+  Settings,
   Star,
   StarOff,
   Trash2,
@@ -17,8 +17,9 @@ import type { Ref } from 'react'
 import { useQuery } from '@tanstack/react-query'
 
 import { ChatScopeFilterPanel } from '@/components/chat-scope-filter-panel'
-import { LearningExportDialog } from '@/components/learning-export-dialog'
 import { LearningCreateDialog } from '@/components/learning-create-dialog'
+import { LearningExportDialog } from '@/components/learning-export-dialog'
+import { ActionBar } from '@/components/ui/action-bar'
 import { Button } from '@/components/ui/button'
 import {
   DataBrowserHeader,
@@ -486,7 +487,7 @@ export function ExpressionManagementPage({
                         <span className="flex min-w-0 items-center gap-1">
                           <span className="truncate">{chat.chat_name}</span>
                           {(chat.is_legacy || chat.is_other_account) && (
-                            <span className="shrink-0 rounded border px-1 text-[10px] font-normal">
+                            <span className="shrink-0 rounded border px-1 text-xs font-normal">
                               {chat.is_legacy ? '旧格式' : '其他账号'}
                             </span>
                           )}
@@ -657,7 +658,7 @@ export function ExpressionManagementPage({
                           </span>
                         </Button>
                       </DropdownMenuTrigger>
-                      <DropdownMenuContent align="end" className="expression-actions-menu-content">
+                      <DropdownMenuContent align="end">
                         <DropdownMenuItem
                           onSelect={() =>
                             list.setFilter(
@@ -694,43 +695,7 @@ export function ExpressionManagementPage({
                     </DropdownMenu>
                   </>
                 }
-              >
-                {/* 多选后的操作留在窗口工具栏里，不挤出第二个外框。 */}
-                {list.selectedCount > 0 && (
-                  <div className="mt-3 flex flex-wrap items-center gap-2 border-t pt-3">
-                    <span className="text-muted-foreground mr-auto text-xs">
-                      已选择 {list.selectedCount} 个表达方式
-                    </span>
-                    <Button variant="outline" size="xs" onClick={list.clearSelection}>
-                      取消选择
-                    </Button>
-                    <Button
-                      variant="outline"
-                      size="xs"
-                      onClick={() => batchReviewStatus(Array.from(list.selectedIds), true)}
-                    >
-                      <Star className="h-3 w-3" />
-                      批量精选
-                    </Button>
-                    <Button
-                      variant="outline"
-                      size="xs"
-                      onClick={() => batchReviewStatus(Array.from(list.selectedIds), false)}
-                    >
-                      <StarOff className="h-3 w-3" />
-                      取消精选
-                    </Button>
-                    <Button
-                      variant="destructive"
-                      size="xs"
-                      onClick={() => setIsBatchDeleteDialogOpen(true)}
-                    >
-                      <Trash2 className="h-3 w-3" />
-                      批量删除
-                    </Button>
-                  </div>
-                )}
-              </DataToolbar>
+              />
             }
             expressions={list.items}
             loading={list.isPending}
@@ -789,6 +754,39 @@ export function ExpressionManagementPage({
       {activeView === 'clusters' && (
         <ExpressionClusterBrowser onOpenExpression={handleOpenExpressionById} />
       )}
+
+      {/* 批量操作悬浮弹条，避免顶动主表布局 */}
+      <ActionBar
+        open={activeView === 'list' && list.selectedCount > 0}
+        count={list.selectedCount}
+        countLabel="个表达方式"
+        onClear={list.clearSelection}
+      >
+        <Button
+          variant="outline"
+          size="xs"
+          onClick={() => batchReviewStatus(Array.from(list.selectedIds), true)}
+        >
+          <Star className="h-3 w-3" />
+          批量精选
+        </Button>
+        <Button
+          variant="outline"
+          size="xs"
+          onClick={() => batchReviewStatus(Array.from(list.selectedIds), false)}
+        >
+          <StarOff className="h-3 w-3" />
+          取消精选
+        </Button>
+        <Button
+          variant="destructive"
+          size="xs"
+          onClick={() => setIsBatchDeleteDialogOpen(true)}
+        >
+          <Trash2 className="h-3 w-3" />
+          批量删除
+        </Button>
+      </ActionBar>
 
       {/* 创建对话框 */}
       <LearningCreateDialog

@@ -274,7 +274,7 @@ function renderCascadePreview(cascade?: MemoryCorrectionCascadePreviewPayload | 
     return null
   }
   return (
-    <div className="space-y-3 rounded-lg border bg-muted/20 p-3">
+    <div className="space-y-3 rounded-md border border-border/60 bg-muted/20 p-3">
       <div className="flex flex-wrap items-center gap-2">
         <span className="text-sm font-semibold">联动影响</span>
         {getCascadeSummaryItems(cascade).map((item) => (
@@ -282,16 +282,16 @@ function renderCascadePreview(cascade?: MemoryCorrectionCascadePreviewPayload | 
         ))}
       </div>
       {cascade.relations.length > 0 ? (
-        <div className="grid gap-2">
+        <div className="divide-y divide-border/60 border-t border-border/60">
           {cascade.relations.slice(0, 6).map((relation) => (
-            <div key={`${relation.paragraph_hash}:${relation.relation_hash}`} className="rounded-md border bg-background/70 p-2 text-xs">
+            <div key={`${relation.paragraph_hash}:${relation.relation_hash}`} className="py-2 text-xs">
               <div className="flex flex-wrap items-center gap-2">
                 <Badge variant={relation.action === 'skipped_protected' ? 'secondary' : 'outline'}>
                   {formatCascadeRelationAction(relation.action)}
                 </Badge>
                 <span className="break-words">{relation.subject} / {relation.predicate} / {relation.object}</span>
               </div>
-              <div className="mt-1 font-mono text-[11px] break-all text-muted-foreground">{relation.relation_hash}</div>
+              <div className="mt-1 font-mono text-xs break-all text-muted-foreground">{relation.relation_hash}</div>
             </div>
           ))}
         </div>
@@ -310,17 +310,19 @@ function renderRollbackStaleMarks(title: string, items?: MemoryCorrectionStaleMa
     return null
   }
   return (
-    <div className="space-y-2">
+    <div className="space-y-1.5">
       <div className="text-xs font-semibold">{title}</div>
-      {items.slice(0, 5).map((item) => (
-        <div key={`${title}:${item.paragraph_hash}:${item.relation_hash}:${item.action}`} className="rounded-md border bg-background/70 p-2 text-[11px]">
-          <div className="flex flex-wrap items-center gap-2">
-            <Badge variant="outline">{item.action}</Badge>
-            <span className="font-mono break-all">{item.paragraph_hash}</span>
+      <div className="divide-y divide-border/60 border-t border-border/60">
+        {items.slice(0, 5).map((item) => (
+          <div key={`${title}:${item.paragraph_hash}:${item.relation_hash}:${item.action}`} className="py-2 text-xs">
+            <div className="flex flex-wrap items-center gap-2">
+              <Badge variant="outline">{item.action}</Badge>
+              <span className="font-mono break-all">{item.paragraph_hash}</span>
+            </div>
+            <div className="mt-1 font-mono break-all text-muted-foreground">{item.relation_hash}</div>
           </div>
-          <div className="mt-1 font-mono break-all text-muted-foreground">{item.relation_hash}</div>
-        </div>
-      ))}
+        ))}
+      </div>
     </div>
   )
 }
@@ -347,18 +349,18 @@ function getPlanImpactSummary(plan: MemoryCorrectionPlanPayload | null, operatio
 
 function renderCandidate(candidate: MemoryCorrectionCandidatePayload) {
   return (
-    <div key={candidate.candidate_id} className="rounded-lg border bg-background/70 p-3">
+    <div key={candidate.candidate_id} className="p-3">
       <div className="flex flex-wrap items-start justify-between gap-2">
         <div className="flex flex-wrap items-center gap-2">
           <Badge variant="outline">{candidate.target_type}</Badge>
           {candidate.evidence_type ? <Badge variant="secondary">{candidate.evidence_type}</Badge> : null}
         </div>
-        <div className="text-[11px] text-muted-foreground">
+        <div className="text-xs text-muted-foreground tabular-nums">
           {typeof candidate.score === 'number' ? candidate.score.toFixed(3) : 'score -'}
         </div>
       </div>
       <div className="mt-2 text-sm break-words">{candidate.content || '无内容摘要'}</div>
-      <div className="mt-2 grid gap-1 text-[11px] text-muted-foreground">
+      <div className="mt-2 grid gap-1 text-xs text-muted-foreground">
         <div className="font-mono break-all">{candidate.hash}</div>
         <div className="break-all">来源：{candidate.source || '-'}</div>
       </div>
@@ -368,11 +370,11 @@ function renderCandidate(candidate: MemoryCorrectionCandidatePayload) {
 
 function renderOperation(operation: MemoryCorrectionOperationPayload, index: number) {
   return (
-    <div key={`${operation.action}:${index}`} className="rounded-lg border bg-background/70 p-3">
+    <div key={`${operation.action}:${index}`} className="p-3">
       <div className="flex flex-wrap items-center justify-between gap-2">
         <Badge variant="outline">{getOperationLabel(operation)}</Badge>
         {'reason' in operation && operation.reason ? (
-          <span className="text-[11px] text-muted-foreground break-words">{operation.reason}</span>
+          <span className="text-xs text-muted-foreground break-words">{operation.reason}</span>
         ) : null}
       </div>
       <div className="mt-2 text-sm break-words">{getOperationSummary(operation) || '无操作摘要'}</div>
@@ -592,8 +594,14 @@ export function CorrectionTab({ correction }: CorrectionTabProps) {
                                 <Check className={cn('mt-0.5 h-4 w-4 shrink-0', selected ? 'opacity-100' : 'opacity-0')} />
                                 <span className="min-w-0 flex-1">
                                   <span className="block truncate font-medium">{chat.chat_name || chat.chat_id}</span>
-                                  <span className="mt-0.5 block truncate text-xs text-muted-foreground">
-                                    {getChatTargetMetaParts(chat).join(' · ') || chat.chat_id}
+                                  <span className="mt-0.5 flex flex-wrap items-center gap-x-2 gap-y-0.5 text-xs text-muted-foreground">
+                                    {getChatTargetMetaParts(chat).length > 0 ? (
+                                      getChatTargetMetaParts(chat).map((part) => (
+                                        <span key={part}>{part}</span>
+                                      ))
+                                    ) : (
+                                      <span>{chat.chat_id}</span>
+                                    )}
                                   </span>
                                 </span>
                               </button>
@@ -694,17 +702,23 @@ export function CorrectionTab({ correction }: CorrectionTabProps) {
           <CardContent className="flex flex-1 flex-col space-y-3">
             {displayPlan ? (
               <>
-                <div className="flex flex-wrap items-center gap-2">
+                <div className="flex flex-wrap items-center gap-x-3 gap-y-1.5">
                   <Badge variant={getStatusVariant(displayPlan.status)}>
                     {formatCorrectionStatus(displayPlan.status)}
                   </Badge>
-                  <Badge variant="outline">{formatCorrectionScope(displayPlan.scope)}</Badge>
-                  <Badge variant="secondary">置信度 {formatConfidence(displayPlan.confidence)}</Badge>
+                  <span className="text-xs text-muted-foreground">
+                    {formatCorrectionScope(displayPlan.scope)}
+                  </span>
+                  <span className="text-xs text-muted-foreground tabular-nums">
+                    置信度 {formatConfidence(displayPlan.confidence)}
+                  </span>
                   {displayPlan.executed_at ? (
-                    <Badge variant="outline">执行于 {formatTimestamp(displayPlan.executed_at)}</Badge>
+                    <span className="text-xs text-muted-foreground tabular-nums">
+                      执行于 {formatTimestamp(displayPlan.executed_at)}
+                    </span>
                   ) : null}
                 </div>
-                <div className="rounded-lg border bg-muted/20 p-3">
+                <div className="rounded-md border border-border/60 bg-muted/20 p-3">
                   <div className="text-sm font-medium break-words">{displayPlan.request_text}</div>
                   <div className="mt-1.5 grid gap-0.5 text-xs text-muted-foreground">
                     <div>人物：{displayPlan.target_person_id || displayPlan.preview?.person_keyword || '-'}</div>
@@ -717,7 +731,7 @@ export function CorrectionTab({ correction }: CorrectionTabProps) {
                 {renderCascadePreview(cascadePreview)}
 
                 {selectedPlanLoading ? (
-                  <div className="rounded-lg border bg-background/60 p-4">
+                  <div className="py-2">
                     <ThinkingIllustration size="sm" />
                   </div>
                 ) : null}
@@ -733,13 +747,13 @@ export function CorrectionTab({ correction }: CorrectionTabProps) {
                   <div className="space-y-2">
                     <div className="text-sm font-semibold">待执行操作</div>
                     <ScrollArea
-                      className="h-[280px] rounded-lg border 2xl:h-[320px]"
+                      className="h-[280px] rounded-md border 2xl:h-[320px]"
                       scrollbars="vertical"
                       viewportClassName="pointer-events-none"
                     >
-                      <div className="space-y-2 p-2.5">
+                      <div className="divide-y divide-border/60">
                         {selectedOperations.length > 0 ? selectedOperations.map(renderOperation) : (
-                          <div className="rounded-lg border border-dashed bg-muted/20 p-6 text-center text-sm text-muted-foreground">
+                          <div className="p-6 text-center text-sm text-muted-foreground">
                             当前计划没有操作
                           </div>
                         )}
@@ -749,13 +763,13 @@ export function CorrectionTab({ correction }: CorrectionTabProps) {
                   <div className="space-y-2">
                     <div className="text-sm font-semibold">定位候选</div>
                     <ScrollArea
-                      className="h-[280px] rounded-lg border 2xl:h-[320px]"
+                      className="h-[280px] rounded-md border 2xl:h-[320px]"
                       scrollbars="vertical"
                       viewportClassName="pointer-events-none"
                     >
-                      <div className="space-y-2 p-2.5">
+                      <div className="divide-y divide-border/60">
                         {selectedCandidates.length > 0 ? selectedCandidates.map(renderCandidate) : (
-                          <div className="rounded-lg border border-dashed bg-muted/20 p-6 text-center text-sm text-muted-foreground">
+                          <div className="p-6 text-center text-sm text-muted-foreground">
                             当前计划没有候选证据
                           </div>
                         )}
@@ -772,7 +786,7 @@ export function CorrectionTab({ correction }: CorrectionTabProps) {
                 ) : null}
 
                 {executionCascadeSummary.length > 0 ? (
-                  <div className="rounded-lg border bg-muted/20 p-3">
+                  <div className="rounded-md border border-border/60 bg-muted/20 p-3">
                     <div className="mb-1.5 text-sm font-semibold">执行联动结果</div>
                     <div className="flex flex-wrap gap-2">
                       {executionCascadeSummary.map((summary) => (
@@ -783,7 +797,7 @@ export function CorrectionTab({ correction }: CorrectionTabProps) {
                 ) : null}
 
                 {displayPlan.execution?.rollback ? (
-                  <div className="space-y-2 rounded-lg border bg-muted/20 p-3">
+                  <div className="space-y-2 rounded-md border border-border/60 bg-muted/20 p-3">
                     <div className="flex flex-wrap items-center gap-2">
                       <span className="text-sm font-semibold">回滚结果</span>
                       {rollbackSummary.map((summary) => (
@@ -861,8 +875,8 @@ export function CorrectionTab({ correction }: CorrectionTabProps) {
                   type="button"
                   onClick={() => setSelectedPlanId(plan.plan_id)}
                   className={cn(
-                    'rounded-xl border p-4 text-left transition-colors',
-                    isSelected ? 'border-primary bg-primary/5 shadow-sm' : 'bg-muted/20 hover:border-primary/40 hover:bg-muted/40'
+                    'rounded-md border p-3.5 text-left transition-colors',
+                    isSelected ? 'border-primary bg-primary/5' : 'border-border/60 bg-muted/15 hover:border-primary/40 hover:bg-muted/30'
                   )}
                 >
                   <div className="flex flex-col gap-3">
@@ -873,7 +887,7 @@ export function CorrectionTab({ correction }: CorrectionTabProps) {
                         </Badge>
                         <Badge variant="outline">{formatCorrectionScope(plan.scope)}</Badge>
                       </div>
-                      <div className="text-[11px] text-muted-foreground">{formatTimestamp(plan.created_at)}</div>
+                      <div className="text-xs text-muted-foreground tabular-nums">{formatTimestamp(plan.created_at)}</div>
                     </div>
                     <div className="text-sm font-medium break-words">{plan.request_text || '无修正内容'}</div>
                     <div className="grid gap-1 text-xs text-muted-foreground">
@@ -926,7 +940,7 @@ export function CorrectionTab({ correction }: CorrectionTabProps) {
           {displayPlan ? (
             <div className="space-y-3 rounded-lg border bg-muted/20 p-3 text-sm">
               <div className="font-medium break-words">{displayPlan.request_text || '无修正内容'}</div>
-              <div className="font-mono text-[11px] break-all text-muted-foreground">{displayPlan.plan_id}</div>
+              <div className="font-mono text-xs break-all text-muted-foreground">{displayPlan.plan_id}</div>
               <div className="flex flex-wrap gap-2">
                 {dialogSummary.map((summary) => (
                   <Badge key={summary} variant="outline">{summary}</Badge>
@@ -957,7 +971,7 @@ export function CorrectionTab({ correction }: CorrectionTabProps) {
           {displayPlan ? (
             <div className="space-y-3 rounded-lg border bg-muted/20 p-3 text-sm">
               <div className="font-medium break-words">{displayPlan.request_text || '无修正内容'}</div>
-              <div className="font-mono text-[11px] break-all text-muted-foreground">{displayPlan.plan_id}</div>
+              <div className="font-mono text-xs break-all text-muted-foreground">{displayPlan.plan_id}</div>
               <div className="flex flex-wrap gap-2">
                 {dialogSummary.map((summary) => (
                   <Badge key={summary} variant="outline">{summary}</Badge>

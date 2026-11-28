@@ -2,6 +2,7 @@
 import { useState } from 'react'
 import { Icon } from '@iconify/react'
 
+import { ActionBar } from '@/components/ui/action-bar'
 import {
   AlertDialog,
   AlertDialogAction,
@@ -64,6 +65,53 @@ import {
 import { toast } from '@/hooks/use-toast'
 
 import type { ComponentExample } from './component-gallery-types'
+
+function ActionBarExample() {
+  const [count, setCount] = useState(3)
+  const [floatingOpen, setFloatingOpen] = useState(false)
+  return (
+    <div className="space-y-3">
+      <div className="flex flex-wrap items-center gap-2">
+        <Button type="button" variant="outline" size="xs" onClick={() => setCount((c) => c + 1)}>
+          增加选中项
+        </Button>
+        <Button
+          type="button"
+          variant="outline"
+          size="xs"
+          onClick={() => setFloatingOpen((open) => !open)}
+        >
+          {floatingOpen ? '收起悬浮弹条' : '预览悬浮弹条'}
+        </Button>
+      </div>
+      <ActionBar
+        placement="inline"
+        open={count > 0}
+        count={count}
+        countLabel="项已选"
+        onClear={() => setCount(0)}
+      >
+        <Button type="button" variant="outline" size="xs" onClick={() => setCount((c) => c + 1)}>
+          批量标记
+        </Button>
+        <Button type="button" variant="destructive" size="xs" onClick={() => setCount(0)}>
+          批量删除
+        </Button>
+      </ActionBar>
+      <ActionBar
+        placement="floating"
+        open={floatingOpen}
+        count={Math.max(1, count)}
+        countLabel="项悬浮预览"
+        onClear={() => setFloatingOpen(false)}
+      >
+        <Button type="button" variant="outline" size="xs" onClick={() => setFloatingOpen(false)}>
+          完成
+        </Button>
+      </ActionBar>
+    </div>
+  )
+}
 
 function ConfirmExample() {
   const [confirmed, setConfirmed] = useState(false)
@@ -300,6 +348,13 @@ function StreamlineIconsExample() {
 }
 
 export const feedbackExamples: ComponentExample[] = [
+  {
+    file: 'action-bar',
+    name: 'ActionBar',
+    category: '反馈',
+    description: '用于批量操作与编辑态的悬浮 / 内联弹性操作条。',
+    preview: <ActionBarExample />,
+  },
   {
     file: 'alert-dialog',
     name: 'AlertDialog',

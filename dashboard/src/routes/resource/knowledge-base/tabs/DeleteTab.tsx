@@ -437,7 +437,7 @@ export function DeleteTab({ delete: memoryDelete }: DeleteTabProps) {
                           <Badge key={source} variant="secondary" className="max-w-full break-all">
                             {display.title}
                             {display.raw ? (
-                              <span className="ml-1 font-mono text-[11px] text-muted-foreground">
+                              <span className="ml-1 font-mono text-xs text-muted-foreground">
                                 {display.raw}
                               </span>
                             ) : null}
@@ -491,14 +491,14 @@ export function DeleteTab({ delete: memoryDelete }: DeleteTabProps) {
                         <span>每页 {DELETE_OPERATION_ITEM_PAGE_SIZE} 项</span>
                       </div>
                     </div>
-                    <ScrollArea className="h-[280px] rounded-lg border bg-background/60">
-                      <div className="space-y-2 p-3">
+                    <ScrollArea className="h-[280px] rounded-md border">
+                      <div className="divide-y divide-border/60">
                         {pagedSelectedOperationItems.length > 0 ? pagedSelectedOperationItems.map((item) => {
                           const source = getDeleteOperationItemSource(item)
                           const label = getDeleteOperationItemLabel(item)
                           const preview = getDeleteOperationItemPreview(item)
                           return (
-                            <div key={`${item.item_type}:${item.item_hash}:${item.item_key ?? ''}`} className="rounded-lg border bg-muted/20 p-3">
+                            <div key={`${item.item_type}:${item.item_hash}:${item.item_key ?? ''}`} className="p-3">
                               <div className="flex flex-wrap items-center gap-2">
                                 <Badge variant="outline">{item.item_type}</Badge>
                                 {source ? <Badge variant="secondary">{source}</Badge> : null}
@@ -514,13 +514,13 @@ export function DeleteTab({ delete: memoryDelete }: DeleteTabProps) {
                                   {preview}
                                 </div>
                               ) : null}
-                              <div className="mt-2 font-mono text-[11px] break-all text-muted-foreground">
+                              <div className="mt-2 font-mono text-xs break-all text-muted-foreground">
                                 {item.item_hash}
                               </div>
                             </div>
                           )
                         }) : (
-                          <div className="rounded-lg border border-dashed bg-muted/20 p-6 text-center text-sm text-muted-foreground">
+                          <div className="p-6 text-center text-sm text-muted-foreground">
                             {selectedOperationItems.length > 0 ? '当前筛选条件下没有明细项' : '当前操作没有记录明细项'}
                           </div>
                         )}

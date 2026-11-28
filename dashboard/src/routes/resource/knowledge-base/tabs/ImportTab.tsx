@@ -477,7 +477,7 @@ export function ImportTab({ queue, form }: ImportTabProps) {
                     </DialogHeader>
                     <div className="space-y-4">
                 <div className="grid gap-3 md:grid-cols-2">
-                  <div className="grid gap-2 rounded-md border bg-background/70 p-3 sm:grid-cols-[minmax(0,1fr)_8rem] sm:items-center">
+                  <div className="grid gap-2 rounded-md border border-border/60 bg-muted/15 p-3 sm:grid-cols-[minmax(0,1fr)_8rem] sm:items-center">
                     <div className="min-w-0">
                       <Label>文件并发数</Label>
                       <div className="mt-0.5 text-xs text-muted-foreground">同时处理多少个文件；文件很多时再适当调高。</div>
@@ -490,7 +490,7 @@ export function ImportTab({ queue, form }: ImportTabProps) {
                       onChange={(event) => setImportCommonFileConcurrency(event.target.value)}
                     />
                   </div>
-                  <div className="grid gap-2 rounded-md border bg-background/70 p-3 sm:grid-cols-[minmax(0,1fr)_8rem] sm:items-center">
+                  <div className="grid gap-2 rounded-md border border-border/60 bg-muted/15 p-3 sm:grid-cols-[minmax(0,1fr)_8rem] sm:items-center">
                     <div className="min-w-0">
                       <Label>分块并发数</Label>
                       <div className="mt-0.5 text-xs text-muted-foreground">单个文件内并行处理多少个分块；过高会增加资源占用。</div>
@@ -503,7 +503,7 @@ export function ImportTab({ queue, form }: ImportTabProps) {
                       onChange={(event) => setImportCommonChunkConcurrency(event.target.value)}
                     />
                   </div>
-                  <div className="rounded-md border bg-background/70 px-2.5 py-2">
+                  <div className="rounded-md border border-border/60 bg-muted/15 px-3 py-2.5">
                     <div className="flex items-center gap-2 text-sm font-medium leading-tight">
                       <Checkbox
                         checked={importCommonLlmEnabled}
@@ -511,9 +511,9 @@ export function ImportTab({ queue, form }: ImportTabProps) {
                       />
                       启用 LLM 抽取
                     </div>
-                    <div className="mt-0.5 pl-6 text-[11px] leading-snug text-muted-foreground">需要模型参与抽取，质量更高但耗时更长。</div>
+                    <div className="mt-1 pl-6 text-xs leading-snug text-muted-foreground">需要模型参与抽取，质量更高但耗时更长。</div>
                   </div>
-                  <div className="grid gap-3 rounded-md border bg-background/70 p-3 md:col-span-2 lg:grid-cols-[minmax(14rem,1fr)_minmax(18rem,28rem)]">
+                  <div className="grid gap-3 rounded-md border border-border/60 bg-muted/15 p-3 md:col-span-2 lg:grid-cols-[minmax(14rem,1fr)_minmax(18rem,28rem)]">
                     <div className="min-w-0">
                       <Label>资料范围</Label>
                       <div className="mt-0.5 text-xs text-muted-foreground">选择所有聊天可用，或将这批记忆限制在一个明确的聊天流内。</div>
@@ -529,7 +529,7 @@ export function ImportTab({ queue, form }: ImportTabProps) {
                           className="pl-9"
                         />
                       </div>
-                      <div className="rounded-md border bg-background">
+                      <div className="rounded-sm border bg-background">
                         <button
                           type="button"
                           className={cn(
@@ -561,8 +561,10 @@ export function ImportTab({ queue, form }: ImportTabProps) {
                                 />
                                 <span className="min-w-0 flex-1">
                                   <span className="block truncate font-medium">{chat.chat_name}</span>
-                                  <span className="block truncate text-[11px] text-muted-foreground">
-                                    {getChatTargetMetaParts(chat).join(' · ')}
+                                  <span className="mt-0.5 flex flex-wrap items-center gap-x-2 gap-y-0.5 text-xs text-muted-foreground">
+                                    {getChatTargetMetaParts(chat).map((part) => (
+                                      <span key={part}>{part}</span>
+                                    ))}
                                   </span>
                                 </span>
                               </button>
@@ -572,14 +574,14 @@ export function ImportTab({ queue, form }: ImportTabProps) {
                           <div className="border-t px-3 py-3 text-sm text-muted-foreground">没有找到匹配的聊天流</div>
                         )}
                       </div>
-                      <div className="truncate text-[11px] leading-snug text-muted-foreground">
+                      <div className="truncate text-xs leading-snug text-muted-foreground">
                         当前选择：{getChatTargetValueLabel(selectedImportChatTarget)}
                       </div>
                     </div>
                   </div>
                 </div>
 
-                <details className="rounded-md border bg-background/70 p-3 text-sm">
+                <details className="rounded-md border border-border/60 bg-muted/15 p-3 text-sm">
                   <summary className="cursor-pointer text-xs font-medium text-muted-foreground">
                     高级参数（通常不用修改）
                   </summary>
@@ -594,7 +596,7 @@ export function ImportTab({ queue, form }: ImportTabProps) {
                           value={importCommonNarrativeWindowSize}
                           onChange={(event) => setImportCommonNarrativeWindowSize(event.target.value)}
                         />
-                        <div className="text-[11px] leading-snug text-muted-foreground">
+                        <div className="text-xs leading-snug text-muted-foreground">
                           默认 {Number(importSettings.default_narrative_window_size ?? 1600)}，用于 narrative/聊天日志。
                         </div>
                       </div>
@@ -607,7 +609,7 @@ export function ImportTab({ queue, form }: ImportTabProps) {
                           value={importCommonNarrativeOverlap}
                           onChange={(event) => setImportCommonNarrativeOverlap(event.target.value)}
                         />
-                        <div className="text-[11px] leading-snug text-muted-foreground">
+                        <div className="text-xs leading-snug text-muted-foreground">
                           默认 {Number(importSettings.default_narrative_overlap ?? 400)}，保留跨块上下文。
                         </div>
                       </div>
@@ -620,7 +622,7 @@ export function ImportTab({ queue, form }: ImportTabProps) {
                           value={importCommonFactualTargetSize}
                           onChange={(event) => setImportCommonFactualTargetSize(event.target.value)}
                         />
-                        <div className="text-[11px] leading-snug text-muted-foreground">
+                        <div className="text-xs leading-snug text-muted-foreground">
                           默认 {Number(importSettings.default_factual_target_size ?? 1200)}，用于 factual 结构感知切分。
                         </div>
                       </div>
@@ -646,7 +648,7 @@ export function ImportTab({ queue, form }: ImportTabProps) {
                         onChange={(event) => setImportCommonChatId(event.target.value)}
                         placeholder="留空表示不绑定"
                       />
-                      <div className="text-[11px] leading-snug text-muted-foreground">仅填写已存在的真实聊天流 ID；上方下拉无法覆盖时再手动填写。</div>
+                      <div className="text-xs leading-snug text-muted-foreground">仅填写已存在的真实聊天流 ID；上方下拉无法覆盖时再手动填写。</div>
                     </div>
                     <div className="flex items-center gap-2 text-sm">
                       <Checkbox
@@ -913,7 +915,7 @@ export function ImportTab({ queue, form }: ImportTabProps) {
         </div>
 
         <div className="order-1 space-y-6 lg:order-2">
-          <Card className="rounded-2xl border-border/70 bg-card/90 shadow-sm">
+          <Card className="rounded-xl border-border/70">
             <CardHeader className="space-y-4 pb-4">
               <div className="flex flex-wrap items-center justify-between gap-2">
                 <CardTitle>导入队列</CardTitle>
@@ -936,8 +938,8 @@ export function ImportTab({ queue, form }: ImportTabProps) {
                     <div className="text-sm font-medium">运行中</div>
                     <Badge variant="outline">{runningImportTasks.length}</Badge>
                   </div>
-                  <ScrollArea className="h-[208px]">
-                    <div data-memory-import-task-list="true" className="space-y-2.5 p-2.5">
+                  <ScrollArea className="h-[208px] rounded-md border">
+                    <div data-memory-import-task-list="true" className="divide-y divide-border/60">
                       {runningImportTasks.map((task) => {
                         const isSelected = task.task_id === selectedImportTaskId
                         return (
@@ -949,15 +951,15 @@ export function ImportTab({ queue, form }: ImportTabProps) {
                             type="button"
                             onClick={() => openTaskDetail(task.task_id)}
                             className={cn(
-                              'w-full rounded-xl border p-4 text-left transition-all',
+                              'w-full p-3.5 text-left transition-colors',
                               isSelected
-                                ? 'border-primary/70 bg-primary/5 shadow-sm'
-                                : 'bg-background/80 hover:border-muted-foreground/40 hover:bg-muted/20',
+                                ? 'bg-primary/5'
+                                : 'hover:bg-muted/30',
                             )}
                           >
                             <div className="flex flex-wrap items-start justify-between gap-2">
                               <div className="min-w-0 space-y-1">
-                                <div className="break-all font-mono text-[11px] leading-relaxed text-muted-foreground">
+                                <div className="break-all font-mono text-xs leading-relaxed text-muted-foreground">
                                   {task.task_id}
                                 </div>
                                 <div className="text-sm font-medium">{getImportTaskKindLabel(String(task.task_kind ?? task.mode ?? '-'))}</div>
@@ -968,7 +970,7 @@ export function ImportTab({ queue, form }: ImportTabProps) {
                             </div>
                             <div className="mt-2 flex items-center justify-between gap-2 text-xs text-muted-foreground">
                               <span>{getImportStepLabel(String(task.current_step ?? 'running'))}</span>
-                              <span>{formatProgressPercent(task.progress)}</span>
+                              <span className="tabular-nums">{formatProgressPercent(task.progress)}</span>
                             </div>
                             <Progress value={normalizeProgress(task.progress)} className="mt-2 h-1.5" />
                           </button>
@@ -985,8 +987,8 @@ export function ImportTab({ queue, form }: ImportTabProps) {
                     <div className="text-sm font-medium">排队中</div>
                     <Badge variant="outline">{queuedImportTasks.length}</Badge>
                   </div>
-                  <ScrollArea className="h-[188px]">
-                    <div data-memory-import-task-list="true" className="space-y-2.5 p-2.5">
+                  <ScrollArea className="h-[188px] rounded-md border">
+                    <div data-memory-import-task-list="true" className="divide-y divide-border/60">
                       {queuedImportTasks.map((task) => {
                         const isSelected = task.task_id === selectedImportTaskId
                         return (
@@ -998,15 +1000,15 @@ export function ImportTab({ queue, form }: ImportTabProps) {
                             type="button"
                             onClick={() => openTaskDetail(task.task_id)}
                             className={cn(
-                              'w-full rounded-xl border p-4 text-left transition-all',
+                              'w-full p-3.5 text-left transition-colors',
                               isSelected
-                                ? 'border-primary/70 bg-primary/5 shadow-sm'
-                                : 'bg-background/80 hover:border-muted-foreground/40 hover:bg-muted/20',
+                                ? 'bg-primary/5'
+                                : 'hover:bg-muted/30',
                             )}
                           >
                             <div className="flex flex-wrap items-start justify-between gap-2">
                               <div className="min-w-0 space-y-1">
-                                <div className="break-all font-mono text-[11px] leading-relaxed text-muted-foreground">
+                                <div className="break-all font-mono text-xs leading-relaxed text-muted-foreground">
                                   {task.task_id}
                                 </div>
                                 <div className="text-sm font-medium">{getImportTaskKindLabel(String(task.task_kind ?? task.mode ?? '-'))}</div>
@@ -1017,7 +1019,7 @@ export function ImportTab({ queue, form }: ImportTabProps) {
                             </div>
                             <div className="mt-2 flex items-center justify-between gap-2 text-xs text-muted-foreground">
                               <span>创建时间</span>
-                              <span>{formatImportTime(task.created_at)}</span>
+                              <span className="tabular-nums">{formatImportTime(task.created_at)}</span>
                             </div>
                           </button>
                         )
@@ -1033,8 +1035,8 @@ export function ImportTab({ queue, form }: ImportTabProps) {
                     <div className="text-sm font-medium">最近完成</div>
                     <Badge variant="secondary">{recentImportTasks.length}</Badge>
                   </div>
-                  <ScrollArea className="h-[260px]">
-                    <div data-memory-import-task-list="true" className="space-y-2.5 p-2.5">
+                  <ScrollArea className="h-[260px] rounded-md border">
+                    <div data-memory-import-task-list="true" className="divide-y divide-border/60">
                       {recentImportTasks.map((task) => {
                         const isSelected = task.task_id === selectedImportTaskId
                         return (
@@ -1046,15 +1048,15 @@ export function ImportTab({ queue, form }: ImportTabProps) {
                             type="button"
                             onClick={() => openTaskDetail(task.task_id)}
                             className={cn(
-                              'w-full rounded-xl border p-4 text-left transition-all',
+                              'w-full p-3.5 text-left transition-colors',
                               isSelected
-                                ? 'border-primary/70 bg-primary/5 shadow-sm'
-                                : 'bg-background/80 hover:border-muted-foreground/40 hover:bg-muted/20',
+                                ? 'bg-primary/5'
+                                : 'hover:bg-muted/30',
                             )}
                           >
                             <div className="flex flex-wrap items-start justify-between gap-2">
                               <div className="min-w-0 space-y-1">
-                                <div className="break-all font-mono text-[11px] leading-relaxed text-muted-foreground">
+                                <div className="break-all font-mono text-xs leading-relaxed text-muted-foreground">
                                   {task.task_id}
                                 </div>
                                 <div className="text-sm font-medium">{getImportTaskKindLabel(String(task.task_kind ?? task.mode ?? '-'))}</div>
@@ -1065,7 +1067,7 @@ export function ImportTab({ queue, form }: ImportTabProps) {
                             </div>
                             <div className="mt-2 flex items-center justify-between gap-2 text-xs text-muted-foreground">
                               <span>完成进度</span>
-                              <span>{formatProgressPercent(task.progress)}</span>
+                              <span className="tabular-nums">{formatProgressPercent(task.progress)}</span>
                             </div>
                             <Progress value={normalizeProgress(task.progress)} className="mt-2 h-1.5" />
                           </button>
@@ -1091,7 +1093,7 @@ export function ImportTab({ queue, form }: ImportTabProps) {
       {transferMode === 'bundle' ? <MemoryBundleCard chatTargets={importChatTargets} /> : null}
       {transferMode === 'fact' ? (
         <div className="max-w-2xl">
-          <Card className="rounded-2xl border-border/70 bg-card/85 shadow-sm">
+          <Card className="rounded-xl border-border/70">
             <CardHeader>
               <CardTitle className="flex items-center gap-2">
                 <Plus className="h-4 w-4" />

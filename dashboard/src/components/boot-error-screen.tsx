@@ -53,10 +53,7 @@ export function BootErrorScreen({ message }: { message: string }) {
         <CardHeader className="text-left">
           <div className="space-y-2">
             <CardTitle className="text-2xl font-bold">WebUI 暂时无法连接</CardTitle>
-            <CardDescription className="flex items-center gap-2 text-base">
-              <span aria-hidden="true" className="text-primary font-mono">
-                &gt;
-              </span>
+            <CardDescription className="text-base">
               麦麦的后端没有正常响应
             </CardDescription>
           </div>
@@ -81,7 +78,7 @@ export function BootErrorScreen({ message }: { message: string }) {
               type="button"
               aria-expanded={helpOpen}
               onClick={() => setHelpOpen((open) => !open)}
-              className="text-primary hover:text-primary/80 flex items-center justify-start gap-1 text-left text-[11px] underline-offset-4 transition-colors hover:underline"
+              className="text-primary hover:text-primary/80 flex items-center justify-start gap-1 text-left text-xs underline-offset-4 transition-colors hover:underline"
             >
               <HelpCircle className="h-3 w-3" strokeWidth={2} fill="none" />
               一直连不上？看看这几项

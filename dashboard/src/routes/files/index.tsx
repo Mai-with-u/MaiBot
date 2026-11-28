@@ -6,10 +6,12 @@ import { useFeatureFlags } from '@/hooks/use-feature-flags'
 import { Link } from '@tanstack/react-router'
 
 import { Button } from '@/components/ui/button'
+import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from '@/components/ui/select'
 import { PageFrame } from '@/components/ui/surface'
 import { downloadFile, listFileChats, listFiles, readFileText, removeFile, sendFile, uploadFile } from '@/lib/files-api'
 import type { FileChat, FileList, FileText, StoredFile } from '@/lib/files-api'
 
+const ALL_CHATS_VALUE = '__all__'
 const bytes = (size: number) => `${(size / 1024 ** 2).toFixed(2)} MiB`
 
 export function FilesPage({ headerActions }: { headerActions?: ReactNode }) {
@@ -54,17 +56,41 @@ export function FilesPage({ headerActions }: { headerActions?: ReactNode }) {
     <p className="text-sm text-muted-foreground">{t('files.description')}</p>
     {data && <p className="text-sm">{t('files.storage')}: {bytes(data.usage.used_bytes)} / {bytes(data.usage.max_bytes)} · {t('files.reserved')}: {bytes(data.usage.reserved_bytes)} · {t('files.maximum')}: {bytes(data.usage.max_file_bytes)}</p>}
     <div className="flex flex-wrap gap-2 items-center">
-      <select aria-label={t('files.chat')} className="rounded border bg-background p-2 max-w-full" value={chat}
-        onChange={e => { setChat(e.target.value); setOffset(0) }}>
-        <option value="">{t('files.allChats')}</option>
-        {chats.map(item => <option key={item.session_id} value={item.session_id}>{item.name}</option>)}
-      </select>
+      <Select
+        value={chat || ALL_CHATS_VALUE}
+        onValueChange={(value) => {
+          setChat(value === ALL_CHATS_VALUE ? '' : value)
+          setOffset(0)
+        }}
+      >
+        <SelectTrigger aria-label={t('files.chat')} className="w-auto min-w-[10rem] max-w-full">
+          <SelectValue />
+        </SelectTrigger>
+        <SelectContent>
+          <SelectItem value={ALL_CHATS_VALUE}>{t('files.allChats')}</SelectItem>
+          {chats.map((item) => (
+            <SelectItem key={item.session_id} value={item.session_id}>
+              {item.name}
+            </SelectItem>
+          ))}
+        </SelectContent>
+      </Select>
       <Button disabled={busy} variant="outline" onClick={() => run(refresh)}>{t('files.refresh')}</Button>
-      <label className="text-sm">{t('files.encoding')}
-        <select className="ml-2 border rounded bg-background p-2" value={encoding} onChange={e => setEncoding(e.target.value)}>
-          {['utf-8-sig', 'utf-8', 'utf-16', 'gb18030'].map(value => <option key={value}>{value}</option>)}
-        </select>
-      </label>
+      <div className="flex items-center gap-2 text-sm">
+        <label htmlFor="files-encoding-select">{t('files.encoding')}</label>
+        <Select value={encoding} onValueChange={setEncoding}>
+          <SelectTrigger id="files-encoding-select" className="w-[8.5rem]">
+            <SelectValue />
+          </SelectTrigger>
+          <SelectContent>
+            {['utf-8-sig', 'utf-8', 'utf-16', 'gb18030'].map((value) => (
+              <SelectItem key={value} value={value}>
+                {value}
+              </SelectItem>
+            ))}
+          </SelectContent>
+        </Select>
+      </div>
       <label className="text-sm">{t('files.upload')}
         <input className="block max-w-full" type="file" disabled={busy || !chat} onChange={e => {
           const file = e.target.files?.[0]; e.target.value = ''
@@ -82,14 +108,33 @@ export function FilesPage({ headerActions }: { headerActions?: ReactNode }) {
       <div className="flex gap-2 flex-wrap">
         <Button size="sm" variant="outline" disabled={busy} onClick={() => run(() => downloadFile(file))}>{t('files.download')}</Button>
         {/\.(txt|md|markdown|csv|json)$/i.test(file.name) && <Button size="sm" variant="outline" disabled={busy} onClick={() => run(() => showText(file))}>{t('files.read')}</Button>}
-        <select aria-label={t('files.sendTo')} className="border rounded bg-background max-w-full text-sm" disabled={busy} value="" onChange={e => {
-          const target = e.target.value
-          if (target && window.confirm(t('files.confirmSend', { name: chats.find(c => c.session_id === target)?.name })))
-            void run(async () => { const result = await sendFile(file.file_ref, target); setNotice(t(`files.delivery.${result.status}`)) })
-        }}>
-          <option value="">{t('files.sendTo')}</option>
-          {chats.map(c => <option key={c.session_id} value={c.session_id}>{c.name}</option>)}
-        </select>
+        <Select
+          value=""
+          disabled={busy}
+          onValueChange={(target) => {
+            if (target && window.confirm(t('files.confirmSend', { name: chats.find((c) => c.session_id === target)?.name }))) {
+              void run(async () => {
+                const result = await sendFile(file.file_ref, target)
+                setNotice(t(`files.delivery.${result.status}`))
+              })
+            }
+          }}
+        >
+          <SelectTrigger
+            controlSize="sm"
+            aria-label={t('files.sendTo')}
+            className="w-auto min-w-[7.5rem] max-w-full"
+          >
+            <SelectValue placeholder={t('files.sendTo')} />
+          </SelectTrigger>
+          <SelectContent>
+            {chats.map((c) => (
+              <SelectItem key={c.session_id} value={c.session_id}>
+                {c.name}
+              </SelectItem>
+            ))}
+          </SelectContent>
+        </Select>
         {file.origin === 'remote' && file.state === 'ready' && <Button size="sm" variant="outline" disabled={busy} onClick={() => run(() => removeFile(file.file_ref, true))}>{t('files.clearCache')}</Button>}
         <Button size="sm" variant="destructive" disabled={busy} onClick={() => {
           if (window.confirm(t('files.confirmDelete', { name: file.name }))) void run(() => removeFile(file.file_ref, false))

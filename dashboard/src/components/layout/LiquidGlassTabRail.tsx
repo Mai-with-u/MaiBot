@@ -88,9 +88,9 @@ export function LiquidGlassTabRail({
   })
   const rawJelly = useMotionValue(0)
   const springJelly = useSpring(rawJelly, {
-    stiffness: motionEnabled ? 220 : 4000,
-    damping: motionEnabled ? 15 : 200,
-    mass: 0.8,
+    stiffness: motionEnabled ? 320 : 4000,
+    damping: motionEnabled ? 28 : 200,
+    mass: 0.85,
   })
 
   const lensXPercent = useTransform(springPosition, (position) => `${position * 100}%`)
@@ -382,7 +382,7 @@ export function LiquidGlassTabRail({
                   <span className="relative flex">
                     <Icon
                       className="h-[22px] w-[22px]"
-                      strokeWidth={highlighted ? 2.1 : 1.7}
+                      strokeWidth={highlighted ? 2 : 1.7}
                       aria-hidden="true"
                     />
                   </span>

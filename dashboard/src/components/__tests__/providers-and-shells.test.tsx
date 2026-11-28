@@ -87,7 +87,7 @@ describe('EmbedPageShell', () => {
     )
 
     expect(document.title).toBe('测试标题')
-    expect(screen.getByText('麦麦正在啃食服务器...')).toBeInTheDocument()
+    expect(screen.getByText('正在加载...')).toBeInTheDocument()
     expect(screen.queryByText('内部内容')).not.toBeInTheDocument()
   })
 

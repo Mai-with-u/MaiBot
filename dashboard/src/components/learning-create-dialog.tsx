@@ -21,6 +21,7 @@ import {
 } from '@/components/ui/dialog'
 import { Label } from '@/components/ui/label'
 import { MultiSelect } from '@/components/ui/multi-select'
+import { PillNav } from '@/components/ui/pill-nav'
 import { Progress } from '@/components/ui/progress'
 import {
   Select,
@@ -389,26 +390,21 @@ export function LearningCreateDialog({
               {candidates.length > 0 && (
                 <>
                   <div className="space-y-2">
-                    <div role="group" aria-label="导入范围" className="flex flex-wrap gap-2">
-                      <Button
-                        variant={isGlobal ? 'outline' : 'default'}
-                        size="sm"
-                        aria-pressed={!isGlobal}
-                        disabled={importing}
-                        onClick={() => setIsGlobal(false)}
-                      >
-                        指定聊天
-                      </Button>
-                      <Button
-                        variant={isGlobal ? 'default' : 'outline'}
-                        size="sm"
-                        aria-pressed={isGlobal}
-                        disabled={importing}
-                        onClick={() => setIsGlobal(true)}
-                      >
-                        {kind === 'jargon' ? '通用词库' : '全局（所有聊天）'}
-                      </Button>
-                    </div>
+                    <PillNav<'scoped' | 'global'>
+                      variant="segmented"
+                      size="sm"
+                      ariaLabel="导入范围"
+                      value={isGlobal ? 'global' : 'scoped'}
+                      onChange={(value) => setIsGlobal(value === 'global')}
+                      options={[
+                        { value: 'scoped', label: '指定聊天', disabled: importing },
+                        {
+                          value: 'global',
+                          label: kind === 'jargon' ? '通用词库' : '全局（所有聊天）',
+                          disabled: importing,
+                        },
+                      ]}
+                    />
                     {isGlobal ? (
                       <p className="text-muted-foreground text-xs">
                         {kind === 'jargon'

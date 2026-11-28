@@ -1,10 +1,13 @@
 import { type UIEvent, useEffect, useLayoutEffect, useMemo, useRef, useState } from 'react'
 import { useRouterState } from '@tanstack/react-router'
 import { useTranslation } from 'react-i18next'
+import { ActionBar } from '@/components/ui/action-bar'
 import { Button } from '@/components/ui/button'
 import { DraftNumberInput } from '@/components/ui/draft-number-input'
 import { Input } from '@/components/ui/input'
 import { Label } from '@/components/ui/label'
+import { PillNav } from '@/components/ui/pill-nav'
+import { StatefulButton } from '@/components/ui/stateful-button'
 import { Tabs, TabsContent } from '@/components/ui/tabs'
 import { DashboardFolderPanel, DashboardFolderTab, DashboardFolderTabBar } from '@/components/ui/dashboard-tabs'
 import { ScrollArea } from '@/components/ui/scroll-area'
@@ -787,19 +790,16 @@ function ModelConfigPageContent() {
           <div data-library-label="true" data-model-library-toolbar="true" className="flex-wrap gap-y-2">
             <b>MODELS</b>
             <h2>模型列表</h2>
-            <div role="group" aria-label="筛选模型" data-library-filters="true" className="ml-1">
-              {MODEL_KIND_FILTERS.map((item) => (
-                <Button
-                  key={item.value}
-                  type="button"
-                  size="xs"
-                  variant={modelKindFilter === item.value ? 'default' : 'outline'}
-                  aria-pressed={modelKindFilter === item.value}
-                  onClick={() => setModelKindFilter(item.value)}
-                >
-                  {item.label}
-                </Button>
-              ))}
+            <div data-library-filters="true" className="ml-1 min-w-0">
+              <PillNav<ModelKindFilter>
+                variant="segmented"
+                size="xs"
+                scrollable
+                ariaLabel="筛选模型"
+                value={modelKindFilter}
+                onChange={setModelKindFilter}
+                options={MODEL_KIND_FILTERS}
+              />
             </div>
             <div data-model-library-filter-select="true">
               <Select value={modelKindFilter} onValueChange={(value) => setModelKindFilter(value as ModelKindFilter)}>
@@ -830,18 +830,6 @@ function ModelConfigPageContent() {
                   className="pl-8"
                 />
               </div>
-              {selectedModels.size > 0 && (
-                <Button
-                  onClick={openBatchDeleteDialog}
-                  size="sm"
-                  variant="destructive"
-                  className="shrink-0"
-                  aria-label={`批量删除 (${selectedModels.size})`}
-                >
-                  <Trash2 className="h-4 w-4" strokeWidth={2} fill="none" />
-                  <span data-model-library-batch-label="true">批量删除</span> ({selectedModels.size})
-                </Button>
-              )}
               <AddModelMenu
                 onAdd={openAddModelDialog}
                 disabled={apiProviders.length === 0}
@@ -2129,7 +2117,10 @@ function ModelConfigPageContent() {
             >
               取消
             </Button>
-            <Button
+            <StatefulButton
+              status={saving ? 'loading' : 'idle'}
+              idleLabel="保存"
+              loadingLabel="保存中..."
               data-dialog-action="confirm"
               className="flex-1 sm:flex-none"
               onClick={() => void handleSaveEdit(editingSpeechModel ? speechProviderDraft : null)}
@@ -2137,9 +2128,7 @@ function ModelConfigPageContent() {
                 || Boolean(editingSpeechModel && (!editingSpeechModel.model_identifier || !editingSpeechModel.api_provider
                   || (speechProviderDraft && !speechProviderDraft.api_key.trim())))}
               data-tour="model-save-button"
-            >
-              {saving ? '保存中...' : '保存'}
-            </Button>
+            />
           </DialogFooter>
         </DialogContent>
       </Dialog>
@@ -2278,6 +2267,24 @@ function ModelConfigPageContent() {
           ]}
         />
       </MobileHeaderActions>
+      <ActionBar
+        open={activeTab === 'configuration' && selectedModels.size > 0}
+        count={selectedModels.size}
+        countLabel="个模型"
+        onClear={() => mc.setSelectedModels(new Set())}
+      >
+        <Button
+          type="button"
+          onClick={openBatchDeleteDialog}
+          size="xs"
+          variant="destructive"
+          className="shrink-0 gap-1.5"
+          aria-label={`批量删除 (${selectedModels.size})`}
+        >
+          <Trash2 className="h-3.5 w-3.5" strokeWidth={2} fill="none" aria-hidden="true" />
+          <span>批量删除</span>
+        </Button>
+      </ActionBar>
       <RestartOverlay />
       </div>
     </div>

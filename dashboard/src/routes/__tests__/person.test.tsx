@@ -107,6 +107,6 @@ it('账号视图以账号为首列，平台入口只筛选账号', async () => {
   const headers = screen.getAllByRole('columnheader').map(header => header.textContent)
   expect(headers.slice(1, 5)).toEqual(['账号', '平台', 'ID', '所属人物'])
   expect(screen.queryByRole('combobox', { name: '平台筛选' })).not.toBeInTheDocument()
-  await userEvent.click(screen.getByRole('button', { name: 'telegram · 1' }))
+  await userEvent.click(screen.getByRole('button', { name: 'telegram 1' }))
   await waitFor(() => expect(api.getIndividualDirectory).toHaveBeenLastCalledWith(expect.objectContaining({ view: 'persons', platform: 'telegram' })))
 })

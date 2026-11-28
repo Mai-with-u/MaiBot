@@ -209,7 +209,7 @@ export function ExpressionList({
                   <TableCell title={expression.style}>
                     <span
                       data-expression-style="true"
-                      className="bg-muted/30 inline-block max-w-full truncate border-l-2 border-orange-500/80 px-2 py-0.5 align-middle"
+                      className="bg-muted/50 inline-block max-w-full truncate rounded-sm px-2 py-0.5 align-middle"
                     >
                       {expression.style}
                     </span>

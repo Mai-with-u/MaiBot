@@ -192,6 +192,17 @@
   border-top-color: var(--retro-line);
 }
 
+/* ---------- 现代桌面：分栏与分组刻线收细至 1px ---------- */
+@media (min-width: 1024px) {
+  :root[data-dashboard-style='modern'] [data-form-column] + [data-form-column] {
+    border-left-width: 1px;
+  }
+
+  :root[data-dashboard-style='modern'] [data-form-section-heading] {
+    border-bottom-width: 1px;
+  }
+}
+
 /* 表单弹窗的正文：内容放得下时不出现滚动条；放不下时滚动条和内容之间留出一段距离。 */
 [data-form-scroll]:has(> [data-orientation='vertical']) > [data-radix-scroll-area-viewport] {
   padding-right: 1.25rem !important;

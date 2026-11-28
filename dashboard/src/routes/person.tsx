@@ -1,18 +1,18 @@
-import { DataPagination } from '@/components/ui/data-pagination'
-import { Fragment, useEffect, useState, useMemo } from 'react'
-
 import { useMutation, useQuery } from '@tanstack/react-query'
 import {
+  Clock,
   Edit,
   Eye,
   Hash,
   Link2,
+  MessageSquare,
   Search,
   Trash2,
   User,
 } from 'lucide-react'
-import { Clock, MessageSquare } from 'lucide-react'
+import { Fragment, useEffect, useMemo, useState } from 'react'
 
+import { ActionBar } from '@/components/ui/action-bar'
 import {
   AlertDialog,
   AlertDialogAction,
@@ -25,6 +25,7 @@ import {
 } from '@/components/ui/alert-dialog'
 import { Button } from '@/components/ui/button'
 import { Checkbox } from '@/components/ui/checkbox'
+import { DataPagination } from '@/components/ui/data-pagination'
 import {
   Dialog,
   DialogBody,
@@ -36,6 +37,7 @@ import {
 } from '@/components/ui/dialog'
 import { Input } from '@/components/ui/input'
 import { Label } from '@/components/ui/label'
+import { PillNav } from '@/components/ui/pill-nav'
 import {
   Select,
   SelectContent,
@@ -293,13 +295,11 @@ export function PersonManagementPage() {
   return (
     <div className="flex h-full min-h-0 min-w-0 flex-col gap-2 overflow-hidden p-3 sm:p-4">
       <header className="flex shrink-0 flex-wrap items-center gap-x-4 gap-y-1">
-        {stats && <p className="text-xs text-muted-foreground">
-          <span className="font-medium text-foreground">{stats.individuals.toLocaleString()}</span> 个体
-          <span className="mx-2">·</span>
-          <span className="font-medium text-foreground">{stats.total.toLocaleString()}</span> 账号
-          <span className="mx-2">·</span>
-          {stats.linked_individuals.toLocaleString()} 个体关联多个账号
-        </p>}
+        {stats && <div className="flex flex-wrap items-center gap-x-4 gap-y-1 text-xs text-muted-foreground">
+          <span><span className="font-medium text-foreground tabular-nums">{stats.individuals.toLocaleString()}</span> 个体</span>
+          <span><span className="font-medium text-foreground tabular-nums">{stats.total.toLocaleString()}</span> 账号</span>
+          <span className="tabular-nums">{stats.linked_individuals.toLocaleString()} 个体关联多个账号</span>
+        </div>}
         {statsQuery.isError && <div role="alert" className="flex items-center gap-2 text-xs text-destructive">
           <span>{statsQuery.error.message}</span>
           <Button size="xs" variant="ghost" onClick={() => statsQuery.refetch()} disabled={statsQuery.isFetching}>重试</Button>
@@ -340,21 +340,59 @@ export function PersonManagementPage() {
         </label>}
       </div>
 
-      {!grouped && <nav aria-label="按平台查看账号" className="flex shrink-0 flex-wrap items-center gap-1 border-b pb-2">
-        <Button size="xs" variant={!list.filters.platform ? 'secondary' : 'ghost'} aria-pressed={!list.filters.platform}
-          onClick={() => list.setFilter('platform', undefined)}>全部平台 · {stats?.total ?? '—'}</Button>
-        {platforms.map(platform => <Button key={platform} size="xs" variant={list.filters.platform === platform ? 'secondary' : 'ghost'}
-          aria-pressed={list.filters.platform === platform} onClick={() => list.setFilter('platform', platform)}>
-          {platform} · {stats?.platforms[platform]}
-        </Button>)}
-      </nav>}
+      {!grouped && (
+        <div className="shrink-0 border-b pb-2">
+          <PillNav
+            as="nav"
+            variant="pill"
+            size="xs"
+            scrollable
+            ariaLabel="按平台查看账号"
+            value={list.filters.platform ?? '__all__'}
+            options={[
+              {
+                value: '__all__',
+                label: '全部平台',
+                count: stats?.total,
+                ariaLabel: `全部平台 ${stats?.total ?? '—'}`,
+              },
+              ...platforms.map((platform) => ({
+                value: platform,
+                label: platform,
+                count: stats?.platforms[platform],
+                ariaLabel:
+                  stats?.platforms[platform] !== undefined
+                    ? `${platform} ${stats.platforms[platform]}`
+                    : platform,
+              })),
+            ]}
+            onChange={(next) => list.setFilter('platform', next === '__all__' ? undefined : next)}
+          />
+        </div>
+      )}
 
-      {list.selectedCount > 0 && <div className="flex shrink-0 flex-wrap items-center gap-2 text-xs">
-        <span>已选 {grouped ? `${list.selectedCount} 个体 · ` : ''}{selectedPersonIds.length} 账号</span>
-        <Button variant="outline" size="xs" disabled={mergeLoading || list.isFetching} onClick={() => openMergeDialog()}>合并个体</Button>
-        <Button variant="ghost" size="xs" disabled={list.isFetching} onClick={openBatchDeleteDialog}>删除所选账号</Button>
-        <Button variant="ghost" size="xs" onClick={list.clearSelection}>取消选择</Button>
-      </div>}
+      <ActionBar
+        open={list.selectedCount > 0}
+        countLabel={`已选 ${grouped ? `${list.selectedCount} 个体 · ` : ''}${selectedPersonIds.length} 账号`}
+        onClear={list.clearSelection}
+      >
+        <Button
+          variant="outline"
+          size="xs"
+          disabled={mergeLoading || list.isFetching}
+          onClick={() => openMergeDialog()}
+        >
+          合并个体
+        </Button>
+        <Button
+          variant="destructive"
+          size="xs"
+          disabled={list.isFetching}
+          onClick={openBatchDeleteDialog}
+        >
+          删除所选账号
+        </Button>
+      </ActionBar>
 
       <section aria-label="个体与账号对应关系" className="min-h-0 flex-1 overflow-hidden rounded-md [&>div]:h-full">
         <Table density="compact" className="min-w-[900px]" aria-label={grouped ? '个体及其全部账号' : '全部账号及所属个体'}>
@@ -455,10 +493,12 @@ export function PersonManagementPage() {
               {mergeSearchQuery.isFetching && <p className="text-sm text-muted-foreground">搜索中...</p>}
               {mergeSearchQuery.isError && <p className="text-sm text-destructive">搜索失败：{mergeSearchQuery.error.message}</p>}
               {mergeSearchQuery.data?.data.map(person => (
-                <Button key={person.person_id} variant="outline" className="w-full justify-start"
+                <Button key={person.person_id} variant="outline" className="w-full justify-start gap-2"
                   disabled={mergeMutation.isPending || mergeLoading || mergePreview?.some(item => item.individual_id === person.individual_id)}
                   onClick={() => addMergePerson(person)}>
-                  {person.nickname || person.source_person_name || person.user_id} · {person.platform} · {person.user_id}
+                  <span>{person.nickname || person.source_person_name || person.user_id}</span>
+                  <span className="text-xs text-muted-foreground">{person.platform}</span>
+                  <span className="font-mono text-xs text-muted-foreground">{person.user_id}</span>
                 </Button>
               ))}
               {mergeSearchQuery.data?.total === 0 && <p className="text-sm text-muted-foreground">没有匹配的账号</p>}
@@ -513,8 +553,10 @@ export function PersonManagementPage() {
                   <p className="font-medium">{individual.display_name}</p>
                   <p className="text-xs text-muted-foreground">{individual.is_known ? '已认识' : '未认识'}</p>
                   {individual.members.map(person => (
-                    <p key={person.person_id} className="text-sm text-muted-foreground">
-                      {person.nickname || person.source_person_name || person.user_id} · {person.platform} · {person.user_id}
+                    <p key={person.person_id} className="flex flex-wrap items-center gap-x-2 text-sm text-muted-foreground">
+                      <span>{person.nickname || person.source_person_name || person.user_id}</span>
+                      <span className="text-xs">{person.platform}</span>
+                      <span className="font-mono text-xs">{person.user_id}</span>
                     </p>
                   ))}
                 </div>
@@ -648,8 +690,10 @@ function PersonDetailDialog({
             <p className="text-xs text-muted-foreground break-all">{person.individual_id}</p>
             {individualQuery.isError && <p className="text-sm text-destructive">加载关联账号失败：{individualQuery.error.message}</p>}
             {individualQuery.data?.members.map(member => (
-              <p key={member.person_id} className="text-sm">
-                {member.nickname || member.source_person_name || member.user_id} · {member.platform} · {member.user_id}
+              <p key={member.person_id} className="flex flex-wrap items-center gap-x-2 text-sm">
+                <span>{member.nickname || member.source_person_name || member.user_id}</span>
+                <span className="text-xs text-muted-foreground">{member.platform}</span>
+                <span className="font-mono text-xs text-muted-foreground">{member.user_id}</span>
               </p>
             ))}
           </div>
@@ -658,7 +702,11 @@ function PersonDetailDialog({
             <summary className="cursor-pointer text-sm">人物资料来源</summary>
             <div className="mt-2 space-y-2">
               {individualQuery.data.profile_sources.map((source, index) => <div key={`${source.person_id}:${index}`} className="text-xs">
-                <p>{source.display_name} · {source.platform} · {source.user_id}</p>
+                <p className="flex flex-wrap items-center gap-x-2">
+                  <span>{source.display_name}</span>
+                  <span className="text-muted-foreground">{source.platform}</span>
+                  <span className="font-mono text-muted-foreground">{source.user_id}</span>
+                </p>
                 <p className="text-muted-foreground">{source.is_known ? '已认识' : '未认识'}</p>
               </div>)}
             </div>

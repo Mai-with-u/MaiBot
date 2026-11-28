@@ -73,7 +73,7 @@ export function RelatedStepsCard({
                     {formatStageName(record.stage)}
                     {active && ' · 当前'}
                   </span>
-                  <span className="text-muted-foreground text-[10px] font-normal">{time}</span>
+                  <span className="text-muted-foreground text-xs font-normal tabular-nums">{time}</span>
                 </span>
               </Button>
             )

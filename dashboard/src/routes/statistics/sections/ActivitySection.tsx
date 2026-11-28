@@ -142,22 +142,24 @@ function ChatRankModule({ period, locale }: { period: DetailedStatisticsPeriod; 
             const cost = costByName.get(chat.name)
             return (
               <div key={chat.name} data-stats-row="true" className="flex-wrap">
-                <span data-board-label="true" className="w-5 font-mono">
+                <span data-board-label="true" className="w-5 tabular-nums">
                   {String(index + 1).padStart(2, '0')}
                 </span>
                 <span data-stats-row-name="true" title={chat.name}>
                   {chat.name}
                 </span>
-                <span data-board-number="true">
+                <span data-board-number="true" className="whitespace-nowrap tabular-nums">
                   {t('statisticsPage.heatmap.messagesValue', { value: formatNumber(chat.message_count, locale) })}
                 </span>
-                <span className="w-24 text-right">
+                <span className="w-24 shrink-0 text-right">
                   {cost === undefined ? (
                     <span data-board-label="true">—</span>
                   ) : (
                     <>
-                      <span data-board-number="true">{formatCurrency(cost, locale)}</span>
-                      <span data-board-label="true" className="block">
+                      <span data-board-number="true" className="whitespace-nowrap tabular-nums">
+                        {formatCurrency(cost, locale)}
+                      </span>
+                      <span data-board-label="true" className="block whitespace-nowrap tabular-nums">
                         {t('statisticsPage.chats.costPer100', {
                           cost: formatCurrency(chat.message_count > 0 ? (cost / chat.message_count) * 100 : 0, locale, 3),
                         })}

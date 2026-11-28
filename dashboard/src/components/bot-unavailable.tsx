@@ -63,15 +63,10 @@ export function BotUnavailable() {
               <StatusLight status={selectedLoading ? 'mixed' : 'off'} decorative />
               {t(selectedId ? 'hostManager.selectedStopped' : 'hostManager.noSelection')}
             </CardTitle>
-            <CardDescription className="flex items-start gap-2 text-base">
-              <span aria-hidden="true" className="text-primary font-mono">
-                &gt;
-              </span>
-              <span>
-                {selectedLoading
-                  ? t('hostManager.pending.start')
-                  : t('hostManager.selectToContinue')}
-              </span>
+            <CardDescription className="text-base">
+              {selectedLoading
+                ? t('hostManager.pending.start')
+                : t('hostManager.selectToContinue')}
             </CardDescription>
           </div>
         </CardHeader>
@@ -80,7 +75,7 @@ export function BotUnavailable() {
             <DataPanel padding="none" data-bot-unavailable-list="true" aria-label="正在加载或运行的 Bot">
               <div data-rows-group="true" className="flex items-center gap-2">
                 <span>正在加载 / 运行中</span>
-                <span className="ml-auto font-mono font-normal tracking-normal">{activeBots.length}</span>
+                <span className="ml-auto font-normal tracking-normal tabular-nums">{activeBots.length}</span>
               </div>
               {activeBots.map((bot) => {
                 const loading = isLoading(bot)

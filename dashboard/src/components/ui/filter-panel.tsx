@@ -1,6 +1,8 @@
-import { motion } from 'motion/react'
+import { Check } from 'lucide-react'
+import { AnimatePresence, motion } from 'motion/react'
 import type { ReactNode } from 'react'
 
+import { MotionNumber } from '@/components/motion'
 import { Button } from '@/components/ui/button'
 import { useMotion } from '@/lib/motion'
 import { cn } from '@/lib/utils'
@@ -16,6 +18,8 @@ export interface FilterPanelOption {
 
 interface FilterPanelProps {
   id?: string
+  /** 控制展开/收起以播放平滑退场动画；未传入时默认展开。 */
+  open?: boolean
   title: ReactNode
   options: FilterPanelOption[]
   /** 当前勾选的选项 id */
@@ -30,6 +34,7 @@ interface FilterPanelProps {
 /** 工具行下方展开的多选筛选面板：铺在外壳上，上沿一道刻线，不另加底色。 */
 export function FilterPanel({
   id,
+  open = true,
   title,
   options,
   selected,
@@ -42,51 +47,76 @@ export function FilterPanel({
   const { enabled, profile, transitions } = useMotion()
   const selectedCount = options.filter((option) => selected.has(option.id)).length
   return (
-    <motion.div
-      id={id}
-      data-filter-panel="true"
-      className={cn('flex flex-col gap-2', className)}
-      initial={enabled ? { opacity: 0, y: -profile.distances.overlayY } : false}
-      animate={{ opacity: 1, y: 0 }}
-      transition={transitions.fast}
-    >
-      <div className="flex items-center gap-2 text-xs">
-        <span className="font-semibold">{title}</span>
-        <span className="text-muted-foreground font-mono">
-          已选 {selectedCount}/{options.length}
-        </span>
-        <span className="flex-1" />
-        <Button type="button" variant="outline" size="xs" onClick={onSelectAll}>
-          全选
-        </Button>
-        <Button type="button" variant="outline" size="xs" onClick={onSelectNone}>
-          全不选
-        </Button>
-      </div>
-      <div className="flex flex-wrap gap-1.5">
-        {options.map((option) => {
-          const on = selected.has(option.id)
-          return (
-            <Button
-              key={option.id}
-              type="button"
-              variant="outline"
-              size="xs"
-              aria-pressed={on}
-              title={option.title}
-              onClick={() => onToggle(option.id)}
-              className="max-w-full"
-            >
-              <span className="block max-w-40 truncate">{option.label}</span>
-              {option.count !== undefined && (
-                <span className="font-mono font-normal opacity-70">{option.count}</span>
-              )}
+    <AnimatePresence>
+      {open && (
+        <motion.div
+          key={id ?? 'filter-panel'}
+          id={id}
+          data-filter-panel="true"
+          className={cn('flex flex-col gap-2', className)}
+          initial={enabled ? { opacity: 0, y: -profile.distances.overlayY } : false}
+          animate={{ opacity: 1, y: 0 }}
+          exit={
+            enabled
+              ? { opacity: 0, y: -profile.distances.overlayY, transition: transitions.exit }
+              : undefined
+          }
+          transition={transitions.fast}
+        >
+          <div className="flex items-center gap-2 text-xs">
+            <span className="font-semibold">{title}</span>
+            <span className="text-muted-foreground tabular-nums">
+              已选 <MotionNumber value={selectedCount} />/{options.length}
+            </span>
+            <span className="flex-1" />
+            <Button type="button" variant="outline" size="xs" onClick={onSelectAll}>
+              全选
             </Button>
-          )
-        })}
-      </div>
-      {children}
-    </motion.div>
+            <Button type="button" variant="outline" size="xs" onClick={onSelectNone}>
+              全不选
+            </Button>
+          </div>
+          <div className="flex flex-wrap gap-1.5">
+            {options.map((option) => {
+              const on = selected.has(option.id)
+              return (
+                <Button
+                  key={option.id}
+                  type="button"
+                  variant="outline"
+                  size="xs"
+                  aria-pressed={on}
+                  title={option.title}
+                  onClick={() => onToggle(option.id)}
+                  className="max-w-full gap-1.5 rounded-full"
+                >
+                  <AnimatePresence initial={false}>
+                    {on && (
+                      <motion.span
+                        key="check"
+                        aria-hidden="true"
+                        initial={enabled ? { width: 0, opacity: 0, scale: 0.5 } : false}
+                        animate={{ width: 12, opacity: 1, scale: 1 }}
+                        exit={enabled ? { width: 0, opacity: 0, scale: 0.5 } : undefined}
+                        transition={transitions.snappy}
+                        className="inline-flex shrink-0 items-center justify-center overflow-hidden text-primary"
+                      >
+                        <Check className="size-3" strokeWidth={2.4} />
+                      </motion.span>
+                    )}
+                  </AnimatePresence>
+                  <span className="block max-w-40 truncate">{option.label}</span>
+                  {option.count !== undefined && (
+                    <span className="font-normal tabular-nums opacity-70">{option.count}</span>
+                  )}
+                </Button>
+              )
+            })}
+          </div>
+          {children}
+        </motion.div>
+      )}
+    </AnimatePresence>
   )
 }
 
@@ -118,7 +148,7 @@ export function FilterPanelToggle({
       data-filter-panel-toggle="true"
     >
       {label}
-      <span className="font-mono font-normal">
+      <span className="font-normal tabular-nums">
         {selectedCount === total ? `全部 ${total}` : `${selectedCount}/${total}`}
       </span>
       <svg

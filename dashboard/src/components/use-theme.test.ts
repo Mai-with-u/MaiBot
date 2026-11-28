@@ -76,6 +76,26 @@ describe('toggleThemeWithTransition', () => {
     expect(startViewTransition).not.toHaveBeenCalled()
   })
 
+  it('系统偏好减少动态效果时直接切换主题，不启动 View Transition', () => {
+    const setTheme = vi.fn()
+    const startViewTransition = vi.fn((callback: () => void | Promise<void>) => {
+      callback()
+      return createViewTransition()
+    })
+
+    vi.stubGlobal('window', {
+      matchMedia: vi.fn((query: string) => ({
+        matches: query === '(prefers-reduced-motion: reduce)',
+      })),
+    })
+    setStartViewTransition(startViewTransition)
+
+    toggleThemeWithTransition('dark', setTheme, { clientX: 10, clientY: 20 } as MouseEvent)
+
+    expect(setTheme).toHaveBeenCalledWith('dark')
+    expect(startViewTransition).not.toHaveBeenCalled()
+  })
+
   it('在非 Edge 且支持 API 时启动 View Transition', async () => {
     const setTheme = vi.fn()
     const animate = vi.fn()

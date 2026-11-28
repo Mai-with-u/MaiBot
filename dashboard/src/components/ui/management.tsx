@@ -441,7 +441,7 @@ export function SegmentedControl({
                   data-segmented-pill="true"
                   aria-hidden="true"
                   transition={transitions.snappy}
-                  className="bg-background pointer-events-none absolute inset-0 z-0 rounded-md shadow-[0_1px_2px_hsl(var(--foreground)/0.12),0_0_0_1px_hsl(var(--input))]"
+                  className="bg-background pointer-events-none absolute inset-0 z-0 rounded-md shadow-[0_1px_2px_hsl(var(--foreground)/0.12),0_0_0_1px_hsl(var(--input))] dark:bg-white/[0.12] dark:shadow-[0_1px_4px_rgba(0,0,0,0.45),inset_0_1px_0_rgba(255,255,255,0.09),0_0_0_1px_rgba(255,255,255,0.1)]"
                 />
               )}
               <span className={modernGlide ? 'relative z-10 inline-flex items-center gap-1.5' : undefined}>

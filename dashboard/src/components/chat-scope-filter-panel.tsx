@@ -1,9 +1,10 @@
 import type { ReactNode } from 'react'
 import { ChevronRight } from 'lucide-react'
 
-import { StreamlineIcon } from '@/components/ui/streamline-icon'
 import { Button } from '@/components/ui/button'
+import { PillNav } from '@/components/ui/pill-nav'
 import { SelectionListItem } from '@/components/ui/selection-list-item'
+import { StreamlineIcon } from '@/components/ui/streamline-icon'
 import { DataPanel, PageFrame } from '@/components/ui/surface'
 import { cn } from '@/lib/utils'
 
@@ -58,7 +59,6 @@ export function ChatScopeFilterPanel<TMode extends string>({
   density = 'default',
   emptyContent,
   footer,
-  modeColumns,
   collapsed = false,
   collapseLabel = '折叠列表',
   expandLabel = '展开列表',
@@ -116,28 +116,20 @@ export function ChatScopeFilterPanel<TMode extends string>({
             </div>
           )}
           {!collapsed && hasModes && (
-            <div
-              data-chat-scope-panel-modes="true"
-              className="grid gap-1"
-              style={{
-                gridTemplateColumns: `repeat(${modeColumns ?? modeItems.length}, minmax(0, 1fr))`,
-              }}
-            >
-              {modeItems.map((mode) => (
-                <Button
-                  key={mode.value}
-                  type="button"
-                  variant="outline"
-                  size="xs"
-                  onClick={() => onModeChange?.(mode.value)}
-                  data-chat-scope-panel-mode="true"
-                  data-active={activeMode === mode.value ? 'true' : 'false'}
-                  aria-pressed={activeMode === mode.value}
-                  className="min-w-0 px-1.5"
-                >
-                  <span className="block truncate">{mode.label}</span>
-                </Button>
-              ))}
+            <div data-chat-scope-panel-modes="true">
+              <PillNav<TMode>
+                variant="segmented"
+                size="xs"
+                ariaLabel={title ? `${title}模式` : '筛选模式'}
+                value={activeMode ?? ('' as TMode)}
+                onChange={(mode) => onModeChange?.(mode)}
+                options={modeItems.map((mode) => ({
+                  value: mode.value,
+                  label: mode.label,
+                }))}
+                className="flex w-full flex-nowrap"
+                itemClassName="min-w-0 flex-1 overflow-hidden px-1.5 [&>span]:min-w-0 [&>span]:max-w-full [&>span>span]:truncate"
+              />
             </div>
           )}
         </div>

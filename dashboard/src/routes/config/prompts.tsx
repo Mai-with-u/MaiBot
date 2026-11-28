@@ -1,15 +1,16 @@
 import { useCallback, useEffect, useMemo, useRef, useState } from 'react'
 import { useTranslation } from 'react-i18next'
 import {
+  Check,
   CheckCircle2,
-  FileText,
-  Maximize2,
-  PanelLeftOpen,
-  PanelLeftClose,
-  MoreHorizontal,
-  List,
   Eye,
+  FileText,
   GitCompareArrows,
+  List,
+  Maximize2,
+  MoreHorizontal,
+  PanelLeftClose,
+  PanelLeftOpen,
   RefreshCw,
   Save,
   Search,
@@ -61,6 +62,7 @@ import {
   SelectTrigger,
   SelectValue,
 } from '@/components/ui/select'
+import { StatefulButton } from '@/components/ui/stateful-button'
 import { ThinkingIllustration } from '@/components/ui/thinking-illustration'
 import { MOBILE_GLASS_CLASS } from '@/components/layout/mobile-glass'
 import { MobileHeaderActions } from '@/components/layout/MobileHeaderActions'
@@ -862,14 +864,30 @@ export function PromptManagementPage() {
         <DashboardFolderTab
           value="main"
           icon={<FileText className="size-4" />}
-          description={`main · 完整任务提示词 · ${promptFiles.filter((file) => (file.kind ?? 'main') === 'main').length}`}
+          description={
+            <span className="inline-flex items-center gap-2">
+              <span>main</span>
+              <span>完整任务提示词</span>
+              <span className="tabular-nums">
+                {promptFiles.filter((file) => (file.kind ?? 'main') === 'main').length}
+              </span>
+            </span>
+          }
         >
           主模板
         </DashboardFolderTab>
         <DashboardFolderTab
           value="instruction"
           icon={<List className="size-4" />}
-          description={`instructions · 插入对话的短指令 · ${promptFiles.filter((file) => file.kind === 'instruction').length}`}
+          description={
+            <span className="inline-flex items-center gap-2">
+              <span>instructions</span>
+              <span>插入对话的短指令</span>
+              <span className="tabular-nums">
+                {promptFiles.filter((file) => file.kind === 'instruction').length}
+              </span>
+            </span>
+          }
         >
           指令片段
         </DashboardFolderTab>
@@ -893,7 +911,7 @@ export function PromptManagementPage() {
             <div className="flex shrink-0 items-center justify-between gap-2 px-3 pt-2">
               <span className="text-sm font-semibold">
                 模板目录{' '}
-                <span className="text-muted-foreground font-mono text-xs">
+                <span className="text-muted-foreground text-xs tabular-nums">
                   {filteredFiles.length}
                 </span>
               </span>
@@ -959,7 +977,7 @@ export function PromptManagementPage() {
                 className="flex items-center justify-between px-3"
               >
                 <span>仅看已修改</span>
-                <span className="font-mono text-xs">
+                <span className="text-xs tabular-nums">
                   {visiblePromptFiles.filter((file) => file.customized).length}
                 </span>
               </SelectionListItem>
@@ -1004,12 +1022,14 @@ export function PromptManagementPage() {
                           </Badge>
                         )}
                       </h2>
-                      <p className="text-muted-foreground text-xs">
-                        {language}
-                        {selectedFile ? ` · ${formatFileSize(selectedFile.size)}` : ''}
-                        {versions.length > 0 ? ` · ${versions.length} 个自定义版本` : ''}
-                        {hasUnsavedChanges ? ' · 有未保存修改' : ''}
-                      </p>
+                      <div className="text-muted-foreground flex flex-wrap items-center gap-x-2 text-xs">
+                        <span>{language}</span>
+                        {selectedFile && (
+                          <span className="tabular-nums">{formatFileSize(selectedFile.size)}</span>
+                        )}
+                        {versions.length > 0 && <span>{versions.length} 个自定义版本</span>}
+                        {hasUnsavedChanges && <span>有未保存修改</span>}
+                      </div>
                     </div>
                     {selectedFile?.description && (
                       <p
@@ -1059,27 +1079,27 @@ export function PromptManagementPage() {
                       ))}
                     </SelectContent>
                   </Select>
-                  <Button
+                  <StatefulButton
                     variant="default"
                     size="sm"
+                    status={
+                      applyingVersion
+                        ? 'loading'
+                        : selectedVersionIsApplied
+                          ? 'success'
+                          : 'idle'
+                    }
+                    idleLabel="应用此版本"
+                    loadingLabel="应用中"
+                    successLabel="已应用"
+                    idleIcon={<CheckCircle2 className="size-3.5" />}
+                    successIcon={<CheckCircle2 className="size-3.5" />}
                     onClick={() => void handleApplySelectedVersion()}
                     disabled={
                       !canApplySelectedVersion || applyingVersion || loadingFile || !filename
                     }
                     className="h-7 shrink-0 gap-1 px-2 text-xs"
-                  >
-                    <CheckCircle2
-                      className={cn(
-                        'size-3.5',
-                        applyingVersion && 'animate-pulse'
-                      )}
-                    />
-                    {applyingVersion
-                      ? '应用中'
-                      : selectedVersionIsApplied
-                        ? '已应用'
-                        : '应用此版本'}
-                  </Button>
+                  />
                   <DropdownMenu>
                     <DropdownMenuTrigger asChild>
                       <Button variant="outline" size="sm" className="h-7 gap-1 px-2" disabled={!filename}>
@@ -1143,17 +1163,18 @@ export function PromptManagementPage() {
                     />
                     {diffMode ? '退出对比' : '对比默认'}
                   </Button>
-                  <Button
+                  <StatefulButton
                     size="sm"
+                    status={saving ? 'loading' : hasUnsavedChanges ? 'idle' : 'success'}
+                    idleLabel={saveLabel}
+                    loadingLabel="保存中"
+                    successLabel="已保存"
+                    idleIcon={<Save className="size-3.5" />}
+                    successIcon={<Check className="size-3.5" />}
                     className="ml-auto h-7 shrink-0 gap-1 px-2 text-xs"
                     onClick={handleSave}
                     disabled={!hasUnsavedChanges || saving || loadingFile || !filename}
-                  >
-                    <Save className="size-3.5" />
-                    <span className="ml-1 sm:ml-0">
-                      {saving ? '保存中' : hasUnsavedChanges ? saveLabel : '已保存'}
-                    </span>
-                  </Button>{' '}
+                  />
                 </div>
               </div>
 
@@ -1284,16 +1305,22 @@ export function PromptManagementPage() {
             <div
               hidden={!filename}
               className={cn(
-                'text-muted-foreground flex shrink-0 flex-wrap justify-between gap-2 pt-2 font-mono text-xs',
+                'text-muted-foreground flex shrink-0 flex-wrap justify-between gap-2 pt-2 text-xs',
                 !filename && 'hidden'
               )}
             >
-              <span>
-                {selectedFile ? `${promptFolder(selectedFile) || rootPath} · ${filename}` : ''}
+              <span className="flex items-center gap-2 font-mono">
+                {selectedFile ? (
+                  <>
+                    <span>{promptFolder(selectedFile) || rootPath}</span>
+                    <span>{filename}</span>
+                  </>
+                ) : null}
               </span>
-              <span>
-                {language} · {splitPromptLines(content).length} 行
-                {hasUnsavedChanges ? ' · 未保存' : ''}
+              <span className="flex items-center gap-2">
+                <span className="font-mono">{language}</span>
+                <span className="tabular-nums">{splitPromptLines(content).length} 行</span>
+                {hasUnsavedChanges && <span>未保存</span>}
               </span>
             </div>
           </section>

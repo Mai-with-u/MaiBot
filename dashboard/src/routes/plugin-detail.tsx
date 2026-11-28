@@ -6,6 +6,7 @@ import { Button } from '@/components/ui/button'
 import { Badge } from '@/components/ui/badge'
 import { Progress } from '@/components/ui/progress'
 import { ScrollArea } from '@/components/ui/scroll-area'
+import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from '@/components/ui/select'
 import { Tabs, TabsContent, TabsList, TabsTrigger } from '@/components/ui/tabs'
 import { ThinkingIllustration } from '@/components/ui/thinking-illustration'
 import {
@@ -607,44 +608,39 @@ export function PluginDetailPage({
                       />
                     </div>
                     <div className="min-w-0 space-y-2">
-                      <CardTitle className="break-words text-2xl">{plugin.manifest.name}</CardTitle>
-                      <div className="flex items-center gap-3 flex-wrap">
-                        <Badge variant="secondary" data-plugin-detail-version="true" className="text-sm">
+                      <div className="flex flex-wrap items-center gap-2">
+                        <CardTitle className="break-words text-2xl">{plugin.manifest.name}</CardTitle>
+                        <Badge variant="secondary" data-plugin-detail-version="true" className="font-mono text-xs">
                           v{selectedRelease?.version || plugin.manifest.version}
                         </Badge>
-                        <Badge variant="outline" data-plugin-detail-type="true" className="text-sm">
-                          {getPluginTypeLabel(plugin)}
-                        </Badge>
-                        {plugin.manifest.license && (
-                          <Badge variant="outline" className="text-xs">{plugin.manifest.license}</Badge>
-                        )}
                         {isInstalled && (
-                          <Badge variant="default" className="text-sm">
-                            <CheckCircle2 className="h-3 w-3 mr-1" />
-                            已安装 {installedVersion && `(v${installedVersion})`}
+                          <Badge variant="default" className="text-xs">
+                            <CheckCircle2 className="mr-1 size-3" />
+                            已安装{installedVersion ? ` v${installedVersion}` : ''}
                           </Badge>
                         )}
                         {needsUpdate() && (
-                          <Badge variant="outline" className="text-sm border-orange-500 text-orange-500">
-                            <RefreshCw className="h-3 w-3 mr-1" />
+                          <Badge variant="outline" className="border-amber-500/50 text-xs text-amber-600 dark:text-amber-400">
+                            <RefreshCw className="mr-1 size-3" />
                             可更新
                           </Badge>
                         )}
-                        {isCompatibilityMode && (
-                          <Badge variant="outline" className="text-sm border-orange-500! bg-orange-500! text-white!">
-                            兼容模式
-                          </Badge>
-                        )}
-                        {!isCompatible && (
-                          <Badge variant="destructive" className="text-sm">
-                            <AlertCircle className="h-3 w-3 mr-1" />
+                        {!isCompatible ? (
+                          <Badge variant="destructive" className="text-xs">
+                            <AlertCircle className="mr-1 size-3" />
                             不兼容
                           </Badge>
-                        )}
+                        ) : isCompatibilityMode ? (
+                          <Badge variant="outline" className="border-amber-500/50 bg-amber-500/10 text-xs text-amber-700 dark:text-amber-300">
+                            兼容模式
+                          </Badge>
+                        ) : null}
                       </div>
-                      <CardDescription className="text-base">{plugin.manifest.description}</CardDescription>
-                      <div className="flex flex-wrap gap-x-4 gap-y-1 text-xs text-muted-foreground">
+                      <CardDescription className="text-sm">{plugin.manifest.description}</CardDescription>
+                      <div className="flex flex-wrap items-center gap-x-4 gap-y-1 text-xs text-muted-foreground">
+                        <span data-plugin-detail-type="true">{getPluginTypeLabel(plugin)}</span>
                         <span>作者 {plugin.manifest.author?.name || 'Unknown'}</span>
+                        {plugin.manifest.license && <span>许可证 {plugin.manifest.license}</span>}
                         <span>最新更新 {formatPluginUpdateDate(latestPluginUpdate)}</span>
                       </div>
                     </div>
@@ -654,37 +650,79 @@ export function PluginDetailPage({
             </CardHeader>
             <CardContent data-plugin-detail-release="true" className="min-w-0 space-y-3 border-t p-5 sm:p-6 lg:border-l lg:border-t-0">
               {releaseCatalog?.mode === 'releases' && !releaseCatalog.sync_error && (
-                <label className="block min-w-0 space-y-2">
-                  <span className="block text-xs text-muted-foreground">选择版本</span>
-                  <select
-                    aria-label="选择发布版本"
-                    className="h-10 w-full min-w-0 rounded-md border border-input bg-background px-3 text-sm text-foreground"
-                    value={selectedRelease?.version || ''}
+                <div className="min-w-0 space-y-2">
+                  <label htmlFor="plugin-detail-release-select" className="block text-xs text-muted-foreground">
+                    选择版本
+                  </label>
+                  <Select
+                    value={selectedRelease?.version || undefined}
                     disabled={operating || detailPending}
-                    onChange={(event) => setSelection({ pluginId, version: event.target.value })}
+                    onValueChange={(version) => setSelection({ pluginId, version })}
                   >
-                    {!selectedRelease && <option value="" disabled>没有兼容的稳定版本，请查看其他版本</option>}
-                    {releaseCatalog.versions.map((release) => (
-                      <option key={release.version} value={release.version} disabled={!release.compatible}>
-                        {release.version}{release.version === releaseCatalog.recommended_version ? ' · 推荐' : ''}
-                        {release.prerelease ? ' · 预发布' : ''}{release.yanked ? ' · 已撤回' : ''}
-                        {!release.compatible ? ` · ${shortenReleaseReasons(release.reasons)}` : ''}
-                        {` · 更新于 ${formatPluginUpdateDate(release.published_at)}`}
-                      </option>
-                    ))}
-                    {releaseCatalog.rejected_releases?.map((release) => (
-                      <option
-                        key={`rejected:${release.tag}`}
-                        value={`rejected:${release.tag}`}
-                        disabled
-                        className="text-muted-foreground"
-                        title={describeRejectedReleaseError(release.error)}
-                      >
-                        {release.tag} · 校验失败 · {describeRejectedReleaseError(release.error)}
-                      </option>
-                    ))}
-                  </select>
-                </label>
+                    <SelectTrigger id="plugin-detail-release-select" aria-label="选择发布版本">
+                      <SelectValue placeholder="没有兼容的稳定版本，请查看其他版本">
+                        {selectedRelease ? (
+                          <span className="inline-flex items-center gap-1.5">
+                            <span className="font-mono">v{selectedRelease.version}</span>
+                            {selectedRelease.version === releaseCatalog.recommended_version && (
+                              <span className="text-xs text-muted-foreground">推荐</span>
+                            )}
+                            {selectedRelease.prerelease && (
+                              <span className="text-xs text-muted-foreground">预发布</span>
+                            )}
+                          </span>
+                        ) : null}
+                      </SelectValue>
+                    </SelectTrigger>
+                    <SelectContent>
+                      {releaseCatalog.versions.map((release) => {
+                        const statusTags = [
+                          release.version === releaseCatalog.recommended_version ? '推荐' : null,
+                          release.prerelease ? '预发布' : null,
+                          release.yanked ? '已撤回' : null,
+                        ].filter((tag): tag is string => tag !== null)
+                        return (
+                          <SelectItem key={release.version} value={release.version} disabled={!release.compatible}>
+                            <span className="flex flex-col gap-0.5">
+                              <span className="flex items-center gap-1.5">
+                                <span className="font-mono font-medium">v{release.version}</span>
+                                {statusTags.map((tag) => (
+                                  <span
+                                    key={tag}
+                                    className="rounded bg-muted px-1.5 py-0.5 text-[11px] leading-none text-muted-foreground"
+                                  >
+                                    {tag}
+                                  </span>
+                                ))}
+                              </span>
+                              <span className="text-xs text-muted-foreground">
+                                {!release.compatible
+                                  ? shortenReleaseReasons(release.reasons)
+                                  : `更新于 ${formatPluginUpdateDate(release.published_at)}`}
+                              </span>
+                            </span>
+                          </SelectItem>
+                        )
+                      })}
+                      {releaseCatalog.rejected_releases?.map((release) => (
+                        <SelectItem
+                          key={`rejected:${release.tag}`}
+                          value={`rejected:${release.tag}`}
+                          disabled
+                          className="text-muted-foreground"
+                          title={describeRejectedReleaseError(release.error)}
+                        >
+                          <span className="flex flex-col gap-0.5">
+                            <span className="font-mono font-medium">{release.tag}</span>
+                            <span className="text-xs text-muted-foreground">
+                              校验失败：{describeRejectedReleaseError(release.error)}
+                            </span>
+                          </span>
+                        </SelectItem>
+                      ))}
+                    </SelectContent>
+                  </Select>
+                </div>
               )}
               {isBuiltin ? <p className="text-sm text-muted-foreground">内置插件随本体更新，可在管理页启用或停用。</p> : detailActionButtons}
               {operationProgress?.plugin_id === plugin.id && (

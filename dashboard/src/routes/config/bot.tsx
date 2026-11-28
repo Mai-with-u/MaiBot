@@ -1,6 +1,7 @@
 import { type ReactNode, useCallback, useEffect, useMemo, useRef, useState } from 'react'
 import { useNavigate, useRouterState } from '@tanstack/react-router'
 import {
+  AlertTriangle,
   Check,
   ChevronDown,
   ChevronRight,
@@ -42,8 +43,9 @@ import {
   DropdownMenuSeparator,
   DropdownMenuTrigger,
 } from '@/components/ui/dropdown-menu'
-import { ScrollArea } from '@/components/ui/scroll-area'
+import { PillNav } from '@/components/ui/pill-nav'
 import { Popover, PopoverContent, PopoverTrigger } from '@/components/ui/popover'
+import { ScrollArea } from '@/components/ui/scroll-area'
 import { Switch } from '@/components/ui/switch'
 import { Tabs, TabsContent, TabsList, TabsTrigger } from '@/components/ui/tabs'
 import { ThinkingIllustration } from '@/components/ui/thinking-illustration'
@@ -663,9 +665,13 @@ function BotConfigPageContent() {
             {editMode === 'detail' && tabGroups.length > 0 && (
               <DropdownMenu>
                 <DropdownMenuTrigger asChild>
-                  <Button variant="outline" className="shrink-0 gap-2 text-base font-semibold ![background-image:none]" aria-label="选择设置页面">
+                  <Button variant="outline" className="group shrink-0 gap-1.5 text-base font-semibold ![background-image:none]" aria-label="选择设置页面">
                     {tabGroups.find((tab) => tab.id === activeConfigTab)?.label ?? tabGroups[0].label}
-                    <ChevronDown className="h-4 w-4" aria-hidden="true" />
+                    <ChevronDown
+                      strokeWidth={1.75}
+                      className="size-3.5 shrink-0 text-muted-foreground/75 transition-transform duration-150 group-data-[state=open]:rotate-180"
+                      aria-hidden="true"
+                    />
                   </Button>
                 </DropdownMenuTrigger>
                 <DropdownMenuContent align="start" className="flex max-h-[var(--radix-dropdown-menu-content-available-height)] min-w-40 flex-col gap-2 overflow-y-auto p-2 ![background-image:none]">
@@ -726,28 +732,35 @@ function BotConfigPageContent() {
                 </DropdownMenuContent>
               </DropdownMenu>
             )}
-            {editMode === 'detail' && pinnedTabs.length > 0 && (
-              <div data-config-pinned-tabs-frame="true" className="min-w-0 flex-1 overflow-hidden rounded-md border bg-muted/30 p-1 shadow-inner">
-                <nav aria-label="钉固的设置页面" className="flex min-w-0 items-center gap-2 overflow-x-auto px-1 py-0.5">
-                  {pinnedTabs.map((pinned) => {
-                    const tab = tabGroups.find((item) => item.id === pinned.id)
-                    if (!tab) return null
-                    return (
-                      <Button
-                        key={tab.id}
-                        size="sm"
-                        variant={activeConfigTab === tab.id ? 'secondary' : 'outline'}
-                        aria-pressed={activeConfigTab === tab.id}
-                        className="shrink-0 text-sm font-semibold ![background-image:none]"
-                        onClick={() => setActiveConfigTab(tab.id)}
-                      >
-                        {tab.label}
-                      </Button>
-                    )
-                  })}
-                </nav>
-              </div>
-            )}
+            {editMode === 'detail' &&
+              (() => {
+                const resolvedPinnedTabs = pinnedTabs
+                  .map((pinned) => tabGroups.find((item) => item.id === pinned.id))
+                  .filter((tab): tab is TabGroup => Boolean(tab))
+                if (resolvedPinnedTabs.length === 0) return null
+                return (
+                  <div
+                    data-config-pinned-tabs-frame="true"
+                    className="min-w-0 flex-1 overflow-hidden"
+                  >
+                    <PillNav
+                      as="nav"
+                      variant="pill"
+                      size="sm"
+                      scrollable
+                      ariaLabel="钉固的设置页面"
+                      value={activeConfigTab}
+                      onChange={setActiveConfigTab}
+                      options={resolvedPinnedTabs.map((tab) => ({
+                        value: tab.id,
+                        label: tab.label,
+                      }))}
+                      className="max-w-full"
+                      itemClassName="text-sm font-semibold"
+                    />
+                  </div>
+                )
+              })()}
           </div>
           {/* 模式页签与刷新、更多按钮保持同一行，桌面端靠右。 */}
           <div className="flex w-full min-w-0 flex-wrap items-center gap-2 sm:justify-end lg:w-auto lg:shrink-0">
@@ -831,37 +844,32 @@ function BotConfigPageContent() {
 
           {/* 手机：设置分区排成一行可横滑的胶囊，替代下拉菜单与钉固栏 */}
           {editMode === 'detail' && tabGroups.length > 0 && (
-            <nav
-              aria-label="选择设置页面"
+            <div
               data-mobile-pill-nav="true"
-              className="-mx-4 flex gap-2 overflow-x-auto px-4 pb-1 [scrollbar-width:none] lg:hidden"
+              className="-mx-4 flex items-center gap-2 overflow-x-auto px-4 pb-1 [scrollbar-width:none] [&::-webkit-scrollbar]:hidden lg:hidden"
             >
-              {tabGroups.map((tab) => (
-                <button
-                  key={tab.id}
-                  type="button"
-                  aria-pressed={activeConfigTab === tab.id}
-                  data-active={activeConfigTab === tab.id ? 'true' : 'false'}
-                  onClick={() => setActiveConfigTab(tab.id)}
-                  className={cn(
-                    'h-9 shrink-0 rounded-full px-4 text-[15px]',
-                    activeConfigTab === tab.id
-                      ? 'bg-foreground text-background font-semibold'
-                      : 'bg-card text-foreground'
-                  )}
-                >
-                  {tab.label}
-                </button>
-              ))}
-              <div role="separator" aria-orientation="vertical" className="mx-1 shrink-0 self-stretch border-l" />
-              <button
-                type="button"
-                onClick={() => void handleModeChange('common')}
-                className="bg-card text-foreground h-9 shrink-0 rounded-full px-4 text-[15px]"
-              >
-                公共设置
-              </button>
-            </nav>
+              <PillNav
+                as="nav"
+                variant="pill"
+                size="sm"
+                scrollable
+                ariaLabel="选择设置页面"
+                value={activeConfigTab}
+                onChange={(nextValue) => {
+                  if (nextValue === '__common__') {
+                    void handleModeChange('common')
+                    return
+                  }
+                  setActiveConfigTab(nextValue)
+                }}
+                options={[
+                  ...tabGroups.map((tab) => ({ value: tab.id, label: tab.label })),
+                  { value: '__common__', label: '公共设置' },
+                ]}
+                className="max-w-none shrink-0"
+                itemClassName="h-9 px-4 text-[15px]"
+              />
+            </div>
           )}
         </div>
 
@@ -893,7 +901,10 @@ function BotConfigPageContent() {
                   )}
                   {hasTomlError && tomlErrorMessage && (
                     <div className="text-destructive bg-destructive/10 mt-3 rounded-md p-3 font-semibold">
-                      <div className="mb-2 font-bold">⚠️ TOML 格式错误：</div>
+                      <div className="mb-2 flex items-center gap-1.5 font-bold">
+                        <AlertTriangle className="size-4 shrink-0" aria-hidden="true" />
+                        <span>TOML 格式错误：</span>
+                      </div>
                       <pre className="font-mono text-sm break-words whitespace-pre-wrap">
                         {tomlErrorMessage}
                       </pre>
@@ -1263,9 +1274,13 @@ function DynamicConfigTabs(props: DynamicConfigTabsProps) {
         {alternateStyleSchema && alternateStyleSchema.fields.length > 0 && (
           <Popover open={alternateStylesOpen} onOpenChange={setAlternateStylesOpen}>
             <PopoverTrigger asChild>
-              <Button type="button" variant="outline" size="sm">
+              <Button type="button" variant="outline" size="sm" className="group gap-1.5">
                 备用表达风格
-                <ChevronDown className={cn('ml-2 h-4 w-4 transition-transform', alternateStylesOpen && 'rotate-180')} />
+                <ChevronDown
+                  strokeWidth={1.75}
+                  className="size-3.5 shrink-0 text-muted-foreground/75 transition-transform duration-150 group-data-[state=open]:rotate-180"
+                  aria-hidden="true"
+                />
               </Button>
             </PopoverTrigger>
             <PopoverContent

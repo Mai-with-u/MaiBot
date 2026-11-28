@@ -42,7 +42,7 @@ const ParagraphNode = memo(({ data }: { data: FlowNodeData }) => {
     : 'min-h-10 min-w-10 max-w-[10rem] rounded-full px-3 py-2'
   const textClassName = data.layout === 'evidence'
     ? 'line-clamp-2 max-w-[11.5rem] whitespace-normal break-words text-xs font-medium leading-snug text-white'
-    : 'max-w-[8rem] truncate text-[11px] font-medium leading-tight text-white'
+    : 'max-w-[8rem] truncate text-xs font-medium leading-tight text-white'
   return (
     <div className={`flex cursor-grab items-center justify-center border border-emerald-300/70 bg-emerald-500/90 text-center shadow-[0_0_18px_rgba(16,185,129,0.22)] backdrop-blur active:cursor-grabbing ${evidenceClassName}`}>
       <Handle className="opacity-0" type="target" position={Position.Top} />
@@ -62,7 +62,7 @@ const RelationNode = memo(({ data }: { data: FlowNodeData }) => {
     : 'min-h-11 min-w-11 max-w-[11rem] rounded-full px-3 py-2'
   const textClassName = data.layout === 'evidence'
     ? 'line-clamp-2 max-w-[11.5rem] whitespace-normal break-words text-xs font-medium leading-snug text-white'
-    : 'max-w-[9rem] truncate text-[11px] font-medium leading-tight text-white'
+    : 'max-w-[9rem] truncate text-xs font-medium leading-tight text-white'
   return (
     <div className={`flex cursor-grab items-center justify-center border border-orange-300/70 bg-orange-500/90 text-center shadow-[0_0_18px_rgba(249,115,22,0.24)] backdrop-blur active:cursor-grabbing ${evidenceClassName}`}>
       <Handle className="opacity-0" type="target" position={Position.Top} />
@@ -243,7 +243,7 @@ function calculateEvidenceLayout(nodes: GraphNode[], edges: GraphEdge[]): { node
       },
       labelStyle: {
         fill: '#334155',
-        fontSize: 11,
+        fontSize: 12,
         fontWeight: 600,
       },
       labelBgPadding: [6, 2],
@@ -331,7 +331,7 @@ function calculateLayout(nodes: GraphNode[], edges: GraphEdge[]): { nodes: FlowN
       },
       labelStyle: {
         fill: '#334155',
-        fontSize: 11,
+        fontSize: 12,
         fontWeight: 600,
       },
       labelBgPadding: [6, 2],

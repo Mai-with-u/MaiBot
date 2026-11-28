@@ -133,30 +133,33 @@ function LogDirectoryListPanel({
         </Button>
       </div>
 
-      <div className="mt-4 space-y-3">
-        {isLoading && !list ? (
-          Array.from({ length: 3 }).map((_, index) => (
-            <div key={index} className="rounded-md border p-3">
+      {isLoading && !list ? (
+        <div className="mt-4 divide-y divide-border/60 border-t border-border/60">
+          {Array.from({ length: 3 }).map((_, index) => (
+            <div key={index} className="py-3">
               <Skeleton className="h-4 w-1/3" />
               <Skeleton className="mt-2 h-3 w-2/3" />
               <Skeleton className="mt-2 h-3 w-1/2" />
             </div>
-          ))
-        ) : items.length === 0 ? (
-          <div className="rounded-md border border-dashed p-8 text-center text-sm text-muted-foreground">
-            暂无日志文件夹
-          </div>
-        ) : (
-          items.map((item) => {
+          ))}
+        </div>
+      ) : items.length === 0 ? (
+        <div className="mt-4 rounded-md border border-dashed p-8 text-center text-sm text-muted-foreground">
+          暂无日志文件夹
+        </div>
+      ) : (
+        <div className="mt-4 divide-y divide-border/60 border-t border-border/60">
+          {items.map((item) => {
             const deleting = deletingPath === item.relative_path
             const displayName = item.root_files_only ? item.name : item.relative_path
             return (
               <div
                 key={item.root_files_only ? '__root_files__' : item.relative_path}
-                className="flex flex-col gap-3 rounded-md border p-3 sm:flex-row sm:items-center"
+                data-log-directory-row="true"
+                className="flex flex-col gap-3 py-3 sm:flex-row sm:items-center"
               >
                 <div className="flex min-w-0 flex-1 items-start gap-3" style={{ paddingLeft: `${Math.min(item.depth, 5) * 12}px` }}>
-                  <div className="mt-0.5 shrink-0 rounded-md bg-muted p-2">
+                  <div className="mt-0.5 shrink-0 rounded-md bg-muted/70 p-2">
                     {item.root_files_only ? (
                       <HardDrive className="h-4 w-4 text-primary" />
                     ) : (
@@ -208,9 +211,9 @@ function LogDirectoryListPanel({
                 </AlertDialog>
               </div>
             )
-          })
-        )}
-      </div>
+          })}
+        </div>
+      )}
     </Card>
   )
 }
@@ -258,27 +261,29 @@ function DataDirectoryPanel({
         </div>
       </div>
 
-      <div className="mt-4 space-y-3">
-        {isLoading && !list ? (
-          Array.from({ length: 4 }).map((_, index) => (
-            <div key={index} className="rounded-md border p-3">
+      {isLoading && !list ? (
+        <div className="mt-4 divide-y divide-border/60 border-t border-border/60">
+          {Array.from({ length: 4 }).map((_, index) => (
+            <div key={index} className="py-3">
               <Skeleton className="h-4 w-1/3" />
               <Skeleton className="mt-2 h-3 w-2/3" />
               <Skeleton className="mt-2 h-3 w-1/2" />
             </div>
-          ))
-        ) : items.length === 0 ? (
-          <div className="rounded-md border border-dashed p-8 text-center text-sm text-muted-foreground">
-            当前 data 目录为空
-          </div>
-        ) : (
-          items.map((item) => {
+          ))}
+        </div>
+      ) : items.length === 0 ? (
+        <div className="mt-4 rounded-md border border-dashed p-8 text-center text-sm text-muted-foreground">
+          当前 data 目录为空
+        </div>
+      ) : (
+        <div className="mt-4 divide-y divide-border/60 border-t border-border/60">
+          {items.map((item) => {
             const deleting = deletingPath === item.relative_path
             const isDirectory = item.kind === 'directory'
             return (
-              <div key={item.relative_path} className="flex flex-col gap-3 rounded-md border p-3 sm:flex-row sm:items-center">
+              <div key={item.relative_path} className="flex flex-col gap-3 py-3 sm:flex-row sm:items-center">
                 <div className="flex min-w-0 flex-1 items-start gap-3">
-                  <div className="mt-0.5 shrink-0 rounded-md bg-muted p-2">
+                  <div className="mt-0.5 shrink-0 rounded-md bg-muted/70 p-2">
                     {isDirectory ? (
                       <Folder className="h-4 w-4 text-primary" />
                     ) : (
@@ -339,9 +344,9 @@ function DataDirectoryPanel({
                 </div>
               </div>
             )
-          })
-        )}
-      </div>
+          })}
+        </div>
+      )}
     </Card>
   )
 }
@@ -439,8 +444,8 @@ function DatabaseManagementPanel({
                 </AlertDialogDescription>
               </AlertDialogHeader>
 
-              <div className="grid gap-3 sm:grid-cols-2">
-                <div className="space-y-1.5">
+              <div className="flex flex-wrap gap-3">
+                <div className="min-w-[12rem] flex-1 space-y-1.5">
                   <span id="database-cleanup-mode-label" className="text-xs text-muted-foreground">清理模式</span>
                   <Select value={cleanupMode} onValueChange={(value) => onModeChange(value as DatabaseCleanupMode)}>
                     <SelectTrigger aria-labelledby="database-cleanup-mode-label">
@@ -459,7 +464,7 @@ function DatabaseManagementPanel({
                     onValueChange={(value) => onKeepDaysChange(Number(value))}
                     disabled={cleanupMode !== 'older_than_days'}
                   >
-                    <SelectTrigger aria-labelledby="database-keep-days-label">
+                    <SelectTrigger aria-labelledby="database-keep-days-label" className="w-36 sm:w-40">
                       <SelectValue />
                     </SelectTrigger>
                     <SelectContent>
@@ -471,7 +476,7 @@ function DatabaseManagementPanel({
                 </div>
               </div>
 
-              <div className="flex cursor-pointer items-center gap-3 rounded-md border p-3">
+              <div className="flex cursor-pointer items-center gap-3 rounded-lg border p-3">
                 <Checkbox
                   id="database-vacuum-after-cleanup"
                   checked={vacuumAfterCleanup}
@@ -485,7 +490,7 @@ function DatabaseManagementPanel({
                 </label>
               </div>
 
-              <div className="space-y-3">
+              <div className="divide-y divide-border/60 overflow-hidden rounded-lg border">
                 {cleanableTables.map((table) => {
                   const checked = selectedTables.includes(table.name)
                   const checkboxId = `database-cleanup-${table.name}`
@@ -493,7 +498,7 @@ function DatabaseManagementPanel({
                     <label
                       key={table.name}
                       htmlFor={checkboxId}
-                      className="flex cursor-pointer items-start gap-3 rounded-md border p-3 hover:bg-muted/50"
+                      className="flex cursor-pointer items-start gap-3 p-3 transition-colors hover:bg-muted/50"
                     >
                       <Checkbox
                         id={checkboxId}

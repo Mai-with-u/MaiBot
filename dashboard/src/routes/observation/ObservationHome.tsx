@@ -7,6 +7,7 @@ import {
   Pencil,
   Plus,
   RefreshCw,
+  RotateCcw,
   Send,
   Sparkles,
   X,
@@ -17,6 +18,7 @@ import {
   useCallback,
   useEffect,
   useMemo,
+  useRef,
   useState,
   type CSSProperties,
   type FormEvent,
@@ -28,11 +30,13 @@ import { Bar, BarChart, CartesianGrid, ResponsiveContainer, Tooltip, XAxis, YAxi
 
 import { RestartOverlay } from '@/components/restart-overlay'
 import { SearchSuggestions } from '@/components/search-suggestions'
+import { ActionBar } from '@/components/ui/action-bar'
 import { Board, BoardGrid, BoardModule, BoardRule, BoardScreen } from '@/components/ui/board'
 import { Button } from '@/components/ui/button'
 import { CHART_INITIAL_DIMENSION } from '@/components/ui/chart'
 import { ConversationAvatar } from '@/components/ui/conversation'
 import { SegmentedMeter } from '@/components/ui/segmented-meter'
+import { UndoButton } from '@/components/ui/stateful-button'
 import { StatusLight } from '@/components/ui/status-light'
 import { Tooltip as UiTooltip, TooltipContent, TooltipTrigger } from '@/components/ui/tooltip'
 import { matchSearchItems, useSearchIndex } from '@/hooks/use-search-index'
@@ -154,6 +158,7 @@ function ObservationHomeContent() {
   const [editing, setEditing] = useState(false)
   const [libraryOpen, setLibraryOpen] = useState(true)
   const [dragId, setDragId] = useState<HomeCardId | null>(null)
+  const resetSnapshotRef = useRef<HomeLayout | null>(null)
   const petStatusQuery = useQuery(desktopPetStatusQueryOptions)
   const petStatus = petStatusQuery.data
   const petEnabled = Boolean(petStatus?.enabled)
@@ -244,6 +249,23 @@ function ObservationHomeContent() {
     setLayout(next)
     saveHomeLayout(next)
   }
+
+  const handleResetLayout = useCallback(() => {
+    resetSnapshotRef.current = {
+      top: layout.top.map((slot) => ({ ...slot })),
+      stats: layout.stats.map((slot) => ({ ...slot })),
+      ...(layout.petDismissed ? { petDismissed: true } : {}),
+    }
+    setLayout(resetHomeLayout())
+  }, [layout])
+
+  const handleUndoResetLayout = useCallback(() => {
+    const snapshot = resetSnapshotRef.current
+    if (!snapshot) return
+    setLayout(snapshot)
+    saveHomeLayout(snapshot)
+    resetSnapshotRef.current = null
+  }, [])
 
   // 开启桌宠后把桌宠卡片放进图表行；用户移除过就不再自动放回
   useEffect(() => {
@@ -775,50 +797,29 @@ function ObservationHomeContent() {
             <span data-observation-version-value="true">V{APP_VERSION}</span>
           </button>
         </div>
-        {editing ? (
-          <div data-observation-edit-tools="true">
+        <UiTooltip>
+          <TooltipTrigger asChild>
             <Button
               type="button"
-              variant="outline"
-              size="sm"
-              aria-pressed={libraryOpen}
-              onClick={() => setLibraryOpen((open) => !open)}
-            >
-              <Plus aria-hidden="true" />
-              {t('observation.cardLibrary')}
-            </Button>
-            <Button
-              type="button"
-              variant="outline"
-              size="sm"
-              onClick={() => setLayout(resetHomeLayout())}
-            >
-              {t('observation.resetLayout')}
-            </Button>
-            <Button type="button" size="sm" onClick={() => setEditing(false)}>
-              {t('observation.doneEditing')}
-            </Button>
-          </div>
-        ) : (
-          <UiTooltip>
-            <TooltipTrigger asChild>
-              <Button
-                type="button"
-                variant="outline"
-                size="icon"
-                data-observation-edit-button="true"
-                aria-label={t('observation.editCards')}
-                onClick={() => {
+              variant={editing ? 'secondary' : 'outline'}
+              size="icon"
+              data-observation-edit-button="true"
+              aria-pressed={editing}
+              aria-label={t('observation.editCards')}
+              onClick={() => {
+                if (editing) {
+                  setEditing(false)
+                } else {
                   setLibraryOpen(true)
                   setEditing(true)
-                }}
-              >
-                <Pencil aria-hidden="true" />
-              </Button>
-            </TooltipTrigger>
-            <TooltipContent side="bottom">{t('observation.editCards')}</TooltipContent>
-          </UiTooltip>
-        )}
+                }
+              }}
+            >
+              <Pencil aria-hidden="true" />
+            </Button>
+          </TooltipTrigger>
+          <TooltipContent side="bottom">{t('observation.editCards')}</TooltipContent>
+        </UiTooltip>
       </header>
 
       <div data-observation-board-row="true">
@@ -949,6 +950,44 @@ function ObservationHomeContent() {
           </UiTooltip>
         </span>
       </form>
+
+      <ActionBar
+        open={editing}
+        className="mb-14 sm:mb-16"
+        leading={
+          <span className="inline-flex items-center gap-1.5 pl-1 text-xs font-medium text-foreground">
+            <Pencil className="size-3.5 text-primary" aria-hidden="true" />
+            <span className="whitespace-nowrap">{t('observation.editCards')}</span>
+          </span>
+        }
+      >
+        <Button
+          type="button"
+          variant="outline"
+          size="sm"
+          aria-pressed={libraryOpen}
+          onClick={() => setLibraryOpen((open) => !open)}
+        >
+          <Plus aria-hidden="true" />
+          {t('observation.cardLibrary')}
+        </Button>
+        <UndoButton
+          variant="outline"
+          size="sm"
+          icon={<RotateCcw className="size-3.5" aria-hidden="true" />}
+          label={t('observation.resetLayout')}
+          doneLabel="已恢复默认"
+          undoLabel="撤销"
+          onAction={handleResetLayout}
+          onUndo={handleUndoResetLayout}
+          onCommit={() => {
+            resetSnapshotRef.current = null
+          }}
+        />
+        <Button type="button" size="sm" onClick={() => setEditing(false)}>
+          {t('observation.doneEditing')}
+        </Button>
+      </ActionBar>
 
       <NewsDialog selectedNews={selectedNews} onClose={() => setSelectedNews(null)} />
       {hitokotoEditorOpen && (

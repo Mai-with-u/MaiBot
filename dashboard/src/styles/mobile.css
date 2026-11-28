@@ -159,7 +159,7 @@
       inset 0 -2px 5px -1px var(--m-glass-tail-bottom),
       var(--m-glass-shadow);
     transition:
-      scale 0.26s cubic-bezier(0.34, 1.56, 0.64, 1),
+      scale 0.26s var(--motion-ease, cubic-bezier(0.22, 1, 0.36, 1)),
       box-shadow var(--motion-duration-fast) var(--motion-ease),
       filter var(--motion-duration-fast) var(--motion-ease);
   }
@@ -177,8 +177,8 @@
   }
 
   :is(button, a).m-glass:active {
-    scale: 1.06;
-    filter: brightness(1.06);
+    scale: 0.985;
+    filter: brightness(1.03);
   }
 
   @media (max-width: 1023.98px) {
@@ -455,16 +455,33 @@
     overflow: hidden;
   }
 
-  /* 真正嵌套在 Card / PageFrame 内部的 DataPanel：按 FlClash SurfaceLevel 抬高一档色调并收圆角 */
+  /* 真正嵌套在 Card / PageFrame / Popover 内部的 DataPanel：按同心圆角收至 12px */
+  :root[data-dashboard-style='modern']
+    :is(
+      [data-dashboard-card='true'],
+      [data-dashboard-page-frame='true']:not([data-dashboard-section-panel='true']),
+      [data-dashboard-floating-content='true'][data-motion-floating='popover']
+    )
+    [data-dashboard-data-panel='true'] {
+    background-color: var(--m-surface-block);
+    border-color: var(--m-hairline-soft);
+    border-radius: 12px;
+  }
+
   :root[data-dashboard-style='modern']
     :is(
       [data-dashboard-card='true'],
       [data-dashboard-page-frame='true']:not([data-dashboard-section-panel='true'])
     )
-    [data-dashboard-data-panel='true'] {
-    background-color: var(--m-surface-block);
-    border-color: var(--m-hairline-soft);
-    border-radius: 18px;
+    .rounded-md.border:not(
+      .dashboard-button,
+      [data-dashboard-input='true'],
+      [data-dashboard-select-trigger='true'],
+      [data-dashboard-switch-field='true'],
+      [data-dashboard-date-time-trigger='true'],
+      [data-dashboard-badge='true']
+    ) {
+    border-radius: 12px;
   }
 
   /* ---------- 3. 分组列表行与状态指示（呼应管理页和 FlClash ListRow） ---------- */
@@ -868,7 +885,7 @@
   :root[data-dashboard-style='modern']
     [data-dashboard-floating-content='true'][data-motion-floating='popover']
     .rounded-md.border {
-    border-radius: 16px;
+    border-radius: 12px;
     border-color: var(--m-hairline-soft);
     background-color: color-mix(in srgb, var(--m-surface-block) 72%, transparent);
   }
@@ -960,6 +977,12 @@
     border-radius: 14px;
     min-height: 2.5rem;
     padding-inline: 0.75rem;
+  }
+
+  :root[data-dashboard-style='modern']
+    :is([data-dashboard-floating-content='true'], [data-dashboard-select-content='true'])
+    [data-modern-glide-highlight='true'] {
+    border-radius: 14px;
   }
 
   /* 弹窗遮罩与底部/居中玻璃弹层（FlClash Sheet / Alert） */

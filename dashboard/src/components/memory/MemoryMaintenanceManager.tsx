@@ -330,7 +330,7 @@ export function MemoryMaintenanceManager({
                     <TableRow key={`${rowTarget}:${index}`}>
                       <TableCell>
                         <div className="font-medium break-words">{getRelationText(item) || '-'}</div>
-                        <div className="mt-1 font-mono text-[11px] text-muted-foreground break-all">{rowTarget || '-'}</div>
+                        <div className="mt-1 font-mono text-xs text-muted-foreground break-all">{rowTarget || '-'}</div>
                         {item.source ? <Badge variant="outline" className="mt-2">{String(item.source)}</Badge> : null}
                       </TableCell>
                       <TableCell>{formatMemoryTime(item.deleted_at ?? item.updated_at)}</TableCell>

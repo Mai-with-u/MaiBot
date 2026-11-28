@@ -81,7 +81,6 @@ function EmptyState({ botName }: { botName: string }) {
     <div className="flex h-full flex-col items-center justify-center gap-3 px-6 py-16 text-center">
       <div className="bg-primary-gradient text-primary-foreground relative flex h-16 w-16 items-center justify-center rounded-2xl shadow-lg">
         <Sparkles className="h-7 w-7" />
-        <span className="bg-primary/30 absolute inset-0 -z-10 animate-pulse rounded-2xl blur-xl" />
       </div>
       <div className="space-y-1">
         <h2 className="text-base font-semibold sm:text-lg">

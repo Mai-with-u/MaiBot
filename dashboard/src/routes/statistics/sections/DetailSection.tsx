@@ -1,9 +1,13 @@
+import { ChevronRight } from 'lucide-react'
 import { useMemo, useState, type ReactNode } from 'react'
 import { useTranslation } from 'react-i18next'
 
-import { BoardModule, BoardRule, BoardScreen } from '@/components/ui/board'
+import { MotionCollapse } from '@/components/motion'
+import { BoardGrid, BoardModule, BoardRule, BoardScreen } from '@/components/ui/board'
+import { Checkbox } from '@/components/ui/checkbox'
 import { Input } from '@/components/ui/input'
 import { Table, TableBody, TableCell, TableHead, TableHeader, TableRow } from '@/components/ui/table'
+import { cn } from '@/lib/utils'
 
 import {
   costPerMillionTokens,
@@ -144,14 +148,21 @@ export function DetailSection({
   return (
     <>
       <BoardRule code="DETAIL">
-        <span data-board-label="true">{t('statisticsPage.sections.breakdowns')}</span>
-        <label className="flex items-center gap-1.5 text-xs">
-          <input
-            type="checkbox"
+        <span data-board-label="true" className="shrink-0 whitespace-nowrap">
+          {t('statisticsPage.sections.breakdowns')}
+        </span>
+        <label
+          htmlFor="stats-hide-embedding"
+          data-stats-toggle-pill="true"
+          className="inline-flex h-8 shrink-0 cursor-pointer items-center gap-2 whitespace-nowrap rounded-lg border border-border/70 bg-muted/45 px-2.5 text-xs font-medium text-foreground transition-colors hover:bg-muted/75"
+        >
+          <Checkbox
+            id="stats-hide-embedding"
+            size="sm"
             checked={hideEmbedding}
-            onChange={(event) => setHideEmbedding(event.target.checked)}
+            onCheckedChange={(checked) => setHideEmbedding(checked === true)}
           />
-          {t('statisticsPage.detail.hideEmbedding')}
+          <span>{t('statisticsPage.detail.hideEmbedding')}</span>
         </label>
         <OptionSwitch
           label={t('statisticsPage.detail.columnGroups')}
@@ -164,9 +175,8 @@ export function DetailSection({
           multiple={groups}
         />
       </BoardRule>
-      <div data-stats-tables="true">
+      <BoardGrid>
         <DetailTable
-          id="primary"
           initialDimension="models"
           period={period}
           locale={locale}
@@ -174,22 +184,12 @@ export function DetailSection({
           hideEmbedding={hideEmbedding}
           filterRequest={filterRequest}
         />
-        <DetailTable
-          id="secondary"
-          initialDimension="modules"
-          period={period}
-          locale={locale}
-          groups={groups}
-          hideEmbedding={hideEmbedding}
-          filterRequest={null}
-        />
-      </div>
+      </BoardGrid>
     </>
   )
 }
 
 function DetailTable({
-  id,
   initialDimension,
   period,
   locale,
@@ -197,7 +197,6 @@ function DetailTable({
   hideEmbedding,
   filterRequest,
 }: {
-  id: string
   initialDimension: DetailDimension
   period: DetailedStatisticsPeriod
   locale: string
@@ -239,13 +238,14 @@ function DetailTable({
     })
   }, [allRows, hideEmbedding, state.query, state.sortKey, state.ascending])
 
-  const maxima = useMemo(
-    () => ({
-      requests: Math.max(0, ...allRows.map((row) => row.request_count)),
-      cost: Math.max(0, ...allRows.map((row) => row.total_cost)),
-    }),
-    [allRows]
-  )
+  const filteredChats = useMemo(() => {
+    const keyword = state.query.trim().toLowerCase()
+    return period.chats
+      .filter((chat) => !keyword || chat.name.toLowerCase().includes(keyword))
+      .sort((a, b) => b.message_count - a.message_count)
+  }, [period.chats, state.query])
+
+  const maxCost = useMemo(() => Math.max(0, ...allRows.map((row) => row.total_cost)), [allRows])
   const totalCost = allRows.reduce((sum, row) => sum + row.total_cost, 0)
   const columns = COLUMNS.filter((column) => column.group === null || groups.has(column.group))
 
@@ -271,15 +271,15 @@ function DetailTable({
 
   return (
     <BoardModule
-      code={id === 'primary' ? 'TABLE A' : 'TABLE B'}
+      code="TABLE"
       title={t(`statisticsPage.breakdowns.${state.dimension}`)}
       span={12}
       spanNarrow={12}
-      tone={id === 'primary' ? 0 : 1}
+      tone={0}
       actions={
         <span data-board-label="true">
           {t('statisticsPage.detail.rowCount', {
-            shown: state.dimension === 'chats' ? period.chats.length : rows.length,
+            shown: state.dimension === 'chats' ? filteredChats.length : rows.length,
             total: state.dimension === 'chats' ? period.chats.length : allRows.length,
           })}
         </span>
@@ -296,23 +296,21 @@ function DetailTable({
             }}
             options={DIMENSIONS.map((value) => ({ value, label: t(`statisticsPage.breakdowns.${value}`) }))}
           />
-          {(
-            <Input
-              value={state.query}
-              onChange={(event) => setState((current) => ({ ...current, query: event.target.value }))}
-              placeholder={t('statisticsPage.detail.search')}
-              aria-label={t('statisticsPage.detail.search')}
-              className="h-8 w-52"
-            />
-          )}
+          <Input
+            value={state.query}
+            onChange={(event) => setState((current) => ({ ...current, query: event.target.value }))}
+            placeholder={t('statisticsPage.detail.search')}
+            aria-label={t('statisticsPage.detail.search')}
+            className="h-8 w-52"
+          />
         </div>
         {state.dimension === 'chats' ? (
-          <ChatRows period={period} locale={locale} query={state.query} />
+          <ChatRows chats={filteredChats} locale={locale} />
         ) : rows.length === 0 ? (
           <EmptyState />
         ) : (
-          <div data-stats-table-wrap="true">
-            <Table className="min-w-[760px]">
+          <div data-stats-table-wrap="true" className="overflow-x-auto">
+            <Table className="w-full min-w-[700px]">
               <TableHeader>
                 <TableRow>
                   {columns.map((column) => {
@@ -322,9 +320,9 @@ function DetailTable({
                         key={column.key}
                         data-sticky-name={column.key === 'name' ? 'true' : undefined}
                         aria-sort={active ? (state.ascending ? 'ascending' : 'descending') : 'none'}
-                        className="whitespace-nowrap"
+                        className="whitespace-nowrap px-3"
                       >
-                        <button type="button" className="inline-flex items-center gap-1" onClick={() => sortBy(column.key)}>
+                        <button type="button" className="inline-flex cursor-pointer items-center gap-1" onClick={() => sortBy(column.key)}>
                           {t(`statisticsPage.columns.${column.key}`)}
                           {active && <span aria-hidden="true">{state.ascending ? '▲' : '▼'}</span>}
                         </button>
@@ -344,7 +342,7 @@ function DetailTable({
                       index={allRows.indexOf(row)}
                       columns={columns}
                       open={open}
-                      maxima={maxima}
+                      maxCost={maxCost}
                       totalCost={totalCost}
                       locale={locale}
                       onToggle={() =>
@@ -362,7 +360,11 @@ function DetailTable({
               <tfoot>
                 <TableRow>
                   {columns.map((column) => (
-                    <TableCell key={column.key} data-sticky-name={column.key === 'name' ? 'true' : undefined} className="font-semibold">
+                    <TableCell
+                      key={column.key}
+                      data-sticky-name={column.key === 'name' ? 'true' : undefined}
+                      className="whitespace-nowrap px-3 font-semibold tabular-nums"
+                    >
                       {footerCell(column.key, totals, rows.length, locale, t)}
                     </TableCell>
                   ))}
@@ -420,7 +422,7 @@ function DetailRow({
   index,
   columns,
   open,
-  maxima,
+  maxCost,
   totalCost,
   locale,
   onToggle,
@@ -429,7 +431,7 @@ function DetailRow({
   index: number
   columns: Column[]
   open: boolean
-  maxima: { requests: number; cost: number }
+  maxCost: number
   totalCost: number
   locale: string
   onToggle: () => void
@@ -440,8 +442,15 @@ function DetailRow({
   const cells: Record<SortKey, ReactNode> = {
     name: (
       <span className="inline-flex items-center gap-2">
+        <ChevronRight
+          aria-hidden="true"
+          className={cn(
+            'size-3.5 shrink-0 text-muted-foreground/70 transition-transform duration-150',
+            open && 'rotate-90 text-foreground'
+          )}
+        />
         <Swatch color={seriesColor(index)} />
-        <span className="max-w-64 truncate font-medium" title={row.name}>
+        <span className="max-w-48 truncate font-medium xl:max-w-60" title={row.name}>
           {row.name}
         </span>
         {row.is_embedding && <span className="text-muted-foreground text-xs">{t('statisticsPage.detail.embeddingTag')}</span>}
@@ -450,12 +459,7 @@ function DetailRow({
         )}
       </span>
     ),
-    requests: (
-      <>
-        <span className="tabular-nums">{formatNumber(row.request_count, locale)}</span>
-        <MiniBar ratio={maxima.requests > 0 ? row.request_count / maxima.requests : 0} />
-      </>
-    ),
+    requests: <span className="tabular-nums">{formatNumber(row.request_count, locale)}</span>,
     tokens: (
       <>
         <span className="tabular-nums">{formatNumber(row.total_tokens, locale)}</span>
@@ -468,10 +472,12 @@ function DetailRow({
       row.cache_hit_rate === null ? (
         <span className="text-muted-foreground">N/A</span>
       ) : (
-        <>
-          <span className="tabular-nums">{formatPercent(row.cache_hit_rate)}</span>
-          <MiniBar ratio={row.cache_hit_rate} alert={row.cache_hit_rate < 0.3} />
-        </>
+        <span
+          className="tabular-nums"
+          data-stats-alert-text={row.cache_hit_rate < 0.3 ? 'true' : undefined}
+        >
+          {formatPercent(row.cache_hit_rate)}
+        </span>
       ),
     cost:
       row.total_cost === 0 ? (
@@ -482,7 +488,7 @@ function DetailRow({
           <span className="text-muted-foreground ml-1.5 text-xs tabular-nums">
             {formatPercent(totalCost > 0 ? row.total_cost / totalCost : null)}
           </span>
-          <MiniBar ratio={maxima.cost > 0 ? row.total_cost / maxima.cost : 0} />
+          <MiniBar ratio={maxCost > 0 ? row.total_cost / maxCost : 0} />
         </>
       ),
     failureRate:
@@ -531,7 +537,7 @@ function DetailRow({
           <TableCell
             key={column.key}
             data-sticky-name={column.key === 'name' ? 'true' : undefined}
-            className="whitespace-nowrap"
+            className="whitespace-nowrap px-3"
           >
             {column.generationOnly && row.is_embedding ? (
               <span className="text-muted-foreground">—</span>
@@ -541,56 +547,52 @@ function DetailRow({
           </TableCell>
         ))}
       </TableRow>
-      {open && (
-        <TableRow>
-          <TableCell colSpan={columns.length}>
-            <dl className="grid grid-cols-2 gap-3 text-xs sm:grid-cols-3 lg:grid-cols-6">
-              {[
-                [t('statisticsPage.table.inputTokens'), formatNumber(row.input_tokens, locale)],
-                [t('statisticsPage.table.outputTokens'), formatNumber(row.output_tokens, locale)],
-                [t('statisticsPage.table.cacheHitTokens'), formatNumber(row.cache_hit_tokens, locale)],
-                [t('statisticsPage.table.cacheMissTokens'), formatNumber(row.cache_miss_tokens, locale)],
-                [
-                  t('statisticsPage.table.tokensPerCall'),
-                  row.avg_tokens_per_call === null ? 'N/A' : formatNumber(row.avg_tokens_per_call, locale),
-                ],
-                [
-                  t('statisticsPage.detail.attemptsFailures'),
-                  row.attempt_count === null
-                    ? 'N/A'
-                    : `${formatNumber(row.failure_count ?? 0, locale)} / ${formatNumber(row.attempt_count, locale)}`,
-                ],
-              ].map(([label, value]) => (
-                <div key={label}>
-                  <dt className="text-muted-foreground">{label}</dt>
-                  <dd className="mt-0.5 text-sm tabular-nums">{value}</dd>
-                </div>
-              ))}
-            </dl>
-          </TableCell>
-        </TableRow>
-      )}
+      <tr aria-hidden={!open} className={open ? 'border-b border-border/60 bg-muted/20' : 'border-0'}>
+        <td colSpan={columns.length} className="p-0">
+          <MotionCollapse open={open}>
+            <div className="px-4 py-3">
+              <dl className="grid grid-cols-2 gap-3 text-xs sm:grid-cols-3 lg:grid-cols-6">
+                {[
+                  [t('statisticsPage.table.inputTokens'), formatNumber(row.input_tokens, locale)],
+                  [t('statisticsPage.table.outputTokens'), formatNumber(row.output_tokens, locale)],
+                  [t('statisticsPage.table.cacheHitTokens'), formatNumber(row.cache_hit_tokens, locale)],
+                  [t('statisticsPage.table.cacheMissTokens'), formatNumber(row.cache_miss_tokens, locale)],
+                  [
+                    t('statisticsPage.table.tokensPerCall'),
+                    row.avg_tokens_per_call === null ? 'N/A' : formatNumber(row.avg_tokens_per_call, locale),
+                  ],
+                  [
+                    t('statisticsPage.detail.attemptsFailures'),
+                    row.attempt_count === null
+                      ? 'N/A'
+                      : `${formatNumber(row.failure_count ?? 0, locale)} / ${formatNumber(row.attempt_count, locale)}`,
+                  ],
+                ].map(([label, value]) => (
+                  <div key={label}>
+                    <dt className="text-muted-foreground">{label}</dt>
+                    <dd className="mt-0.5 whitespace-nowrap text-sm font-medium tabular-nums">{value}</dd>
+                  </div>
+                ))}
+              </dl>
+            </div>
+          </MotionCollapse>
+        </td>
+      </tr>
     </>
   )
 }
 
 function ChatRows({
-  period,
+  chats,
   locale,
-  query,
 }: {
-  period: DetailedStatisticsPeriod
+  chats: DetailedStatisticsPeriod['chats']
   locale: string
-  query: string
 }) {
   const { t } = useTranslation()
-  const keyword = query.trim().toLowerCase()
-  const chats = period.chats
-    .filter((chat) => !keyword || chat.name.toLowerCase().includes(keyword))
-    .sort((a, b) => b.message_count - a.message_count)
   if (chats.length === 0) return <EmptyState />
   return (
-    <div data-stats-table-wrap="true">
+    <div data-stats-table-wrap="true" className="overflow-x-auto">
       <Table>
         <TableHeader>
           <TableRow>

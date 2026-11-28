@@ -34,7 +34,7 @@ const TabsList = React.forwardRef<
       ref={setRefs}
       data-dashboard-tabs-list="true"
       className={cn(
-        'bg-muted text-muted-foreground relative inline-flex h-9 items-center justify-center rounded-lg p-1',
+        'bg-muted text-muted-foreground relative inline-flex h-9 items-center justify-center rounded-lg p-1 dark:bg-white/[0.045]',
         className
       )}
       {...props}
@@ -55,7 +55,7 @@ const TabsTrigger = React.forwardRef<
     data-dashboard-tabs-trigger="true"
     data-control-size={size}
     className={cn(
-      'ring-offset-background focus-visible:ring-ring data-[state=active]:bg-background data-[state=active]:text-foreground inline-flex cursor-pointer items-center justify-center rounded-md px-3 py-1 text-sm font-medium whitespace-nowrap focus-visible:ring-2 focus-visible:ring-offset-2 focus-visible:outline-none disabled:pointer-events-none disabled:opacity-50 data-[state=active]:shadow',
+      'ring-offset-background focus-visible:ring-ring data-[state=active]:bg-background data-[state=active]:text-foreground relative z-10 inline-flex cursor-pointer items-center justify-center rounded-sm px-3 py-1 text-sm font-medium whitespace-nowrap focus-visible:ring-2 focus-visible:ring-offset-2 focus-visible:outline-none disabled:pointer-events-none disabled:opacity-50 data-[state=active]:shadow dark:data-[state=active]:bg-white/[0.12]',
       size === 'sm' ? 'min-h-[var(--tab-height-sm)]' : 'min-h-[var(--tab-height)]',
       className
     )}

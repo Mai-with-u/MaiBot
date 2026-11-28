@@ -299,7 +299,7 @@ export function MemoryBundleCard({ chatTargets }: MemoryBundleCardProps) {
   }
 
   return (
-    <Card className="border-border/70 rounded-2xl shadow-sm">
+    <Card className="border-border/70 rounded-xl shadow-sm">
       <CardContent className="space-y-5 pt-4 sm:pt-5">
         {notice ? (
           <Alert variant={notice.kind === 'error' ? 'destructive' : 'default'}>
@@ -308,7 +308,7 @@ export function MemoryBundleCard({ chatTargets }: MemoryBundleCardProps) {
         ) : null}
 
         <div className="grid gap-5 xl:grid-cols-2">
-          <div className="border-border/60 space-y-4 rounded-xl border p-4">
+          <div className="border-border/60 space-y-4 rounded-lg border p-4">
             <div className="font-medium">导出记忆包</div>
             <div className="grid gap-3 sm:grid-cols-2">
               <div className="space-y-2">
@@ -357,7 +357,7 @@ export function MemoryBundleCard({ chatTargets }: MemoryBundleCardProps) {
                 </p>
                 <div className="grid grid-cols-3 gap-2">
                   {imageOptions.map((image) => (
-                    <label key={image.asset_id} htmlFor={`bundle-export-image-${image.asset_id}`} className="rounded border p-2">
+                    <label key={image.asset_id} htmlFor={`bundle-export-image-${image.asset_id}`} className="rounded-md border p-2">
                       <Checkbox
                         id={`bundle-export-image-${image.asset_id}`}
                         aria-label={`选择图片 ${image.content_hash.slice(0, 12)}`}
@@ -372,7 +372,7 @@ export function MemoryBundleCard({ chatTargets }: MemoryBundleCardProps) {
                       <img
                         src={getMemoryImageContentUrl(image.asset_id)}
                         alt="待导出图片"
-                        className="h-20 w-full object-contain"
+                        className="h-20 w-full rounded-sm object-contain"
                       />
                     </label>
                   ))}
@@ -551,7 +551,7 @@ export function MemoryBundleCard({ chatTargets }: MemoryBundleCardProps) {
             </div>
           </div>
 
-          <div className="border-border/60 space-y-4 rounded-xl border p-4">
+          <div className="border-border/60 space-y-4 rounded-lg border p-4">
             <div className="font-medium">安装记忆包</div>
             <div className="space-y-2">
               <Label>记忆包文件</Label>
@@ -566,7 +566,7 @@ export function MemoryBundleCard({ chatTargets }: MemoryBundleCardProps) {
               />
             </div>
             {preview && (
-              <div className="space-y-1 rounded border p-3 text-sm">
+              <div className="space-y-1 rounded-md border p-3 text-sm">
                 <p>
                   文件 {(preview.size / 1048576).toFixed(2)} MiB，图片{' '}
                   {preview.counts.image_assets ?? 0} 张、出现{' '}
@@ -673,7 +673,7 @@ export function MemoryBundleCard({ chatTargets }: MemoryBundleCardProps) {
                   {installations.slice(0, 6).map((item) => (
                     <div
                       key={item.installation_id}
-                      className="bg-muted/40 flex items-center justify-between gap-3 rounded-lg px-3 py-2 text-sm"
+                      className="bg-muted/40 flex items-center justify-between gap-3 rounded-md px-3 py-2 text-sm"
                     >
                       <div className="min-w-0">
                         <div className="truncate font-medium">{item.name}</div>

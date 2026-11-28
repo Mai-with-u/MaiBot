@@ -104,7 +104,7 @@
 }
 [data-selection-part='required'] {
   margin-left: auto;
-  font-size: 0.6875rem;
+  font-size: 0.75rem;
   opacity: 0.8;
   white-space: nowrap;
 }

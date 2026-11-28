@@ -4,6 +4,7 @@ import { useTranslation } from 'react-i18next'
 import type { FieldHookComponentProps } from '@/lib/field-hooks'
 import { backendApi } from '@/lib/http'
 import { Button } from '@/components/ui/button'
+import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from '@/components/ui/select'
 
 interface Frame { file: string; rect: [number, number, number, number]; duration_ms: number }
 interface Skin {
@@ -117,10 +118,21 @@ export function DesktopPetSkinField({ value, onChange, autoSave = false }: Field
       </div>
       <div className="min-w-0 flex-1 space-y-1.5">
         <label className="block text-[15px] leading-6" htmlFor="desktop-pet-skin">当前皮肤</label>
-        <select id="desktop-pet-skin" className="w-full rounded-md border bg-background p-2" value={selected} onChange={e => onChange?.(e.target.value)}>
-          {!skins.some(s => s.id === selected) && <option value={selected}>{selected}</option>}
-          {skins.map(s => <option key={s.id} value={s.id}>{s.name} · {s.version}</option>)}
-        </select>
+        <Select value={selected || undefined} onValueChange={(next) => onChange?.(next)}>
+          <SelectTrigger id="desktop-pet-skin">
+            <SelectValue placeholder="选择皮肤" />
+          </SelectTrigger>
+          <SelectContent>
+            {selected && !skins.some((skin) => skin.id === selected) && (
+              <SelectItem value={selected}>{selected}</SelectItem>
+            )}
+            {skins.map((skin) => (
+              <SelectItem key={skin.id} value={skin.id}>
+                {skin.name} · {skin.version}
+              </SelectItem>
+            ))}
+          </SelectContent>
+        </Select>
         <p className="text-xs text-muted-foreground">
           {autoSave ? t('observation.pet.skinAutoSaveHint') : '选择后保存配置生效，预览不打断桌宠。'}
         </p>

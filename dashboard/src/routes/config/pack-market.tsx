@@ -185,10 +185,14 @@ export default function PackMarketPage() {
             
             <DropdownMenu>
               <DropdownMenuTrigger asChild>
-                <Button variant="outline" className="min-w-[140px] gap-2">
-                  <ArrowUpDown className="w-4 h-4" />
-                  {currentSort.label}
-                  <ChevronDown className="w-4 h-4 ml-auto" />
+                <Button variant="outline" className="group gap-1.5">
+                  <ArrowUpDown className="size-3.5 shrink-0 text-muted-foreground/75" />
+                  <span>{currentSort.label}</span>
+                  <ChevronDown
+                    strokeWidth={1.75}
+                    className="size-3.5 shrink-0 text-muted-foreground/75 transition-transform duration-150 group-data-[state=open]:rotate-180"
+                    aria-hidden="true"
+                  />
                 </Button>
               </DropdownMenuTrigger>
               <DropdownMenuContent align="end">

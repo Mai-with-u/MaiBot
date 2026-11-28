@@ -9,6 +9,7 @@ import { Checkbox } from '@/components/ui/checkbox'
 import { SegmentedControl } from '@/components/ui/management'
 import { Progress } from '@/components/ui/progress'
 import { Tabs, TabsContent, TabsList, TabsTrigger } from '@/components/ui/tabs'
+import { ThinkingIllustration } from '@/components/ui/thinking-illustration'
 import {
   MotionHoldButton,
   MotionIconSwap,
@@ -184,5 +185,14 @@ describe('modern theme motion UI components', () => {
     } finally {
       vi.useRealTimers()
     }
+  })
+
+  it('renders static dots without animate-bounce in ThinkingIllustration when animations are disabled', () => {
+    const { container } = renderWithStyle('modern', <ThinkingIllustration size="md" />, false)
+
+    const status = screen.getByRole('status', { name: '加载中' })
+    expect(status).toBeInTheDocument()
+    expect(container.querySelectorAll('.animate-bounce')).toHaveLength(0)
+    expect(container.querySelectorAll('.opacity-60')).toHaveLength(3)
   })
 })

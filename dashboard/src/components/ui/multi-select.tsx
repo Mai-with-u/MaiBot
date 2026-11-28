@@ -270,10 +270,13 @@ export function MultiSelect({
             role="combobox"
             aria-expanded={open}
             disabled={disabled}
-            className="w-full min-w-0 justify-between"
+            className="group w-full min-w-0 justify-between gap-2"
           >
             <span className="text-muted-foreground truncate">{placeholder}</span>
-            <ChevronsUpDown className="h-4 w-4 shrink-0 opacity-50" />
+            <ChevronsUpDown
+              strokeWidth={1.75}
+              className="size-3.5 shrink-0 text-muted-foreground/70 transition-colors group-hover:text-foreground/80"
+            />
           </Button>
         </PopoverTrigger>
         <PopoverContent className="w-[var(--radix-popover-trigger-width)] max-w-[var(--radix-popover-content-available-width)] p-0" align="start">

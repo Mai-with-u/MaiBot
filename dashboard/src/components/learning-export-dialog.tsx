@@ -1,4 +1,4 @@
-import { Check, ChevronDown, Upload } from 'lucide-react'
+import { Check, ChevronsUpDown, Upload } from 'lucide-react'
 import { useState } from 'react'
 
 import { Button } from '@/components/ui/button'
@@ -192,12 +192,15 @@ export function LearningExportDialog({
                         aria-expanded={targetPickerOpen}
                         title={selectedTarget?.details}
                         aria-label={scope === 'chat' ? '选择导出聊天' : '选择导出共享组'}
-                        className="w-full justify-between font-normal"
+                        className="group w-full justify-between gap-2 font-normal"
                       >
                         <span className="min-w-0 truncate">
                           {selectedTarget?.label ?? (scope === 'chat' ? '选择聊天' : '选择共享组')}
                         </span>
-                        <ChevronDown className="h-4 w-4 shrink-0 opacity-50" />
+                        <ChevronsUpDown
+                          strokeWidth={1.75}
+                          className="size-3.5 shrink-0 text-muted-foreground/70 transition-colors group-hover:text-foreground/80"
+                        />
                       </Button>
                     </PopoverTrigger>
                     <PopoverContent

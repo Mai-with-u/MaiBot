@@ -176,7 +176,7 @@ export function CommandPermissions({ pluginSection, onChange }: Props) {
               </code>
             </header>
 
-            <div className="bg-muted/40 flex items-center justify-between gap-3 rounded-lg border p-4">
+            <div className="bg-muted/30 flex items-center justify-between gap-3 rounded-md p-4">
               <div className="min-w-0">
                 <div className="font-medium">启用此命令</div>
                 <p className="text-muted-foreground mt-1 text-sm">
@@ -191,7 +191,7 @@ export function CommandPermissions({ pluginSection, onChange }: Props) {
             </div>
 
             {selectedCommand.permission === 'public' ? (
-              <div className="bg-muted/40 flex gap-3 rounded-lg border p-4">
+              <div className="bg-muted/30 flex gap-3 rounded-md p-4">
                 <ShieldCheck className="text-muted-foreground mt-0.5 h-5 w-5 shrink-0" />
                 <div>
                   <div className="font-medium">公开命令</div>
@@ -211,7 +211,7 @@ export function CommandPermissions({ pluginSection, onChange }: Props) {
                   <p className="text-muted-foreground text-xs">这些用户可以执行所有受保护命令。</p>
                 </div>
 
-                <div className="flex items-center justify-between gap-3 rounded-lg border p-4">
+                <div className="bg-muted/30 flex items-center justify-between gap-3 rounded-md p-4">
                   <div className="min-w-0">
                     <div className="text-sm font-medium">不显示无权限提示</div>
                     <p className="text-muted-foreground mt-1 text-xs">

@@ -624,7 +624,7 @@ describe('BotConfigPage 特征化', () => {
       )
       expect(configApi.updateBotConfigRaw).not.toHaveBeenCalled()
       // 错误面板展示翻译后的错误信息
-      expect(await screen.findByText('⚠️ TOML 格式错误：')).toBeInTheDocument()
+      expect(await screen.findByText('TOML 格式错误：')).toBeInTheDocument()
     })
 
     it('关闭文件模式提示后写入 localStorage 不再展示', async () => {
@@ -1014,10 +1014,10 @@ describe('BotConfigPage 特征化', () => {
       const editor = await screen.findByPlaceholderText('TOML 配置内容')
       fireEvent.change(editor, { target: { value: 'a =' } })
       await user.click(await getSaveMenuItem(user))
-      expect(await screen.findByText('⚠️ TOML 格式错误：')).toBeInTheDocument()
+      expect(await screen.findByText('TOML 格式错误：')).toBeInTheDocument()
 
       fireEvent.change(editor, { target: { value: 'title = "fixed"' } })
-      expect(screen.queryByText('⚠️ TOML 格式错误：')).not.toBeInTheDocument()
+      expect(screen.queryByText('TOML 格式错误：')).not.toBeInTheDocument()
     })
 
     it('加载时展开双引号内的 \\t/\\\\，保存时再转回转义序列', async () => {
@@ -1592,7 +1592,7 @@ describe('BotConfigPage 补充覆盖', () => {
 
     fireEvent.change(editor, { target: { value: 'a =' } })
     await user.click(await getSaveMenuItem(user))
-    expect(await screen.findByText('⚠️ TOML 格式错误：')).toBeInTheDocument()
+    expect(await screen.findByText('TOML 格式错误：')).toBeInTheDocument()
     expect(screen.queryByText('文件模式：')).not.toBeInTheDocument()
   })
 
