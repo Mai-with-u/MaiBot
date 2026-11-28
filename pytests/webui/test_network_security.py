@@ -81,3 +81,15 @@ def test_unsafe_dns_result_is_blocked_even_with_fake_ip_allowed(monkeypatch: pyt
         network_security.validate_public_url(
             "https://cnb.cool/Mai-with-u/plugin.git", require_public_network=True, allow_fake_ip=allow_fake_ip,
         )
+
+
+@pytest.mark.parametrize("address", ["100.64.0.1", "100.100.100.200", "100.127.255.254", "::ffff:100.100.100.200"])
+def test_validate_public_url_blocks_shared_address_space(monkeypatch: pytest.MonkeyPatch, address: str) -> None:
+    monkeypatch.setattr(
+        network_security,
+        "_resolve_ip_addresses",
+        lambda hostname, port: {ipaddress.ip_address(address)},
+    )
+
+    with pytest.raises(ValueError, match="禁止访问非公网地址"):
+        network_security.validate_public_url("https://example.com/", require_public_network=True)
