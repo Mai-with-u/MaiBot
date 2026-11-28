@@ -165,7 +165,23 @@ class PluginMessageUtils:
                 ],
             }
 
-        return {"type": "dict", "data": component.data}
+        return {
+            "type": "dict",
+            "data": component.data if include_binary_data else PluginMessageUtils._without_binary_data(component.data),
+        }
+
+    @staticmethod
+    def _without_binary_data(value: Any) -> Any:
+        """历史转发节点可能把媒体保存为普通字典，递归排除其中的二进制负载。"""
+        if isinstance(value, dict):
+            return {
+                key: PluginMessageUtils._without_binary_data(item)
+                for key, item in value.items()
+                if key not in {"binary_data_base64", "binary_data"}
+            }
+        if isinstance(value, list):
+            return [PluginMessageUtils._without_binary_data(item) for item in value]
+        return value
 
     @staticmethod
     def _binary_component_to_base64(component: Any, image_type: str) -> str:

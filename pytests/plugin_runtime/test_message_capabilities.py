@@ -25,3 +25,35 @@ async def test_build_readable_accepts_messages_returned_by_get_recent() -> None:
     )
 
     assert result == {"success": True, "text": "测试用户说：你好"}
+
+
+def test_history_dict_media_obeys_binary_data_flag() -> None:
+    from src.common.data_models.message_component_data_model import DictComponent
+    from src.plugin_runtime.host.message_utils import PluginMessageUtils
+    import msgpack
+
+    # 线上转发历史：媒体嵌套在 DictComponent，而不是 ImageComponent。
+    payload = {
+        "nodes": [
+            {
+                "content": [
+                    {
+                        "type": "image",
+                        "data": {
+                            "hash": "image-hash",
+                            "description": "图片描述",
+                            "binary_data_base64": "A" * (17 * 1024 * 1024),
+                        },
+                    }
+                ]
+            }
+        ]
+    }
+    component = DictComponent(data=payload)
+    full = PluginMessageUtils._component_to_dict(component, include_binary_data=True)
+    lean = PluginMessageUtils._component_to_dict(component, include_binary_data=False)
+    assert len(msgpack.packb(full)) > 16 * 1024 * 1024
+    assert len(msgpack.packb(lean)) < 1024
+    media = lean["data"]["nodes"][0]["content"][0]["data"]
+    assert media == {"hash": "image-hash", "description": "图片描述"}
+    assert "binary_data_base64" in payload["nodes"][0]["content"][0]["data"]
