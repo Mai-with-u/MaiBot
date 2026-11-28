@@ -132,7 +132,7 @@ export function AdapterManagementView({
                 </span>
               </span>
             }
-            leading={<span className={`h-2.5 w-2.5 ${group.dotClassName}`} aria-hidden="true" />}
+            leading={<span data-status-dot="true" className={`h-2.5 w-2.5 ${group.dotClassName}`} aria-hidden="true" />}
           >
             <DataPanel padding="none">
               {group.plugins.map((plugin) => {
@@ -182,7 +182,7 @@ export function AdapterManagementView({
                           {status.icon === 'loading' ? (
                             <Loader2 className="h-3 w-3 animate-spin" />
                           ) : (
-                            <span className={`h-2 w-2 ${status.dotClassName}`} aria-hidden="true" />
+                            <span data-status-dot="true" className={`h-2 w-2 ${status.dotClassName}`} aria-hidden="true" />
                           )}
                           {status.label}
                         </span>

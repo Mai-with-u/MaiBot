@@ -117,7 +117,7 @@ export const MOTION_PROFILES: Record<DashboardStyle, MotionProfile> = {
       dialogY: 10,
       dialogScale: 0.96,
       listItemY: 8,
-      tapScale: 0.975,
+      tapScale: 0.96,
       tapY: 0,
       hoverLiftY: -1.5,
       stagger: 0.028,

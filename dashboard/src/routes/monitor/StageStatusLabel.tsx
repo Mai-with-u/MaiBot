@@ -1,5 +1,6 @@
 import { useEffect, useState } from 'react'
 
+import { MotionThinkingText } from '@/components/motion'
 import type { StageStatusInfo } from './use-maisaka-monitor'
 
 export function StageStatusLabel({ status }: { status: StageStatusInfo }) {
@@ -17,5 +18,7 @@ export function StageStatusLabel({ status }: { status: StageStatusInfo }) {
   if (waitUntil !== undefined) {
     return <>等待({Math.max(0, Math.ceil(waitUntil - now))}s)</>
   }
-  return <>{status.stage === '等待消息' ? '空闲' : status.stage || '未知阶段'}</>
+  const idle = status.stage === '等待消息' || !status.stage
+  const text = status.stage === '等待消息' ? '空闲' : status.stage || '未知阶段'
+  return <MotionThinkingText text={text} active={!idle} />
 }

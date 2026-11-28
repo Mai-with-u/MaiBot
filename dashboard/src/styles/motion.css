@@ -137,6 +137,11 @@
   animation: motion-floating-out var(--motion-duration-exit) var(--motion-ease-exit) forwards;
 }
 
+/* Tooltip 在相邻图标间划过时快速收尾，避免旧气泡拖影盖住新提示 */
+[data-motion-floating='tooltip'][data-state='closed'] {
+  animation: motion-overlay-fade-out calc(var(--motion-duration-instant) * 0.75) var(--motion-ease-exit) forwards;
+}
+
 /* ---------- Accordion & Collapsible 高度过渡 ---------- */
 
 @keyframes motion-accordion-down {

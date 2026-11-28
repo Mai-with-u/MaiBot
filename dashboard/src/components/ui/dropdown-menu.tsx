@@ -4,8 +4,16 @@ import * as React from "react"
 import * as DropdownMenuPrimitive from "@radix-ui/react-dropdown-menu"
 import { Check, ChevronRight, Circle } from "lucide-react"
 
-import { MotionFloating } from "@/components/motion"
+import { ModernGlideHighlight, MotionFloating } from "@/components/motion"
 import { cn } from "@/lib/utils"
+
+function assignRef<T>(ref: React.ForwardedRef<T>, value: T) {
+  if (typeof ref === "function") {
+    ref(value)
+  } else if (ref) {
+    ref.current = value
+  }
+}
 
 const DropdownMenu = DropdownMenuPrimitive.Root
 
@@ -44,47 +52,79 @@ DropdownMenuSubTrigger.displayName =
 const DropdownMenuSubContent = React.forwardRef<
   React.ElementRef<typeof DropdownMenuPrimitive.SubContent>,
   React.ComponentPropsWithoutRef<typeof DropdownMenuPrimitive.SubContent>
->(({ className, children, ...props }, ref) => (
-  <DropdownMenuPrimitive.SubContent ref={ref} asChild {...props}>
-    <MotionFloating
-      variant="menu"
-      data-dashboard-floating-content="true"
-      className={cn(
-        "z-50 min-w-[8rem] overflow-hidden rounded-md border bg-popover p-1 text-popover-foreground shadow-lg origin-[var(--radix-dropdown-menu-content-transform-origin)]",
-        className
-      )}
-    >
-      {children}
-    </MotionFloating>
-  </DropdownMenuPrimitive.SubContent>
-))
+>(({ className, children, ...props }, ref) => {
+  const contentRef = React.useRef<HTMLDivElement | null>(null)
+  const setRefs = React.useCallback(
+    (node: HTMLDivElement | null) => {
+      contentRef.current = node
+      assignRef(ref, node)
+    },
+    [ref]
+  )
+
+  return (
+    <DropdownMenuPrimitive.SubContent ref={setRefs} asChild {...props}>
+      <MotionFloating
+        variant="menu"
+        data-dashboard-floating-content="true"
+        className={cn(
+          "z-50 min-w-[8rem] overflow-hidden rounded-md border bg-popover p-1 text-popover-foreground shadow-lg origin-[var(--radix-dropdown-menu-content-transform-origin)]",
+          className
+        )}
+      >
+        <ModernGlideHighlight
+          containerRef={contentRef}
+          itemSelector="[role='menuitem'], [role='menuitemcheckbox'], [role='menuitemradio']"
+          highlightedSelector="[data-highlighted]"
+        />
+        {children}
+      </MotionFloating>
+    </DropdownMenuPrimitive.SubContent>
+  )
+})
 DropdownMenuSubContent.displayName =
   DropdownMenuPrimitive.SubContent.displayName
 
 const DropdownMenuContent = React.forwardRef<
   React.ElementRef<typeof DropdownMenuPrimitive.Content>,
   React.ComponentPropsWithoutRef<typeof DropdownMenuPrimitive.Content>
->(({ className, children, sideOffset = 4, ...props }, ref) => (
-  <DropdownMenuPrimitive.Portal>
-    <DropdownMenuPrimitive.Content
-      ref={ref}
-      sideOffset={sideOffset}
-      asChild
-      {...props}
-    >
-      <MotionFloating
-        variant="menu"
-        data-dashboard-floating-content="true"
-        className={cn(
-          "z-50 min-w-[8rem] overflow-hidden rounded-md border bg-popover p-1 text-popover-foreground shadow-md origin-[var(--radix-dropdown-menu-content-transform-origin)]",
-          className
-        )}
+>(({ className, children, sideOffset = 4, ...props }, ref) => {
+  const contentRef = React.useRef<HTMLDivElement | null>(null)
+  const setRefs = React.useCallback(
+    (node: HTMLDivElement | null) => {
+      contentRef.current = node
+      assignRef(ref, node)
+    },
+    [ref]
+  )
+
+  return (
+    <DropdownMenuPrimitive.Portal>
+      <DropdownMenuPrimitive.Content
+        ref={setRefs}
+        sideOffset={sideOffset}
+        asChild
+        {...props}
       >
-        {children}
-      </MotionFloating>
-    </DropdownMenuPrimitive.Content>
-  </DropdownMenuPrimitive.Portal>
-))
+        <MotionFloating
+          variant="menu"
+          data-dashboard-floating-content="true"
+          className={cn(
+            "z-50 min-w-[8rem] overflow-hidden rounded-md border bg-popover p-1 text-popover-foreground shadow-md origin-[var(--radix-dropdown-menu-content-transform-origin)]",
+            className
+          )}
+        >
+          <ModernGlideHighlight
+            containerRef={contentRef}
+            itemSelector="[role='menuitem'], [role='menuitemcheckbox'], [role='menuitemradio']"
+            highlightedSelector="[data-highlighted]"
+          />
+          {children}
+        </MotionFloating>
+      </DropdownMenuPrimitive.Content>
+    </DropdownMenuPrimitive.Portal>
+  )
+})
 DropdownMenuContent.displayName = DropdownMenuPrimitive.Content.displayName
 
 const DropdownMenuItem = React.forwardRef<

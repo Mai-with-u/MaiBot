@@ -143,10 +143,10 @@ export function PersonalityProfiles({ values, onChange }: {
 
   return (
     <>
-      <div className="flex min-w-0 items-center gap-2">
+      <div className="flex min-w-0 flex-wrap items-center gap-2">
         <Label htmlFor="personality-profile" className="shrink-0">当前人设</Label>
         <Select value={selected?.name ?? ''} onValueChange={switchTo}>
-          <SelectTrigger id="personality-profile" className="min-w-0 flex-1">
+          <SelectTrigger id="personality-profile" className="min-w-[10rem] flex-1">
             <SelectValue placeholder="当前人设（未命名）" />
           </SelectTrigger>
           <SelectContent>

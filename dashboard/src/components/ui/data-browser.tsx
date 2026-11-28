@@ -1,6 +1,7 @@
 import { Fragment, type HTMLAttributes, type ReactNode } from 'react'
 import { Search } from 'lucide-react'
 
+import { MotionNumber } from '@/components/motion'
 import { Input } from './input'
 import { DataPanel } from './surface'
 import { Separator } from './separator'
@@ -49,7 +50,7 @@ export function MetricStrip({
                   item.positive && 'text-green-700 dark:text-green-400'
                 )}
               >
-                {item.value}
+                {typeof item.value === 'number' ? <MotionNumber value={item.value} /> : item.value}
               </div>
             </div>
           </Fragment>
