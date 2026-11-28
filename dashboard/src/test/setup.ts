@@ -11,6 +11,11 @@
  * 用普通函数则始终有效，需要断言调用的测试自行 vi.spyOn 即可。
  */
 import '@testing-library/jest-dom/vitest'
+import { MotionGlobalConfig } from 'motion/react'
+
+// jsdom 不驱动真实浏览器合成帧，启用 motion 官方的 skipAnimations 让元素在测试里直接落到终态，
+// 避免 Dialog / TabsContent / Popover 等挂载首帧停留在 opacity: 0 导致同步 toBeVisible() 误判。
+MotionGlobalConfig.skipAnimations = true
 
 // ResizeObserver：Radix、recharts、虚拟列表等组件在挂载时就会实例化它
 globalThis.ResizeObserver = class ResizeObserver {

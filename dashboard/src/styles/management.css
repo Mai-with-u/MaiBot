@@ -184,7 +184,9 @@
   position: relative;
   isolation: isolate;
   cursor: pointer;
-  transition: background-color 150ms ease-out, transform 150ms ease-out;
+  transition:
+    background-color var(--motion-duration-fast) var(--motion-ease),
+    transform var(--motion-duration-fast) var(--motion-ease);
 }
 :root [data-dashboard-resource-row='true'] [data-resource-part='primary-action'] {
   padding: 0;

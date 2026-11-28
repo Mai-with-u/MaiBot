@@ -1,8 +1,11 @@
 import * as React from "react"
 import * as AlertDialogPrimitive from "@radix-ui/react-alert-dialog"
+import { animate } from "motion/react"
 
-import { cn } from "@/lib/utils"
+import { MotionOverlayBackdrop } from "@/components/motion"
 import { buttonVariants } from "@/components/ui/button"
+import { useMotion } from "@/lib/motion"
+import { cn } from "@/lib/utils"
 
 const AlertDialog = AlertDialogPrimitive.Root
 
@@ -13,35 +16,91 @@ const AlertDialogPortal = AlertDialogPrimitive.Portal
 const AlertDialogOverlay = React.forwardRef<
   React.ElementRef<typeof AlertDialogPrimitive.Overlay>,
   React.ComponentPropsWithoutRef<typeof AlertDialogPrimitive.Overlay>
->(({ className, ...props }, ref) => (
-  <AlertDialogPrimitive.Overlay
-    className={cn(
-      "fixed inset-0 z-50 bg-black/80 data-[state=open]:animate-in data-[state=closed]:animate-out data-[state=closed]:fade-out-0 data-[state=open]:fade-in-0",
-      className
-    )}
-    {...props}
-    ref={ref}
-  />
+>(({ className, children, ...props }, ref) => (
+  <AlertDialogPrimitive.Overlay ref={ref} asChild {...props}>
+    <MotionOverlayBackdrop
+      data-dashboard-dialog-overlay="true"
+      className={cn("fixed inset-0 z-50 bg-black/80", className)}
+    >
+      {children}
+    </MotionOverlayBackdrop>
+  </AlertDialogPrimitive.Overlay>
 ))
 AlertDialogOverlay.displayName = AlertDialogPrimitive.Overlay.displayName
 
 const AlertDialogContent = React.forwardRef<
   React.ElementRef<typeof AlertDialogPrimitive.Content>,
   React.ComponentPropsWithoutRef<typeof AlertDialogPrimitive.Content>
->(({ className, ...props }, ref) => (
-  <AlertDialogPortal>
-    <AlertDialogOverlay />
-    <AlertDialogPrimitive.Content
-      ref={ref}
-      data-dashboard-dialog-content="true"
-      className={cn(
-        "fixed left-[50%] top-[50%] z-50 grid w-full max-w-lg translate-x-[-50%] translate-y-[-50%] gap-4 border bg-background p-6 shadow-lg duration-200 data-[state=open]:animate-in data-[state=closed]:animate-out data-[state=closed]:fade-out-0 data-[state=open]:fade-in-0 data-[state=closed]:zoom-out-95 data-[state=open]:zoom-in-95 data-[state=closed]:slide-out-to-left-1/2 data-[state=closed]:slide-out-to-top-[48%] data-[state=open]:slide-in-from-left-1/2 data-[state=open]:slide-in-from-top-[48%] sm:rounded-lg",
-        className
-      )}
-      {...props}
-    />
-  </AlertDialogPortal>
-))
+>(({ className, ...props }, ref) => {
+  const motion = useMotion()
+  const motionRef = React.useRef(motion)
+  React.useLayoutEffect(() => {
+    motionRef.current = motion
+  }, [motion])
+
+  const animatedNodeRef = React.useRef<HTMLDivElement | null>(null)
+  const controlsRef = React.useRef<ReturnType<typeof animate> | null>(null)
+
+  React.useEffect(
+    () => () => {
+      controlsRef.current?.stop()
+      controlsRef.current = null
+      animatedNodeRef.current = null
+    },
+    []
+  )
+
+  const composedRef = React.useCallback(
+    (node: HTMLDivElement | null) => {
+      if (node) {
+        if (animatedNodeRef.current !== node) {
+          animatedNodeRef.current = node
+          controlsRef.current?.stop()
+          controlsRef.current = null
+
+          if (motionRef.current.enabled) {
+            const { dialogScale, dialogY } = motionRef.current.profile.distances
+            controlsRef.current = animate(
+              node,
+              { opacity: [0, 1], scale: [dialogScale, 1], y: [dialogY, 0] },
+              motionRef.current.transitions.dialog
+            )
+          }
+        }
+      } else if (animatedNodeRef.current && !animatedNodeRef.current.isConnected) {
+        controlsRef.current?.stop()
+        controlsRef.current = null
+        animatedNodeRef.current = null
+      }
+
+      if (typeof ref === "function") {
+        ref(node)
+      } else if (ref) {
+        ref.current = node
+      }
+    },
+    [ref]
+  )
+
+  return (
+    <AlertDialogPortal>
+      <AlertDialogOverlay />
+      {/* AlertDialogPrimitive.Content 内部用 Slottable + DescriptionWarning，不能传 asChild，
+          否则会与嵌套 react-slot 的本地 Symbol 冲突并抛出 React.Children.only。
+          这里直接用 motion/react 的 animate 驱动同款入场曲线，退场交由 motion.css 衔接。 */}
+      <AlertDialogPrimitive.Content
+        ref={composedRef}
+        data-dashboard-dialog-content="true"
+        data-motion-dialog="center"
+        className={cn(
+          "fixed left-[50%] top-[50%] z-50 grid w-full max-w-lg translate-x-[-50%] translate-y-[-50%] gap-4 border bg-background p-6 shadow-lg sm:rounded-lg",
+          className
+        )}
+        {...props}
+      />
+    </AlertDialogPortal>
+  )
+})
 AlertDialogContent.displayName = AlertDialogPrimitive.Content.displayName
 
 const AlertDialogHeader = ({

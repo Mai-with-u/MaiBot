@@ -200,9 +200,10 @@ export function UserDataInjection({
         )}
         {!pending && (
           <div className="flex flex-wrap items-end gap-3">
-            <label className="space-y-2 text-sm">
+            <label htmlFor="user-migration-source" className="space-y-2 text-sm">
               来源用户 ID
               <Input
+                id="user-migration-source"
                 value={source}
                 disabled={busy}
                 onChange={(event) => {
@@ -213,9 +214,10 @@ export function UserDataInjection({
               />
             </label>
             <span aria-hidden="true">→</span>
-            <label className="space-y-2 text-sm">
+            <label htmlFor="user-migration-target" className="space-y-2 text-sm">
               目标用户 ID
               <Input
+                id="user-migration-target"
                 value={target}
                 disabled={busy}
                 onChange={(event) => {
@@ -303,8 +305,9 @@ export function UserDataInjection({
               </Button>
             )}
             {canExecute && (
-              <label className="flex gap-2 text-sm">
+              <label htmlFor="user-migration-confirm" className="flex gap-2 text-sm">
                 <Checkbox
+                  id="user-migration-confirm"
                   checked={confirmed}
                   disabled={busy}
                   onCheckedChange={(value) => setConfirmed(value === true)}

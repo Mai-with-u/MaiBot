@@ -1,10 +1,11 @@
 import type { ReactNode } from 'react'
-import { animate, motion, useMotionValue, useReducedMotion } from 'motion/react'
-import { useLayoutEffect, useRef } from 'react'
+import { animate, motion, useMotionValue } from 'motion/react'
+import { useEffect, useLayoutEffect, useRef } from 'react'
 import { useTranslation } from 'react-i18next'
 
 import { StepIndicator } from '@/components/ui/step-indicator'
 import { PageFrame } from '@/components/ui/surface'
+import { useMotion } from '@/lib/motion'
 import { SetupFlip } from './SetupFlip'
 import type { SetupStep } from './types'
 
@@ -29,7 +30,7 @@ export function SetupWizardLayout({
   transitionDirection?: 1 | -1
 }) {
   const { t } = useTranslation()
-  const reducedMotion = useReducedMotion()
+  const { enabled } = useMotion()
   const step = steps[currentStep]
   const groups = new Map<string, { id: string; label: string; substeps?: { id: string; label: string }[] }>()
   for (const item of steps) {
@@ -69,7 +70,7 @@ export function SetupWizardLayout({
               <p className="mt-3 text-sm leading-relaxed sm:text-base">{step.description}</p>
             )}
           </header>
-          {animateContentHeight && !reducedMotion ? <AnimatedContentHeight>{children}</AnimatedContentHeight> : children}
+          {animateContentHeight && enabled ? <AnimatedContentHeight>{children}</AnimatedContentHeight> : children}
         </PageFrame>
         <footer className="mt-5 flex flex-wrap items-center justify-between gap-3">{actions}</footer>
       </SetupFlip>
@@ -80,6 +81,12 @@ export function SetupWizardLayout({
 function AnimatedContentHeight({ children }: { children: ReactNode }) {
   const contentRef = useRef<HTMLDivElement>(null)
   const height = useMotionValue<number | string>('auto')
+  const { transitions } = useMotion()
+  const transitionRef = useRef(transitions.normal)
+
+  useEffect(() => {
+    transitionRef.current = transitions.normal
+  }, [transitions.normal])
 
   useLayoutEffect(() => {
     const content = contentRef.current!
@@ -90,7 +97,7 @@ function AnimatedContentHeight({ children }: { children: ReactNode }) {
       const nextHeight = content.offsetHeight
       if (nextHeight === contentHeight) return
       contentHeight = nextHeight
-      animate(height, contentHeight, { duration: 0.24, ease: 'easeOut' })
+      animate(height, contentHeight, transitionRef.current)
     })
     observer.observe(content)
     return () => {

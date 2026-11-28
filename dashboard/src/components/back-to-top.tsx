@@ -3,8 +3,9 @@ import { useDrag } from '@use-gesture/react'
 import { ArrowUp } from 'lucide-react'
 import { type CSSProperties, useEffect, useRef, useState } from 'react'
 
-import { cn } from '@/lib/utils'
 import { Button } from '@/components/ui/button'
+import { useMotion } from '@/lib/motion'
+import { cn } from '@/lib/utils'
 
 const HIDDEN_TRANSLATE_X = 128
 const DRAG_THRESHOLD = 4
@@ -24,6 +25,7 @@ function loadStoredDragOffsetY(): number {
 }
 
 export function BackToTop() {
+  const { enabled: motionEnabled } = useMotion()
   const [dragOffsetY, setDragOffsetY] = useState(loadStoredDragOffsetY)
   const [dragging, setDragging] = useState(false)
   const [progress, setProgress] = useState(0)
@@ -91,7 +93,7 @@ export function BackToTop() {
   }, [dragOffsetY])
 
   const scrollToTop = () => {
-    scrollerRef.current?.scrollTo({ top: 0, behavior: 'smooth' })
+    scrollerRef.current?.scrollTo({ top: 0, behavior: motionEnabled ? 'smooth' : 'auto' })
   }
 
   const bindDrag = useDrag(
@@ -162,17 +164,22 @@ export function BackToTop() {
     '--back-to-top-progress': `${squareProgress}%`,
   } as CSSProperties
   const transformX = visible ? 0 : HIDDEN_TRANSLATE_X
-  const wrapperStyle = {
+  const wrapperStyle: CSSProperties = {
     transform: `translate3d(${transformX}px, ${dragOffsetY}px, 0px)`,
-  } as CSSProperties
+    transitionDuration: !motionEnabled
+      ? '0ms'
+      : dragging
+        ? '75ms'
+        : 'var(--motion-duration-normal)',
+    transitionTimingFunction: dragging ? 'linear' : 'var(--motion-ease)',
+  }
 
   return (
-    <div 
+    <div
       className={cn(
         // 手机上底部是标签栏，回到顶部的悬浮按钮会与之重叠，因此只在桌面端显示
-        "fixed right-6 bottom-24 z-50 transition-[transform,opacity] ease-in-out max-lg:hidden",
-        dragging ? "duration-75" : "duration-500",
-        visible ? "opacity-100" : "pointer-events-none opacity-0"
+        'fixed right-6 bottom-24 z-50 transition-[transform,opacity] motion-reduce:transition-none max-lg:hidden',
+        visible ? 'opacity-100' : 'pointer-events-none opacity-0'
       )}
       style={wrapperStyle}
     >
@@ -183,12 +190,12 @@ export function BackToTop() {
         size="icon"
         data-dashboard-back-to-top="true"
         className={cn(
-          "relative h-10 w-10 rounded-full shadow-xl",
-          "bg-background/80 backdrop-blur-md border-border/50",
-          "hover:bg-accent hover:scale-105 hover:shadow-2xl hover:border-primary/50",
-          "touch-none transition-all duration-300",
-          dragging ? "cursor-grabbing" : "cursor-grab",
-          "group"
+          'relative h-10 w-10 rounded-full shadow-xl',
+          'bg-background/80 backdrop-blur-md border-border/50',
+          'hover:bg-accent hover:scale-105 hover:shadow-2xl hover:border-primary/50',
+          'touch-none [transition-duration:var(--motion-duration-fast)] [transition-timing-function:var(--motion-ease)]',
+          dragging ? 'cursor-grabbing' : 'cursor-grab',
+          'group'
         )}
         onClick={handleClick}
         aria-label="回到顶部"
@@ -210,7 +217,7 @@ export function BackToTop() {
           />
           {/* 进度环 */}
           <circle
-            className="text-primary transition-all duration-100 ease-out"
+            className="text-primary transition-[stroke-dashoffset] [transition-duration:var(--motion-duration-instant)] [transition-timing-function:var(--motion-ease)] motion-reduce:transition-none"
             strokeWidth="3"
             strokeDasharray={circumference}
             strokeDashoffset={strokeDashoffset}
@@ -228,17 +235,17 @@ export function BackToTop() {
           className="pointer-events-none absolute inset-0 hidden"
           style={squareProgressStyle}
         />
-        
+
         {/* 图标 */}
-        <ArrowUp 
-          className="h-4 w-4 text-primary transition-transform duration-300 group-hover:-translate-y-0.5 group-hover:scale-110" 
+        <ArrowUp
+          className="h-4 w-4 text-primary transition-transform [transition-duration:var(--motion-duration-fast)] [transition-timing-function:var(--motion-ease)] motion-reduce:transition-none group-hover:-translate-y-0.5 group-hover:scale-110"
           strokeWidth={2.5}
         />
-        
+
         {/* 内部发光效果 (仅在 dark 模式下明显) */}
         <div
           data-dashboard-back-to-top-glow="true"
-          className="absolute inset-0 rounded-full bg-primary/5 opacity-0 group-hover:opacity-100 transition-opacity duration-300"
+          className="absolute inset-0 rounded-full bg-primary/5 opacity-0 transition-opacity [transition-duration:var(--motion-duration-fast)] [transition-timing-function:var(--motion-ease)] motion-reduce:transition-none group-hover:opacity-100"
         />
       </Button>
     </div>

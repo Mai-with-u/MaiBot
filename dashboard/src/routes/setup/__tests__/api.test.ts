@@ -223,10 +223,12 @@ describe('loadModelSetupConfig', () => {
       planner_model_name: 'planner-model',
       planner_model_identifier: 'deepseek-v4',
       planner_visual: true,
+      planner_reasoning_effort: 'high',
       planner_thinking: true,
       replyer_model_name: 'replyer-model',
       replyer_model_identifier: 'glm-5',
       replyer_visual: false,
+      replyer_reasoning_effort: 'high',
       replyer_thinking: true,
     })
   })
@@ -269,10 +271,12 @@ describe('loadModelSetupConfig', () => {
       planner_model_name: '',
       planner_model_identifier: '',
       planner_visual: false,
+      planner_reasoning_effort: 'high',
       planner_thinking: false,
       replyer_model_name: '',
       replyer_model_identifier: '',
       replyer_visual: false,
+      replyer_reasoning_effort: 'high',
       replyer_thinking: false,
     })
   })
@@ -448,14 +452,21 @@ describe('saveModelSetupConfig', () => {
     })
   })
 
-  it('空配置下新建 planner/replyer 模型并同步任务模型列表', async () => {
-    getMock.mockResolvedValue({ config: {} })
+  it('DeepSeek 提供商下新建 planner/replyer 模型并同步任务模型列表', async () => {
+    const deepSeekProvider = {
+      name: 'DeepSeek',
+      base_url: 'https://api.deepseek.com',
+      api_key: 'sk-test',
+      client_type: 'openai',
+    }
+    getMock.mockResolvedValue({ config: { api_providers: [deepSeekProvider] } })
     postMock.mockResolvedValue({ success: true })
 
     await saveModelSetupConfig(setupConfig, ' DeepSeek ')
 
     expect(postMock).toHaveBeenCalledWith('/api/webui/config/model', {
       body: {
+        api_providers: [deepSeekProvider],
         models: [
           {
             price_in: 0,
@@ -466,6 +477,7 @@ describe('saveModelSetupConfig', () => {
             extra_params: { thinking: { type: 'enabled' }, reasoning_effort: 'high' },
             visual: true,
             model_identifier: 'deepseek-v4',
+            model_type: 'llm',
             name: 'deepseek-v4',
             api_provider: 'DeepSeek',
           },
@@ -478,6 +490,7 @@ describe('saveModelSetupConfig', () => {
             extra_params: { thinking: { type: 'disabled' } },
             visual: false,
             model_identifier: 'glm-5',
+            model_type: 'llm',
             name: 'glm-5',
             api_provider: 'DeepSeek',
           },
@@ -492,9 +505,38 @@ describe('saveModelSetupConfig', () => {
     })
   })
 
+  it('未命中提供商模板时不写入厂商专属思考参数', async () => {
+    getMock.mockResolvedValue({ config: {} })
+    postMock.mockResolvedValue({ success: true })
+
+    await saveModelSetupConfig(setupConfig, 'CustomProvider')
+
+    const body = postMock.mock.calls[0][1]!.body as {
+      models: Array<Record<string, unknown>>
+    }
+    expect(body.models[0]).toMatchObject({
+      name: 'deepseek-v4',
+      model_type: 'llm',
+      extra_params: {},
+    })
+    expect(body.models[1]).toMatchObject({
+      name: 'glm-5',
+      model_type: 'llm',
+      extra_params: {},
+    })
+  })
+
   it('已有同名模型时保留价格等既有字段并清理旧的 enable_thinking', async () => {
     getMock.mockResolvedValue({
       config: {
+        api_providers: [
+          {
+            name: 'DeepSeek',
+            base_url: 'https://api.deepseek.com',
+            api_key: 'sk-test',
+            client_type: 'openai',
+          },
+        ],
         models: [
           {
             model_identifier: 'deepseek-v4-old',
@@ -522,6 +564,7 @@ describe('saveModelSetupConfig', () => {
     // 既有模型被原位更新：保留价格、清理 enable_thinking、保留其他 extra_params
     expect(body.models[0]).toMatchObject({
       model_identifier: 'deepseek-v4',
+      model_type: 'llm',
       name: 'deepseek-v4',
       api_provider: 'DeepSeek',
       price_in: 2,
@@ -534,7 +577,7 @@ describe('saveModelSetupConfig', () => {
     })
     expect(body.models[0].extra_params).not.toHaveProperty('enable_thinking')
     // replyer 模型作为新模型追加
-    expect(body.models[1]).toMatchObject({ name: 'glm-5', api_provider: 'DeepSeek' })
+    expect(body.models[1]).toMatchObject({ name: 'glm-5', model_type: 'llm', api_provider: 'DeepSeek' })
     // 任务配置：planner 保留既有字段并更新模型列表，vlm 等其他任务保持原样
     expect(body.model_task_config).toEqual({
       planner: { model_list: ['deepseek-v4'], temperature: 0.3 },

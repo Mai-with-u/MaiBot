@@ -1,7 +1,8 @@
 import { useId, type HTMLAttributes, type ReactNode } from 'react'
 import { ChevronDown, ChevronRight } from 'lucide-react'
-import { AnimatePresence, motion, useIsPresent, useReducedMotion } from 'motion/react'
+import { AnimatePresence, motion, useIsPresent } from 'motion/react'
 
+import { useMotion } from '@/lib/motion'
 import { cn } from '@/lib/utils'
 import { Avatar, AvatarFallback, AvatarImage } from './avatar'
 import { Badge } from './badge'
@@ -15,12 +16,11 @@ export function ConversationTransition({
   mode: 'chat' | 'observe'
   children: ReactNode
 }) {
-  const reducedMotion = useReducedMotion()
   const direction = mode === 'observe' ? 1 : -1
   return (
     <div className="relative flex min-h-0 min-w-0 flex-1 overflow-hidden" data-conversation-transition="true">
       <AnimatePresence initial={false} mode="sync" custom={direction}>
-        <ConversationTransitionPage key={mode} direction={direction} reducedMotion={!!reducedMotion}>
+        <ConversationTransitionPage key={mode} direction={direction}>
           {children}
         </ConversationTransitionPage>
       </AnimatePresence>
@@ -28,24 +28,27 @@ export function ConversationTransition({
   )
 }
 
-function ConversationTransitionPage({ children, direction, reducedMotion }: {
+function ConversationTransitionPage({
+  children,
+  direction,
+}: {
   children: ReactNode
   direction: number
-  reducedMotion: boolean
 }) {
   const present = useIsPresent()
+  const { enabled, transitions } = useMotion()
   return (
     <motion.div
       className="absolute inset-0 flex min-h-0 min-w-0 flex-col"
       inert={!present}
-      initial={reducedMotion ? false : { opacity: 0, x: direction * 24 }}
-      animate={{ opacity: 1, x: 0, transition: { duration: reducedMotion ? 0 : 0.18, ease: [0.22, 1, 0.36, 1] } }}
-      exit="leave"
+      initial={enabled ? { opacity: 0, x: direction * 24 } : false}
+      animate={{ opacity: 1, x: 0, transition: transitions.fast }}
+      exit={enabled ? 'leave' : undefined}
       variants={{
         leave: (nextDirection: number) => ({
           opacity: 0,
-          x: reducedMotion ? 0 : -nextDirection * 12,
-          transition: { duration: reducedMotion ? 0 : 0.1, ease: 'easeIn' },
+          x: enabled ? -nextDirection * 12 : 0,
+          transition: transitions.exit,
         }),
       }}
     >

@@ -162,14 +162,14 @@ describe('getChatStreamDetail', () => {
 })
 
 describe('updateChatStreamTalkFrequency', () => {
-  it('以 PUT 提交发言频率规则并返回最新详情', async () => {
+  it('以 PUT 提交查看频率规则并返回最新详情', async () => {
     const payload = { previous_time: '8:00', time: '9:00', value: 1 }
     putMock.mockResolvedValue({ success: true, detail: detailStub })
 
     await expect(updateChatStreamTalkFrequency('s1', payload)).resolves.toBe(detailStub)
     expect(putMock).toHaveBeenCalledWith('/api/chat/sessions/s1/talk-frequency', {
       body: payload,
-      errorMessage: '保存发言频率失败',
+      errorMessage: '保存查看频率失败',
     })
   })
 
@@ -188,8 +188,18 @@ describe('deleteChatStreamTalkFrequency', () => {
 
     await expect(deleteChatStreamTalkFrequency('s1', '9:00')).resolves.toBe(detailStub)
     expect(deleteMock).toHaveBeenCalledWith('/api/chat/sessions/s1/talk-frequency', {
-      query: { time: '9:00' },
-      errorMessage: '删除发言频率规则失败',
+      query: { time: '9:00', active_group: undefined },
+      errorMessage: '删除查看频率规则失败',
+    })
+  })
+
+  it('提供 activeGroup 时在 query 中携带 active_group', async () => {
+    deleteMock.mockResolvedValue({ success: true, detail: detailStub })
+
+    await expect(deleteChatStreamTalkFrequency('s1', '9:00', 'work')).resolves.toBe(detailStub)
+    expect(deleteMock).toHaveBeenCalledWith('/api/chat/sessions/s1/talk-frequency', {
+      query: { time: '9:00', active_group: 'work' },
+      errorMessage: '删除查看频率规则失败',
     })
   })
 

@@ -1,0 +1,343 @@
+/*
+ * 统一动效底座的样式层：
+ * 1. 为三种界面风格（modern / future-retro / millennium）提供默认 `--motion-*` 变量；
+ *    运行时由 MotionProvider 根据当前风格、动效速度与开关实时覆盖。
+ * 2. 承接 Radix Presence 的退场动画、Accordion/Collapsible 高度展开动画与公共控件微交互。
+ */
+
+:root {
+  --motion-duration-instant: 110ms;
+  --motion-duration-fast: 160ms;
+  --motion-duration-normal: 240ms;
+  --motion-duration-slow: 340ms;
+  --motion-duration-exit: 150ms;
+  --motion-collapse-duration: 250ms;
+  --motion-ease: cubic-bezier(0.22, 1, 0.36, 1);
+  --motion-ease-exit: cubic-bezier(0.4, 0, 1, 1);
+  --motion-collapse-ease: cubic-bezier(0.22, 1, 0.36, 1);
+  --motion-overlay-scale: 0.96;
+  --motion-overlay-y: 6px;
+  --motion-dialog-scale: 0.96;
+  --motion-dialog-y: 10px;
+  --motion-tap-scale: 0.975;
+  --motion-tap-y: 0px;
+  --motion-hover-y: -1.5px;
+}
+
+:root[data-dashboard-style='future-retro'] {
+  --motion-duration-instant: 90ms;
+  --motion-duration-fast: 130ms;
+  --motion-duration-normal: 200ms;
+  --motion-duration-slow: 280ms;
+  --motion-duration-exit: 120ms;
+  --motion-collapse-duration: 200ms;
+  --motion-ease: cubic-bezier(0.2, 0, 0, 1);
+  --motion-ease-exit: cubic-bezier(0.4, 0, 1, 1);
+  --motion-collapse-ease: cubic-bezier(0.2, 0, 0, 1);
+  --motion-overlay-scale: 0.985;
+  --motion-overlay-y: 4px;
+  --motion-dialog-scale: 0.985;
+  --motion-dialog-y: 6px;
+  --motion-tap-scale: 0.988;
+  --motion-tap-y: 1px;
+  --motion-hover-y: -1px;
+}
+
+:root[data-dashboard-style='millennium'] {
+  --motion-duration-instant: 60ms;
+  --motion-duration-fast: 90ms;
+  --motion-duration-normal: 140ms;
+  --motion-duration-slow: 200ms;
+  --motion-duration-exit: 90ms;
+  --motion-collapse-duration: 150ms;
+  --motion-ease: cubic-bezier(0.16, 1, 0.3, 1);
+  --motion-ease-exit: cubic-bezier(0.55, 0, 1, 1);
+  --motion-collapse-ease: cubic-bezier(0.16, 1, 0.3, 1);
+  --motion-overlay-scale: 0.96;
+  --motion-overlay-y: 3px;
+  --motion-dialog-scale: 0.96;
+  --motion-dialog-y: 4px;
+  --motion-tap-scale: 1;
+  --motion-tap-y: 2px;
+  --motion-hover-y: 0px;
+}
+
+/* ---------- Radix 浮层与弹窗退场（入场由 motion/react 弹簧驱动） ---------- */
+
+@keyframes motion-overlay-fade-out {
+  from {
+    opacity: 1;
+  }
+  to {
+    opacity: 0;
+  }
+}
+
+@keyframes motion-dialog-center-out {
+  from {
+    opacity: 1;
+    transform: translate3d(0, 0, 0) scale(1);
+  }
+  to {
+    opacity: 0;
+    transform: translate3d(0, calc(var(--motion-dialog-y) * 0.6), 0) scale(var(--motion-dialog-scale));
+  }
+}
+
+@keyframes motion-dialog-right-out {
+  from {
+    opacity: 1;
+    transform: translate3d(0, 0, 0);
+  }
+  to {
+    opacity: 0;
+    transform: translate3d(24px, 0, 0);
+  }
+}
+
+@keyframes motion-dialog-sheet-out {
+  from {
+    opacity: 1;
+    transform: translate3d(0, 0, 0);
+  }
+  to {
+    opacity: 0;
+    transform: translate3d(0, 28px, 0);
+  }
+}
+
+@keyframes motion-floating-out {
+  from {
+    opacity: 1;
+    transform: translate3d(0, 0, 0) scale(1);
+  }
+  to {
+    opacity: 0;
+    transform: translate3d(0, calc(var(--motion-overlay-y) * 0.6), 0) scale(var(--motion-overlay-scale));
+  }
+}
+
+[data-motion-overlay='true'][data-state='closed'] {
+  animation: motion-overlay-fade-out var(--motion-duration-exit) var(--motion-ease-exit) forwards;
+}
+
+[data-motion-dialog='center'][data-state='closed'] {
+  animation: motion-dialog-center-out var(--motion-duration-exit) var(--motion-ease-exit) forwards;
+}
+
+[data-motion-dialog='right'][data-state='closed'] {
+  animation: motion-dialog-right-out var(--motion-duration-exit) var(--motion-ease-exit) forwards;
+}
+
+[data-motion-dialog='sheet'][data-state='closed'] {
+  animation: motion-dialog-sheet-out var(--motion-duration-exit) var(--motion-ease-exit) forwards;
+}
+
+[data-motion-floating][data-state='closed'] {
+  animation: motion-floating-out var(--motion-duration-exit) var(--motion-ease-exit) forwards;
+}
+
+/* Tooltip 在相邻图标间划过时快速收尾，避免旧气泡拖影盖住新提示 */
+[data-motion-floating='tooltip'][data-state='closed'] {
+  animation: motion-overlay-fade-out calc(var(--motion-duration-instant) * 0.75) var(--motion-ease-exit) forwards;
+}
+
+/* ---------- Accordion & Collapsible 高度过渡 ---------- */
+
+@keyframes motion-accordion-down {
+  from {
+    height: 0;
+    opacity: 0;
+  }
+  to {
+    height: var(--radix-accordion-content-height);
+    opacity: 1;
+  }
+}
+
+@keyframes motion-accordion-up {
+  from {
+    height: var(--radix-accordion-content-height);
+    opacity: 1;
+  }
+  to {
+    height: 0;
+    opacity: 0;
+  }
+}
+
+[data-motion-accordion='true'][data-state='open'] {
+  animation: motion-accordion-down var(--motion-collapse-duration) var(--motion-collapse-ease);
+}
+
+[data-motion-accordion='true'][data-state='closed'] {
+  animation: motion-accordion-up var(--motion-collapse-duration) var(--motion-collapse-ease);
+}
+
+@keyframes motion-collapsible-down {
+  from {
+    height: 0;
+    opacity: 0;
+  }
+  to {
+    height: var(--radix-collapsible-content-height);
+    opacity: 1;
+  }
+}
+
+@keyframes motion-collapsible-up {
+  from {
+    height: var(--radix-collapsible-content-height);
+    opacity: 1;
+  }
+  to {
+    height: 0;
+    opacity: 0;
+  }
+}
+
+[data-motion-collapsible='true'] {
+  overflow: hidden;
+}
+
+[data-motion-collapsible='true'][data-state='open'] {
+  animation: motion-collapsible-down var(--motion-collapse-duration) var(--motion-collapse-ease);
+}
+
+[data-motion-collapsible='true'][data-state='closed'] {
+  animation: motion-collapsible-up var(--motion-collapse-duration) var(--motion-collapse-ease);
+}
+
+/* ---------- 公共控件微交互（按风格差异响应） ---------- */
+
+/* 按钮按压：千禧风格的键帽物理下沉由 millennium.css 单独控制，其余风格复用动效令牌。 */
+:root:not([data-dashboard-style='millennium']) .dashboard-button {
+  transition:
+    background-color var(--motion-duration-fast) var(--motion-ease),
+    color var(--motion-duration-fast) var(--motion-ease),
+    border-color var(--motion-duration-fast) var(--motion-ease),
+    box-shadow var(--motion-duration-fast) var(--motion-ease),
+    transform var(--motion-duration-instant) var(--motion-ease);
+}
+
+:root:not([data-dashboard-style='millennium'])
+  .dashboard-button:not(:disabled):not([aria-disabled='true']):active {
+  transform: translateY(var(--motion-tap-y)) scale(var(--motion-tap-scale));
+}
+
+/* Switch 滑块与轨道按风格曲线切换 */
+[data-dashboard-switch='true'] {
+  transition:
+    background-color var(--motion-duration-fast) var(--motion-ease),
+    border-color var(--motion-duration-fast) var(--motion-ease);
+}
+
+[data-dashboard-switch-thumb='true'] {
+  transition: transform var(--motion-duration-fast) var(--motion-ease);
+}
+
+/* Checkbox 与 Radio 选中弹出反馈 */
+@keyframes motion-choice-pop {
+  from {
+    opacity: 0;
+    transform: scale(0.55);
+  }
+  to {
+    opacity: 1;
+    transform: scale(1);
+  }
+}
+
+[data-dashboard-checkbox='true'],
+[data-dashboard-radio-item='true'] {
+  transition:
+    background-color var(--motion-duration-instant) var(--motion-ease),
+    border-color var(--motion-duration-instant) var(--motion-ease),
+    transform var(--motion-duration-instant) var(--motion-ease);
+}
+
+[data-dashboard-checkbox='true']:not(:disabled):active,
+[data-dashboard-radio-item='true']:not(:disabled):active {
+  transform: scale(var(--motion-tap-scale));
+}
+
+[data-dashboard-checkbox-indicator='true'][data-state='checked'],
+[data-dashboard-checkbox-indicator='true'][data-state='indeterminate'],
+[data-dashboard-radio-indicator='true'][data-state='checked'] {
+  animation: motion-choice-pop var(--motion-duration-fast) var(--motion-ease);
+}
+
+/* Select 触发器箭头旋转 */
+[data-dashboard-select-trigger='true'] [data-select-chevron='true'] {
+  transition: transform var(--motion-duration-fast) var(--motion-ease);
+}
+
+[data-dashboard-select-trigger='true'][data-state='open'] [data-select-chevron='true'] {
+  transform: rotate(180deg);
+}
+
+/* Tabs 触发器过渡节奏对齐当前风格 */
+[data-dashboard-tabs-trigger='true'] {
+  transition:
+    background-color var(--motion-duration-fast) var(--motion-ease),
+    color var(--motion-duration-fast) var(--motion-ease),
+    border-color var(--motion-duration-fast) var(--motion-ease),
+    box-shadow var(--motion-duration-fast) var(--motion-ease),
+    transform var(--motion-duration-instant) var(--motion-ease);
+}
+
+/* 选项卡片与可交互资源行的轻量悬停/按压反馈 */
+:root:not([data-dashboard-style='millennium']) [data-dashboard-option-card='true'] {
+  transition:
+    background-color var(--motion-duration-fast) var(--motion-ease),
+    border-color var(--motion-duration-fast) var(--motion-ease),
+    box-shadow var(--motion-duration-fast) var(--motion-ease),
+    transform var(--motion-duration-fast) var(--motion-ease);
+}
+
+:root:not([data-dashboard-style='millennium'])
+  [data-dashboard-option-card='true']:not(:disabled):hover {
+  transform: translateY(var(--motion-hover-y));
+}
+
+:root:not([data-dashboard-style='millennium'])
+  [data-dashboard-option-card='true']:not(:disabled):active {
+  transform: translateY(var(--motion-tap-y)) scale(var(--motion-tap-scale));
+}
+
+[data-dashboard-option-card='true'] [data-option-part='indicator'][data-selected='true'] svg {
+  animation: motion-choice-pop var(--motion-duration-fast) var(--motion-ease);
+}
+
+/* 禁用动效或系统减少动态效果时统一静默 */
+:root.no-animations [data-motion-overlay='true'],
+:root.no-animations [data-motion-dialog],
+:root.no-animations [data-motion-floating],
+:root.no-animations [data-motion-accordion='true'],
+:root.no-animations [data-motion-collapsible='true'],
+:root[data-motion-enabled='false'] [data-motion-overlay='true'],
+:root[data-motion-enabled='false'] [data-motion-dialog],
+:root[data-motion-enabled='false'] [data-motion-floating],
+:root[data-motion-enabled='false'] [data-motion-accordion='true'],
+:root[data-motion-enabled='false'] [data-motion-collapsible='true'] {
+  animation: none !important;
+  transition: none !important;
+}
+
+@media (prefers-reduced-motion: reduce) {
+  [data-motion-overlay='true'],
+  [data-motion-dialog],
+  [data-motion-floating],
+  [data-motion-accordion='true'],
+  [data-motion-collapsible='true'],
+  [data-dashboard-checkbox-indicator='true'],
+  [data-dashboard-radio-indicator='true'],
+  [data-dashboard-option-card='true'],
+  [data-dashboard-switch='true'],
+  [data-dashboard-switch-thumb='true'],
+  [data-dashboard-select-trigger='true'] [data-select-chevron='true'],
+  .dashboard-button {
+    animation: none !important;
+    transition: none !important;
+  }
+}

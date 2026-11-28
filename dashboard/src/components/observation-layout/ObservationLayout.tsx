@@ -7,6 +7,7 @@ import { BackgroundLayer } from '@/components/background-layer'
 import { BackToTop } from '@/components/back-to-top'
 import { TitleBar } from '@/components/electron/TitleBar'
 import { HttpWarningBanner } from '@/components/http-warning-banner'
+import { MotionPage } from '@/components/motion'
 import { useAnnounce } from '@/components/ui/announcer-context'
 import { SkipNav } from '@/components/ui/skip-nav'
 import { TooltipProvider } from '@/components/ui/tooltip'
@@ -26,6 +27,7 @@ import { isElectron } from '@/lib/runtime'
 import { cn } from '@/lib/utils'
 import { useMenuSections } from '@/components/layout/use-menu-sections'
 import type { MenuItem, MenuSection } from '@/components/layout/types'
+import { MOBILE_GLASS_CLASS } from '@/components/layout/mobile-glass'
 import { MobileNavContext } from '@/components/layout/mobile-nav-context'
 import { MobileRouteHeader } from '@/components/layout/MobileRouteHeader'
 import { MobilePageHeader } from '@/components/layout/MobilePageHeader'
@@ -184,6 +186,7 @@ export function ObservationLayout({ children }: { children: ReactNode }) {
         <div
           data-dashboard-shell="true"
           data-observation-shell="true"
+          data-mobile-mode={!isDesktop ? 'true' : 'false'}
           data-dashboard-page-background={pageBg.type}
           className={cn(
             'relative isolate flex h-[100dvh] overflow-hidden',
@@ -221,8 +224,12 @@ export function ObservationLayout({ children }: { children: ReactNode }) {
                 {!isDesktop && pathname === '/' && <MobilePageHeader
                   title={t('home.mobile.title')}
                   trailing={<Link to="/settings" aria-label={t('home.mobile.openSettings')}
-                    className="bg-muted text-foreground flex h-11 w-11 shrink-0 items-center justify-center rounded-full">
-                    <Settings aria-hidden="true" className="h-[22px] w-[22px]" />
+                    data-mobile-header-button="true"
+                    className={cn(
+                      'text-foreground flex h-11 w-11 shrink-0 items-center justify-center rounded-full',
+                      MOBILE_GLASS_CLASS
+                    )}>
+                    <Settings aria-hidden="true" className="h-[22px] w-[22px]" strokeWidth={1.7} />
                   </Link>}
                   className="px-4 pt-3 pb-2"
                 />}
@@ -231,16 +238,17 @@ export function ObservationLayout({ children }: { children: ReactNode }) {
                   actionsRef={setMobileHeaderActionsElement}
                   titleOverride={mobileTitleOverride}
                 />}
-                <div
+                <MotionPage
+                  routeKey={pathname}
                   className={cn(
-                    'lg:contents',
+                    'min-w-0 lg:h-full',
                     isScrollablePage
-                      ? 'not-has-[[data-plugin-viewport]]:flex-[1_0_auto] has-[[data-plugin-viewport]]:min-h-0 has-[[data-plugin-viewport]]:flex-1'
+                      ? 'lg:min-h-full max-lg:not-has-[[data-plugin-viewport]]:flex-[1_0_auto] max-lg:has-[[data-plugin-viewport]]:min-h-0 max-lg:has-[[data-plugin-viewport]]:flex-1'
                       : 'min-h-0 flex-1'
                   )}
                 >
                   {children}
-                </div>
+                </MotionPage>
               </div>
             </main>
             <MobileTabBar hidden={mobileTabBarHidden} onSearch={() => setSearchOpen(true)} />

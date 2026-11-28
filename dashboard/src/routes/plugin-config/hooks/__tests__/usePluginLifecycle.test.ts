@@ -149,13 +149,34 @@ describe('usePluginLifecycle 缺口', () => {
     expect(result.current.updateProgress).toBeNull()
   })
 
-  it('只写入当前操作且 plugin_id 匹配的进度', async () => {
+  it('只写入进行中且当前操作与 plugin_id 匹配的进度', async () => {
     const plugin = makePlugin('test.emoji')
     const { result } = renderLifecycle()
     await waitFor(() => expect(progressClient.subscribe).toHaveBeenCalled())
 
     act(() => result.current.openDeletePluginDialog(plugin, makeClickEvent()))
     await waitFor(() => expect(progressClient.listener).toBeTruthy())
+
+    // 确认前不接收 WS 回放进度，避免覆盖确认弹窗
+    act(() => {
+      progressClient.emit(
+        makeProgress({
+          operation: 'uninstall',
+          stage: 'loading',
+          plugin_id: 'test.emoji',
+          progress: 20,
+        })
+      )
+    })
+    expect(result.current.deleteProgress).toBeNull()
+
+    const deferred = createDeferred<{ success: boolean; message: string }>()
+    vi.mocked(uninstallPlugin).mockReturnValueOnce(deferred.promise)
+    let deletePromise!: Promise<void>
+    act(() => {
+      deletePromise = result.current.handleConfirmDeletePlugin()
+    })
+    await waitFor(() => expect(result.current.deleteProgress?.stage).toBe('loading'))
 
     act(() => {
       progressClient.emit(
@@ -170,7 +191,10 @@ describe('usePluginLifecycle 缺口', () => {
         })
       )
     })
-    expect(result.current.deleteProgress).toBeNull()
+    expect(result.current.deleteProgress).toMatchObject({
+      operation: 'uninstall',
+      progress: 0,
+    })
     expect(result.current.updateProgress).toBeNull()
 
     act(() => {
@@ -186,6 +210,11 @@ describe('usePluginLifecycle 缺口', () => {
     expect(result.current.deleteProgress).toMatchObject({
       operation: 'uninstall',
       progress: 30,
+    })
+
+    await act(async () => {
+      deferred.resolve({ success: true, message: 'ok' })
+      await deletePromise
     })
   })
 

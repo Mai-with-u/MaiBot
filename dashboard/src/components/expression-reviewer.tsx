@@ -9,10 +9,8 @@ import { DataPagination } from '@/components/ui/data-pagination'
  * 4. 冲突检测（防止与并发审核操作冲突）
  */
 
-import { animated, useSpring } from '@react-spring/web'
-
-const AnimatedDiv = animated('div')
 import { useCallback, useEffect, useRef, useState } from 'react'
+import { animate, motion, useMotionValue } from 'motion/react'
 import {
   Dialog,
   DialogContent,
@@ -42,6 +40,7 @@ import {
   X,
   Ban,
 } from 'lucide-react'
+import { useMotion } from '@/lib/motion'
 import { cn } from '@/lib/utils'
 import {
   getReviewStats,
@@ -87,17 +86,45 @@ export function ExpressionReviewer({
   const [quickHasMore, setQuickHasMore] = useState(true)
   const swipeDirectionRef = useRef<'left' | 'right' | null>(null)
   const isAnimatingRef = useRef(false)
-  const [cardSpring, cardApi] = useSpring(() => ({
-    x: 0,
-    opacity: 1,
-    rotate: 0,
-    config: { tension: 300, friction: 30 },
-  }))
+  const { enabled: motionEnabled, profile: motionProfile, transitions: motionTransitions, duration: motionDuration } = useMotion()
+  const cardX = useMotionValue(0)
+  const cardOpacity = useMotionValue(1)
+  const cardRotate = useMotionValue(0)
   const swipeOffsetRef = useRef(0)
   const [conflictId, setConflictId] = useState<number | null>(null)
   const cardRef = useRef<HTMLDivElement>(null)
   const dragStartRef = useRef<{ x: number; y: number } | null>(null)
   const isDraggingRef = useRef(false)
+
+  useEffect(() => {
+    return () => {
+      cardX.stop()
+      cardRotate.stop()
+      cardOpacity.stop()
+    }
+  }, [cardOpacity, cardRotate, cardX])
+
+  const setCardTransformImmediate = useCallback(
+    (x: number, rotate: number, opacity: number) => {
+      cardX.jump(x)
+      cardRotate.jump(rotate)
+      cardOpacity.jump(opacity)
+    },
+    [cardOpacity, cardRotate, cardX]
+  )
+
+  const animateCardTransform = useCallback(
+    (x: number, rotate: number, opacity: number) => {
+      if (!motionEnabled) {
+        setCardTransformImmediate(x, rotate, opacity)
+        return
+      }
+      animate(cardX, x, motionTransitions.spring)
+      animate(cardRotate, rotate, motionTransitions.spring)
+      animate(cardOpacity, opacity, motionTransitions.spring)
+    },
+    [cardOpacity, cardRotate, cardX, motionEnabled, motionTransitions.spring, setCardTransformImmediate]
+  )
 
   useEffect(() => {
     quickExpressionsRef.current = quickExpressions
@@ -259,7 +286,7 @@ export function ExpressionReviewer({
 
       isAnimatingRef.current = true
       swipeDirectionRef.current = approved ? 'right' : 'left'
-      cardApi.start({ x: approved ? 400 : -400, rotate: approved ? 20 : -20, opacity: 0 })
+      animateCardTransform(approved ? 400 : -400, approved ? 20 : -20, 0)
 
       try {
         const result = await batchReviewExpressions([
@@ -277,10 +304,10 @@ export function ExpressionReviewer({
           })
 
           // 从列表中移除当前项
-          setTimeout(() => {
+          const finishRemoval = () => {
             swipeDirectionRef.current = null
             swipeOffsetRef.current = 0
-            cardApi.set({ x: 0, opacity: 1, rotate: 0 })
+            setCardTransformImmediate(0, 0, 1)
             isAnimatingRef.current = false
 
             const stillExists = quickExpressionsRef.current.some((e) => e.id === currentExpr.id)
@@ -293,7 +320,14 @@ export function ExpressionReviewer({
             // 刷新统计
             loadStats()
             onReviewed?.()
-          }, 300)
+          }
+
+          const exitDelayMs = Math.round(motionDuration(0.3) * 1000)
+          if (exitDelayMs <= 0) {
+            finishRemoval()
+          } else {
+            setTimeout(finishRemoval, exitDelayMs)
+          }
         } else {
           // 冲突处理
           setConflictId(currentExpr.id)
@@ -308,7 +342,7 @@ export function ExpressionReviewer({
             setConflictId(null)
             swipeDirectionRef.current = null
             swipeOffsetRef.current = 0
-            cardApi.set({ x: 0, opacity: 1, rotate: 0 })
+            setCardTransformImmediate(0, 0, 1)
             isAnimatingRef.current = false
             loadQuickList(false) // 重新加载当前页
             loadStats()
@@ -322,20 +356,22 @@ export function ExpressionReviewer({
         })
         swipeDirectionRef.current = null
         swipeOffsetRef.current = 0
-        cardApi.set({ x: 0, opacity: 1, rotate: 0 })
+        setCardTransformImmediate(0, 0, 1)
         isAnimatingRef.current = false
       }
     },
     [
-      cardApi,
+      animateCardTransform,
       getAllowedDirections,
       isAnimatingRef,
       loadQuickList,
       loadStats,
+      motionDuration,
       onReviewed,
       quickCurrentIndex,
       quickExpressions,
       quickFilterType,
+      setCardTransformImmediate,
       toast,
     ]
   )
@@ -354,18 +390,24 @@ export function ExpressionReviewer({
   const triggerInvalidAnimation = useCallback(
     (direction: 'left' | 'right') => {
       if (isAnimatingRef.current) return
+      if (!motionEnabled) {
+        setCardTransformImmediate(0, 0, 1)
+        return
+      }
       isAnimatingRef.current = true
       // 模拟向该方向移动一点
-      cardApi.start({ x: direction === 'left' ? -30 : 30, immediate: true })
+      cardX.jump(direction === 'left' ? -30 : 30)
 
+      const nudgeHoldMs = Math.round(motionDuration(0.15) * 1000)
+      const recoverMs = Math.round(motionDuration(0.3) * 1000)
       setTimeout(() => {
-        cardApi.start({ x: 0 })
+        animate(cardX, 0, motionTransitions.snappy)
         setTimeout(() => {
           isAnimatingRef.current = false
-        }, 300)
-      }, 150)
+        }, recoverMs)
+      }, nudgeHoldMs)
     },
-    [cardApi]
+    [cardX, motionDuration, motionEnabled, motionTransitions.snappy, setCardTransformImmediate]
   )
 
   // 拖拽移动
@@ -379,13 +421,13 @@ export function ExpressionReviewer({
 
       // 检查方向限制
       if (deltaX < 0 && !directions.left) {
-        cardApi.start({ x: deltaX * 0.2, immediate: true }) // 提供阻力反馈
+        cardX.jump(deltaX * 0.2) // 提供阻力反馈
         swipeOffsetRef.current = deltaX * 0.2
         swipeDirectionRef.current = null
         return
       }
       if (deltaX > 0 && !directions.right) {
-        cardApi.start({ x: deltaX * 0.2, immediate: true })
+        cardX.jump(deltaX * 0.2)
         swipeOffsetRef.current = deltaX * 0.2
         swipeDirectionRef.current = null
         return
@@ -393,18 +435,11 @@ export function ExpressionReviewer({
 
       isDraggingRef.current = true
       swipeOffsetRef.current = deltaX
-      cardApi.start({
-        x: deltaX,
-        rotate: deltaX * 0.05,
-        opacity: Math.max(0, 1 - Math.abs(deltaX) / 500),
-        immediate: true,
-      })
-      cardApi.start({
-        x: deltaX,
-        rotate: deltaX * 0.05,
-        opacity: Math.max(0, 1 - Math.abs(deltaX) / 500),
-        immediate: true,
-      })
+      setCardTransformImmediate(
+        deltaX,
+        deltaX * 0.05,
+        Math.max(0, 1 - Math.abs(deltaX) / 500)
+      )
 
       if (Math.abs(deltaX) > 50) {
         swipeDirectionRef.current = deltaX > 0 ? 'right' : 'left'
@@ -412,7 +447,7 @@ export function ExpressionReviewer({
         swipeDirectionRef.current = null
       }
     },
-    [quickExpressions, quickCurrentIndex, getAllowedDirections, cardApi]
+    [cardX, getAllowedDirections, quickCurrentIndex, quickExpressions, setCardTransformImmediate]
   )
 
   // 拖拽结束
@@ -420,19 +455,19 @@ export function ExpressionReviewer({
     if (!dragStartRef.current) return
 
     const threshold = 100
-    const currentX = cardSpring.x.get()
+    const currentX = cardX.get()
     if (Math.abs(currentX) > threshold && swipeDirectionRef.current) {
       handleQuickReview(swipeDirectionRef.current === 'right')
     } else {
       // 回弹
-      cardApi.start({ x: 0, rotate: 0, opacity: 1 })
+      animateCardTransform(0, 0, 1)
       swipeOffsetRef.current = 0
       swipeDirectionRef.current = null
     }
 
     dragStartRef.current = null
     isDraggingRef.current = false
-  }, [cardSpring.x, handleQuickReview, cardApi])
+  }, [animateCardTransform, cardX, handleQuickReview])
 
   // 鼠标事件处理
   const handleMouseDown = useCallback(
@@ -1273,14 +1308,11 @@ export function ExpressionReviewer({
                         zIndex: 5 - index,
                         position: 'absolute',
                         width: '100%',
-                        transition:
-                          isCurrent && !isDraggingRef.current
-                            ? 'all 0.3s cubic-bezier(0.25, 0.8, 0.25, 1)'
-                            : 'none',
+                        transition: 'none',
                       }
 
                       if (isCurrent) {
-                        // 当前卡片：样式由 useSpring 控制，通过 animated.div 渲染
+                        // 当前卡片：位姿由 MotionValue 控制，通过 motion.div 渲染
                         // style 仅保留非动画属性
                         style = {
                           ...style,
@@ -1326,7 +1358,7 @@ export function ExpressionReviewer({
                       }
 
                       return isCurrent ? (
-                        <AnimatedDiv
+                        <motion.div
                           key={expr.id}
                           ref={cardRef}
                           role="option"
@@ -1339,7 +1371,7 @@ export function ExpressionReviewer({
                             // 冲突动效
                             conflictId === expr.id && 'bg-orange-50/10 ring-4 ring-orange-500/50'
                           )}
-                          style={{ ...style, ...cardSpring }}
+                          style={{ ...style, x: cardX, rotate: cardRotate, opacity: cardOpacity }}
                           onMouseDown={handleMouseDown}
                           onMouseMove={handleMouseMove}
                           onMouseUp={handleMouseUp}
@@ -1350,18 +1382,51 @@ export function ExpressionReviewer({
                         >
                           {/* 冲突提示遮罩 */}
                           {conflictId === expr.id && (
-                            <div className="bg-background/80 animate-in fade-in absolute inset-0 z-50 flex flex-col items-center justify-center rounded-xl backdrop-blur-sm duration-300">
+                            <motion.div
+                              initial={motionEnabled ? { opacity: 0 } : false}
+                              animate={{ opacity: 1 }}
+                              transition={motionTransitions.fast}
+                              className="bg-background/80 absolute inset-0 z-50 flex flex-col items-center justify-center rounded-xl backdrop-blur-sm"
+                            >
                               <div className="relative">
-                                <div className="absolute inset-0 animate-ping rounded-full bg-orange-500/20" />
-                                <RefreshCw className="relative mb-4 h-16 w-16 animate-spin text-orange-500 duration-1000" />
+                                {motionEnabled && (
+                                  <div className="absolute inset-0 animate-ping rounded-full bg-orange-500/20" />
+                                )}
+                                <RefreshCw
+                                  className={cn(
+                                    'relative mb-4 h-16 w-16 text-orange-500',
+                                    motionEnabled && 'animate-spin'
+                                  )}
+                                />
                               </div>
-                              <h3 className="text-foreground animate-in slide-in-from-bottom-2 fade-in text-xl font-bold duration-500">
+                              <motion.h3
+                                initial={
+                                  motionEnabled
+                                    ? { opacity: 0, y: motionProfile.distances.listItemY }
+                                    : false
+                                }
+                                animate={{ opacity: 1, y: 0 }}
+                                transition={motionTransitions.normal}
+                                className="text-foreground text-xl font-bold"
+                              >
                                 数据已更新
-                              </h3>
-                              <p className="text-muted-foreground animate-in slide-in-from-bottom-3 fade-in mt-2 duration-700">
+                              </motion.h3>
+                              <motion.p
+                                initial={
+                                  motionEnabled
+                                    ? { opacity: 0, y: motionProfile.distances.listItemY }
+                                    : false
+                                }
+                                animate={{ opacity: 1, y: 0 }}
+                                transition={{
+                                  ...motionTransitions.normal,
+                                  delay: motionEnabled ? motionDuration(0.06) : 0,
+                                }}
+                                className="text-muted-foreground mt-2"
+                              >
                                 后台任务已处理此条目
-                              </p>
-                            </div>
+                              </motion.p>
+                            </motion.div>
                           )}
                           {/* 无效操作提示 */}
                           <div
@@ -1428,7 +1493,7 @@ export function ExpressionReviewer({
                               {formatTime(expr.create_date)}
                             </span>
                           </div>
-                        </AnimatedDiv>
+                        </motion.div>
                       ) : (
                         <div
                           key={expr.id}

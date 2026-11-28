@@ -274,7 +274,9 @@
 
 :root[data-dashboard-style='millennium'] :is(.dashboard-button, [data-dashboard-tabs-trigger='true']) {
   font-weight: 700;
-  transition: transform 60ms ease-out, background-color 120ms ease-out;
+  transition:
+    transform var(--motion-duration-instant) var(--motion-ease),
+    background-color var(--motion-duration-fast) var(--motion-ease);
 }
 
 /* 只画一层实体边框；阴影只负责底座和顶面，不重复描线。 */
@@ -910,12 +912,12 @@
 
 /* 轮播时新标题从下方逐格滚入。 */
 :root[data-dashboard-style='millennium'] [data-home-news-title='true'] {
-  animation: mil-news-roll 240ms steps(4, end);
+  animation: mil-news-roll var(--motion-duration-slow) steps(4, end);
 }
 
 :root[data-dashboard-style='millennium'] [data-home-news-open='true'] > svg {
   color: var(--mil-on);
-  transition: transform 120ms steps(2, jump-none);
+  transition: transform var(--motion-duration-fast) steps(2, jump-none);
 }
 
 :root[data-dashboard-style='millennium'] [data-home-news-open='true']:is(:hover, :focus-visible) {
@@ -1821,10 +1823,10 @@
   padding-bottom: 7px;
   /* 切换标签时键帽按下 / 弹起有过渡 */
   transition:
-    background-color 0.12s steps(2),
-    box-shadow 0.12s steps(2),
-    padding 0.12s steps(2),
-    transform 0.12s steps(2);
+    background-color var(--motion-duration-fast) steps(2),
+    box-shadow var(--motion-duration-fast) steps(2),
+    padding var(--motion-duration-fast) steps(2),
+    transform var(--motion-duration-fast) steps(2);
 }
 
 :root[data-dashboard-style='millennium'] [data-mobile-tab='true'][data-active='true'] {

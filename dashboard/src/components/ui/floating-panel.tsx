@@ -1,8 +1,10 @@
 import { type ReactNode, useCallback, useEffect, useRef, useState } from 'react'
 import { createPortal } from 'react-dom'
 import { GripHorizontal, X } from 'lucide-react'
+import { AnimatePresence, motion } from 'motion/react'
 
 import { Button } from '@/components/ui/button'
+import { useMotion } from '@/lib/motion'
 import { cn } from '@/lib/utils'
 
 interface FloatingPanelPosition {
@@ -134,81 +136,98 @@ export function FloatingPanel({
     }
   }
 
-  if (!open) {
-    return null
-  }
+  const { enabled, profile, transitions } = useMotion()
+  const { dialogScale, dialogY } = profile.distances
 
-  const panel = (
-    <div
-      ref={panelRef}
-      role="dialog"
-      aria-modal="false"
-      aria-label={title}
-      data-dashboard-floating-content="true"
-      className={cn(
-        'bg-background fixed z-50 overflow-hidden rounded-md border shadow-2xl',
-        className,
-        // 手机上铺满整屏，像原生应用的独立页面，而不是一块可拖动的小窗
-        mobileFullscreen &&
-          'max-lg:top-0! max-lg:left-0! max-lg:h-[100dvh]! max-lg:w-full! max-lg:rounded-none max-lg:border-0 max-lg:shadow-none'
-      )}
-      style={{ left: position.left, top: position.top }}
-    >
-      <div
-        data-floating-panel-header="true"
-        className={cn(
-          'bg-muted/70 flex touch-none items-center gap-2 border-b px-3 py-2 select-none',
-          dragging ? 'cursor-grabbing' : 'cursor-grab',
-          // 手机上标题栏改为大标题，不再可拖动
-          mobileFullscreen &&
-            'max-lg:pointer-events-none max-lg:border-b-0 max-lg:bg-transparent max-lg:px-5 max-lg:pt-[calc(env(safe-area-inset-top)+16px)] max-lg:pb-2'
-        )}
-        onPointerCancel={endDrag}
-        onPointerDown={handlePointerDown}
-        onPointerMove={handlePointerMove}
-        onPointerUp={endDrag}
-      >
-        <GripHorizontal
+  const content = (
+    <AnimatePresence>
+      {open && (
+        <motion.div
+          key="floating-panel"
+          ref={panelRef}
+          role="dialog"
+          aria-modal="false"
+          aria-label={title}
+          data-dashboard-floating-content="true"
+          initial={enabled ? { opacity: 0, scale: dialogScale, y: dialogY } : false}
+          animate={{ opacity: 1, scale: 1, y: 0 }}
+          exit={
+            enabled
+              ? {
+                  opacity: 0,
+                  scale: dialogScale,
+                  y: Math.round(dialogY * 0.6),
+                  transition: transitions.exit,
+                }
+              : undefined
+          }
+          transition={transitions.dialog}
           className={cn(
-            'text-muted-foreground h-4 w-4 shrink-0',
-            mobileFullscreen && 'max-lg:hidden'
+            'bg-background fixed z-50 overflow-hidden rounded-md border shadow-2xl',
+            className,
+            // 手机上铺满整屏，像原生应用的独立页面，而不是一块可拖动的小窗
+            mobileFullscreen &&
+              'max-lg:top-0! max-lg:left-0! max-lg:h-[100dvh]! max-lg:w-full! max-lg:rounded-none max-lg:border-0 max-lg:shadow-none'
           )}
-        />
-        <div className="min-w-0 flex-1">
-          <div
-            className={cn(
-              'truncate text-sm font-semibold',
-              mobileFullscreen &&
-                'max-lg:text-[34px] max-lg:leading-tight max-lg:font-bold max-lg:tracking-tight'
-            )}
-          >
-            {title}
-          </div>
-          {subtitle && <div className="text-muted-foreground truncate text-xs">{subtitle}</div>}
-        </div>
-        <div
-          className="pointer-events-auto flex shrink-0 items-center gap-1"
-          onPointerDown={(event) => event.stopPropagation()}
+          style={{ left: position.left, top: position.top }}
         >
-          {actions}
-          <Button
-            type="button"
-            variant="ghost"
-            size="icon"
-            className="h-8 w-8"
-            onClick={onClose}
-            aria-label={closeLabel}
+          <div
+            data-floating-panel-header="true"
+            className={cn(
+              'bg-muted/70 flex touch-none items-center gap-2 border-b px-3 py-2 select-none',
+              dragging ? 'cursor-grabbing' : 'cursor-grab',
+              // 手机上标题栏改为大标题，不再可拖动
+              mobileFullscreen &&
+                'max-lg:pointer-events-none max-lg:border-b-0 max-lg:bg-transparent max-lg:px-5 max-lg:pt-[calc(env(safe-area-inset-top)+16px)] max-lg:pb-2'
+            )}
+            onPointerCancel={endDrag}
+            onPointerDown={handlePointerDown}
+            onPointerMove={handlePointerMove}
+            onPointerUp={endDrag}
           >
-            <X className="h-4 w-4" />
-          </Button>
-        </div>
-      </div>
-      {children}
-    </div>
+            <GripHorizontal
+              className={cn(
+                'text-muted-foreground h-4 w-4 shrink-0',
+                mobileFullscreen && 'max-lg:hidden'
+              )}
+            />
+            <div className="min-w-0 flex-1">
+              <div
+                className={cn(
+                  'truncate text-sm font-semibold',
+                  mobileFullscreen &&
+                    'max-lg:text-[34px] max-lg:leading-tight max-lg:font-bold max-lg:tracking-tight'
+                )}
+              >
+                {title}
+              </div>
+              {subtitle && <div className="text-muted-foreground truncate text-xs">{subtitle}</div>}
+            </div>
+            <div
+              className="pointer-events-auto flex shrink-0 items-center gap-1"
+              onPointerDown={(event) => event.stopPropagation()}
+            >
+              {actions}
+              <Button
+                type="button"
+                variant="ghost"
+                size="icon"
+                className="h-8 w-8"
+                onClick={onClose}
+                aria-label={closeLabel}
+              >
+                <X className="h-4 w-4" />
+              </Button>
+            </div>
+          </div>
+          {children}
+        </motion.div>
+      )}
+    </AnimatePresence>
   )
 
   if (typeof document === 'undefined') {
-    return panel
+    return content
   }
-  return createPortal(panel, document.body)
+  return createPortal(content, document.body)
 }

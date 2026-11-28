@@ -1,7 +1,8 @@
-import { motion, useMotionValue, useReducedMotion, useSpring, useTransform } from 'motion/react'
-import { useEffect, useId, useLayoutEffect, useRef, useState } from 'react'
+import { motion, useMotionValue, useSpring, useTransform } from 'motion/react'
+import { useEffect, useId, useLayoutEffect, useMemo, useRef, useState } from 'react'
 
 import { Slider } from '@/components/ui/slider'
+import { useMotion } from '@/lib/motion'
 import { cn } from '@/lib/utils'
 import '@/styles/discrete-slider.css'
 
@@ -31,10 +32,18 @@ export function DiscreteSlider<T extends string | number>({
   const pointerPosition = useRef<number | null>(null)
   const previewIndex = Math.round(position ?? selectedIndex)
   const preview = options[previewIndex]
-  const reduceMotion = useReducedMotion()
+  const { enabled, profile, speedScale } = useMotion()
+  const springOptions = useMemo(() => {
+    const factor = enabled && speedScale > 0 ? 1 / speedScale : 1
+    return {
+      stiffness: Math.round(profile.snappySpring.stiffness * factor * factor),
+      damping: Math.round(profile.snappySpring.damping * factor),
+      mass: profile.snappySpring.mass,
+    }
+  }, [enabled, profile.snappySpring, speedScale])
   const targetPosition = useMotionValue(selectedIndex)
-  const springPosition = useSpring(targetPosition, { stiffness: 460, damping: 38, mass: 0.6 })
-  const animatedPosition = reduceMotion ? targetPosition : springPosition
+  const springPosition = useSpring(targetPosition, springOptions)
+  const animatedPosition = enabled ? springPosition : targetPosition
   const labelRow = useRef<HTMLDivElement>(null)
   const [labelRects, setLabelRects] = useState<Array<{ left: number; width: number }>>([])
   // 底板按档位文字的实际位置定位，档位名怎么排布都贴得上；量到之前先按等分估算。
@@ -50,7 +59,7 @@ export function DiscreteSlider<T extends string | number>({
     return () => observer.disconnect()
   }, [options.length])
   // 底板中心连续跟随拖杆；跨越两档时拉宽，到达刻度时收回，点选也走同一动画。
-  const plateStretch = (current: number) => reduceMotion ? 0 : Math.sin(Math.PI * (current - Math.floor(current))) * 0.28
+  const plateStretch = (current: number) => enabled ? Math.sin(Math.PI * (current - Math.floor(current))) * 0.28 : 0
   const plateRect = (current: number) => {
     const from = labelRects[Math.floor(current)]
     const to = labelRects[Math.ceil(current)] ?? from
@@ -69,9 +78,10 @@ export function DiscreteSlider<T extends string | number>({
     return rect ? `${rect.width * (1 + stretch)}px` : `calc(${(1 + stretch) * 100 / options.length}% - 4px)`
   })
   useEffect(() => {
-    targetPosition.set(position ?? selectedIndex)
-    if (!interacted) springPosition.jump(position ?? selectedIndex)
-  }, [interacted, position, selectedIndex, springPosition, targetPosition])
+    const nextPosition = position ?? selectedIndex
+    targetPosition.set(nextPosition)
+    if (!interacted || !enabled) springPosition.jump(nextPosition)
+  }, [enabled, interacted, position, selectedIndex, springPosition, targetPosition])
   if (options.length < 2) throw new Error('DiscreteSlider requires at least two ordered options')
 
   // 拖动只更新本地位置，松手才提交枚举值，避免拖动途中反复保存配置。

@@ -61,12 +61,12 @@
   --shadow-md: var(--visual-shadow-md);
   --shadow-lg: var(--visual-shadow-lg);
   --shadow-xl: var(--visual-shadow-xl);
-  --animate-slide-in-from-right: slide-in-from-right 0.3s ease-out;
-  --animate-slide-out-to-right: slide-out-to-right 0.2s ease-in;
-  --animate-slide-in-from-top: slide-in-from-top 0.3s ease-out;
-  --animate-slide-out-to-top: slide-out-to-top 0.2s ease-in;
-  --animate-fade-in: fade-in 0.2s ease-out;
-  --animate-fade-out: fade-out 0.15s ease-in;
+  --animate-slide-in-from-right: slide-in-from-right var(--motion-duration-normal) var(--motion-ease);
+  --animate-slide-out-to-right: slide-out-to-right var(--motion-duration-exit) var(--motion-ease-exit);
+  --animate-slide-in-from-top: slide-in-from-top var(--motion-duration-normal) var(--motion-ease);
+  --animate-slide-out-to-top: slide-out-to-top var(--motion-duration-exit) var(--motion-ease-exit);
+  --animate-fade-in: fade-in var(--motion-duration-fast) var(--motion-ease);
+  --animate-fade-out: fade-out var(--motion-duration-exit) var(--motion-ease-exit);
 }
 
 @keyframes slide-in-from-right {
@@ -158,18 +158,18 @@
 }
 
 .expression-actions-menu-content[data-state='open'] {
-  animation: expression-actions-menu-enter 220ms cubic-bezier(0.16, 1, 0.3, 1);
+  animation: expression-actions-menu-enter var(--motion-duration-normal) var(--motion-ease);
 }
 
 .expression-actions-menu-content[data-state='closed'] {
-  animation: expression-actions-menu-exit 160ms ease-in;
+  animation: expression-actions-menu-exit var(--motion-duration-exit) var(--motion-ease-exit);
 }
 
 [data-config-search-highlight='true'] {
   outline: 2px solid hsl(var(--primary));
   outline-offset: 4px;
   border-radius: var(--visual-radius-md);
-  transition: outline-color 180ms ease-out;
+  transition: outline-color var(--motion-duration-fast) var(--motion-ease);
 }
 
 @keyframes future-retro-gear-rotate {
@@ -2327,7 +2327,9 @@
 
 /* 卡片下沉时同步收短厚度与投影，保持各主题原有的材质。 */
 [data-plugin-market-card='true'] {
-  transition: transform 180ms ease, box-shadow 180ms ease;
+  transition:
+    transform var(--motion-duration-fast) var(--motion-ease),
+    box-shadow var(--motion-duration-fast) var(--motion-ease);
 }
 
 @media (hover: hover) and (pointer: fine) {

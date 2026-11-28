@@ -1,6 +1,7 @@
 import * as React from "react"
 import * as SliderPrimitive from "@radix-ui/react-slider"
 
+import { useMotion } from "@/lib/motion"
 import { cn } from "@/lib/utils"
 
 type SliderProps = React.ComponentPropsWithoutRef<typeof SliderPrimitive.Root> & {
@@ -44,8 +45,16 @@ const Slider = React.forwardRef<
   variant = "default",
   valueFormat,
   onValueChange,
+  onPointerDown,
+  onPointerMove,
+  onPointerUp,
+  onPointerCancel,
   ...props
 }, ref) => {
+  const { style: motionStyle, enabled: motionEnabled } = useMotion()
+  const jellyActive = motionStyle === 'modern' && motionEnabled
+  const [dragging, setDragging] = React.useState(false)
+  const lastXRef = React.useRef<number | null>(null)
   const hasDashboardValue = variant === 'value'
   // 非受控滑条也要同步拖块上的读数，不能一直显示初始值。
   const [internalValues, setInternalValues] = React.useState(defaultValue ?? [props.min ?? 0])
@@ -55,6 +64,13 @@ const Slider = React.forwardRef<
   const handleValueChange = (nextValues: number[]) => {
     if (value === undefined) setInternalValues(nextValues)
     onValueChange?.(nextValues)
+  }
+
+  const resetJelly = (element: HTMLElement) => {
+    lastXRef.current = null
+    setDragging(false)
+    element.style.removeProperty('--slider-jelly-x')
+    element.style.removeProperty('--slider-jelly-y')
   }
 
   return (
@@ -67,8 +83,34 @@ const Slider = React.forwardRef<
       value={value}
       defaultValue={defaultValue}
       onValueChange={handleValueChange}
+      onPointerDown={(event) => {
+        if (jellyActive && !props.disabled) {
+          lastXRef.current = event.clientX
+          setDragging(true)
+        }
+        onPointerDown?.(event)
+      }}
+      onPointerMove={(event) => {
+        if (jellyActive && dragging && lastXRef.current !== null) {
+          const delta = Math.abs(event.clientX - lastXRef.current)
+          lastXRef.current = event.clientX
+          const stretch = Math.min(0.18, delta * 0.012)
+          event.currentTarget.style.setProperty('--slider-jelly-x', (1.08 + stretch).toFixed(3))
+          event.currentTarget.style.setProperty('--slider-jelly-y', (0.94 - stretch * 0.45).toFixed(3))
+        }
+        onPointerMove?.(event)
+      }}
+      onPointerUp={(event) => {
+        if (dragging) resetJelly(event.currentTarget)
+        onPointerUp?.(event)
+      }}
+      onPointerCancel={(event) => {
+        if (dragging) resetJelly(event.currentTarget)
+        onPointerCancel?.(event)
+      }}
       data-dashboard-slider={hasDashboardValue ? 'config' : 'default'}
       data-dashboard-slider-value-format={valueFormat}
+      data-slider-dragging={jellyActive && dragging ? 'true' : undefined}
       {...props}
     >
       <SliderPrimitive.Track

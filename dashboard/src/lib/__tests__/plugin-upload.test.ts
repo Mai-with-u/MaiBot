@@ -1,11 +1,16 @@
 import { describe, expect, it, vi } from 'vitest'
 import { uploadPluginWebUI } from '@/lib/plugin-webui'
 
-vi.mock('@/lib/api-base', () => ({
-  resolveApiPath: async (path: string) => path,
-  onBackendUrlChanged: () => () => {},
-  getApiBaseUrl: async () => '',
-}))
+vi.mock('@/lib/api-base', async (importOriginal) => {
+  const actual = await importOriginal<typeof import('@/lib/api-base')>()
+  return {
+    ...actual,
+    resolveApiPath: async (path: string) => path,
+    onBackendUrlChanged: () => () => {},
+    getApiBaseUrl: async () => '',
+    getControlApiBaseUrl: async () => '',
+  }
+})
 
 describe('multipart transport', () => {
   it('sends actual file bytes in FormData with authenticated cookie transport', async () => {

@@ -64,8 +64,9 @@ export function ManagePage() {
       <button
         type="button"
         data-dashboard-input="true"
+        data-manage-search="true"
         onClick={openSearch}
-        className="bg-muted text-muted-foreground flex h-10 w-full items-center gap-2 rounded-xl px-3 text-left text-base"
+        className="bg-muted text-muted-foreground flex h-11 w-full items-center gap-2.5 rounded-full px-4 text-left text-base"
       >
         <Search className="h-[17px] w-[17px] shrink-0" aria-hidden="true" />
         <span className="truncate">{t('manage.searchPlaceholder')}</span>

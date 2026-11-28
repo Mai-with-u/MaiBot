@@ -326,12 +326,13 @@ describe('MessageList', () => {
     const audio = view.getByTestId('message-audio')
     fireEvent.play(audio)
     virtualizerMocks.visibleStart = 10
+    // MessageList 使用 memo，传入新数组引用以触发重渲染并读取更新后的虚拟窗口起点
     view.rerender(
       <MessageList
         botDisplayName="MaiBot"
         isLoadingHistory={false}
         language="zh-CN"
-        messages={messages}
+        messages={[...messages]}
         userName="测试用户"
       />
     )

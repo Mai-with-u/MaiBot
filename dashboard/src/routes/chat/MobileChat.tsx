@@ -17,6 +17,7 @@ import { useTranslation } from 'react-i18next'
 import { MOBILE_GLASS_CLASS } from '@/components/layout/mobile-glass'
 import { Avatar, AvatarFallback, AvatarImage } from '@/components/ui/avatar'
 import { useResolvedAvatarUrl } from '@/lib/avatar-url'
+import { useMotion } from '@/lib/motion'
 import { cn } from '@/lib/utils'
 import type { SessionInfo, StageStatusInfo } from '@/routes/monitor/use-maisaka-monitor'
 import { StageStatusLabel } from '@/routes/monitor/StageStatusLabel'
@@ -51,6 +52,7 @@ export function MobileFloatingHeader({ children }: MobileFloatingHeaderProps) {
   const headerRef = useRef<HTMLElement>(null)
   const [hidden, setHidden] = useState(false)
   const [height, setHeight] = useState(0)
+  const { enabled, transitions } = useMotion()
 
   useLayoutEffect(() => {
     const header = headerRef.current
@@ -127,7 +129,7 @@ export function MobileFloatingHeader({ children }: MobileFloatingHeaderProps) {
       data-hidden={hidden ? 'true' : 'false'}
       initial={false}
       animate={{ y: hidden ? -height : 0, opacity: hidden ? 0 : 1 }}
-      transition={{ type: 'spring', stiffness: 420, damping: 38, mass: 0.8 }}
+      transition={enabled ? transitions.snappy : { duration: 0 }}
       className="pointer-events-none absolute inset-x-0 top-0 z-30 [&>*]:pointer-events-auto"
     >
       {children}

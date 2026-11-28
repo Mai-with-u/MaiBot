@@ -12,16 +12,15 @@
  * - 支持 macOS 触控板双指缩放（wheel + ctrlKey）
  * - 支持移动端/触屏双指 pinch-to-zoom
  * - 缩放范围 0.5x – 4x，带 rubberband 效果
- * - 动画由 @react-spring/web 处理，不触发 React re-render
+ * - 动画由 motion/react 与统一动效运行时处理，不触发 React re-render
  * - Must NOT: 不在 handler 内使用 useState
  */
 
-import { useRef } from 'react'
-import { animated, useSpring } from '@react-spring/web'
-
-const AnimatedDiv = animated('div')
+import { useEffect, useRef } from 'react'
 import { usePinch } from '@use-gesture/react'
+import { animate, motion, useMotionValue } from 'motion/react'
 
+import { useMotion } from '@/lib/motion'
 import { cn } from '@/lib/utils'
 
 interface ZoomableChartProps {
@@ -40,11 +39,14 @@ export function ZoomableChart({
   maxScale = 4,
 }: ZoomableChartProps) {
   const containerRef = useRef<HTMLDivElement>(null)
+  const scaleValue = useMotionValue(1)
+  const { enabled, transitions } = useMotion()
 
-  const [style, api] = useSpring(() => ({
-    scale: 1,
-    config: { tension: 300, friction: 40 },
-  }))
+  useEffect(() => {
+    return () => {
+      scaleValue.stop()
+    }
+  }, [scaleValue])
 
   usePinch(
     ({ offset: [scale], first, last }) => {
@@ -56,14 +58,21 @@ export function ZoomableChart({
           ? maxScale + (clamped - maxScale) * 0.3
           : clamped
 
-      api.start({ scale: rubberband, immediate: first })
-
       // 松手后弹回范围内
       if (last && (scale < minScale || scale > maxScale)) {
-        api.start({
-          scale: Math.min(Math.max(scale, minScale), maxScale),
-          config: { tension: 200, friction: 30 },
-        })
+        const boundedScale = Math.min(Math.max(scale, minScale), maxScale)
+        if (!enabled) {
+          scaleValue.jump(boundedScale)
+        } else {
+          animate(scaleValue, boundedScale, transitions.gentle)
+        }
+        return
+      }
+
+      if (first || !enabled) {
+        scaleValue.jump(rubberband)
+      } else {
+        animate(scaleValue, rubberband, transitions.spring)
       }
     },
     {
@@ -84,9 +93,9 @@ export function ZoomableChart({
       className={cn('overflow-hidden touch-none select-none', className)}
       style={{ touchAction: 'none' }}
     >
-      <AnimatedDiv style={style} className="w-full h-full origin-center">
+      <motion.div style={{ scale: scaleValue }} className="w-full h-full origin-center">
         {children}
-      </AnimatedDiv>
+      </motion.div>
     </div>
   )
 }

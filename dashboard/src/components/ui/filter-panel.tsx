@@ -1,6 +1,8 @@
+import { motion } from 'motion/react'
 import type { ReactNode } from 'react'
 
 import { Button } from '@/components/ui/button'
+import { useMotion } from '@/lib/motion'
 import { cn } from '@/lib/utils'
 import '@/styles/filter-panel.css'
 
@@ -37,9 +39,17 @@ export function FilterPanel({
   className,
   children,
 }: FilterPanelProps) {
+  const { enabled, profile, transitions } = useMotion()
   const selectedCount = options.filter((option) => selected.has(option.id)).length
   return (
-    <div id={id} data-filter-panel="true" className={cn('flex flex-col gap-2', className)}>
+    <motion.div
+      id={id}
+      data-filter-panel="true"
+      className={cn('flex flex-col gap-2', className)}
+      initial={enabled ? { opacity: 0, y: -profile.distances.overlayY } : false}
+      animate={{ opacity: 1, y: 0 }}
+      transition={transitions.fast}
+    >
       <div className="flex items-center gap-2 text-xs">
         <span className="font-semibold">{title}</span>
         <span className="text-muted-foreground font-mono">
@@ -76,7 +86,7 @@ export function FilterPanel({
         })}
       </div>
       {children}
-    </div>
+    </motion.div>
   )
 }
 
@@ -118,7 +128,10 @@ export function FilterPanelToggle({
         stroke="currentColor"
         strokeWidth="2.2"
         strokeLinecap="square"
-        className={cn('transition-transform', open && 'rotate-180')}
+        className={cn(
+          'transition-transform [transition-duration:var(--motion-duration-fast)] [transition-timing-function:var(--motion-ease)] motion-reduce:transition-none',
+          open && 'rotate-180'
+        )}
       >
         <path d="M6 9l6 6 6-6" />
       </svg>

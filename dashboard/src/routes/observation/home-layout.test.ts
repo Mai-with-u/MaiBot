@@ -88,7 +88,8 @@ describe('桌宠卡片状态', () => {
     [{ visible: false }, 'hidden'],
     [{ ready: false }, 'starting'],
     [{ mode: 'remote', running: false, ready: false }, 'waiting'],
-    [{ error: '启动失败' }, 'error'],
+    [{ running: false, ready: false, error: '启动失败' }, 'error'],
+    [{ error: '快捷键冲突' }, 'idle'],
     [{ supported: false, ready: false }, 'error'],
   ] as const)('%o → %s', (patch, expected) => {
     expect(desktopPetCardState({ ...base, ...patch } as DesktopPetStatus)).toBe(expected)

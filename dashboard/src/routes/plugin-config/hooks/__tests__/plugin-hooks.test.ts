@@ -866,7 +866,7 @@ describe('usePluginList', () => {
 })
 
 describe('usePluginLifecycle', () => {
-  it('更新对话框：缺仓库、成功、失败、loading 守卫与二次确认短路', async () => {
+  it('更新对话框：缺仓库、成功、失败、loading 取消与二次确认短路', async () => {
     const plugin = makePlugin('test.emoji', { manifest: { name: 'Emoji Plugin' } })
     const getPluginRepositoryUrl = vi.fn<(plugin: InstalledPlugin) => string | undefined>()
     const { result, options } = renderLifecycle({ getPluginRepositoryUrl })
@@ -909,14 +909,18 @@ describe('usePluginLifecycle', () => {
       await result.current.handleConfirmUpdatePlugin()
     })
     expect(updatePlugin).toHaveBeenCalledTimes(1)
-    act(() => result.current.closeUpdatePluginDialog())
-    expect(result.current.updateDialogOpen).toBe(true)
 
     await act(async () => {
       deferred.resolve({ success: true })
     })
     await waitFor(() => expect(result.current.updateProgress?.stage).toBe('success'))
-    expect(updatePlugin).toHaveBeenCalledWith('test.emoji', 'https://example.com/emoji.git', 'main')
+    expect(updatePlugin).toHaveBeenCalledWith(
+      'test.emoji',
+      'https://example.com/emoji.git',
+      'main',
+      undefined,
+      expect.any(AbortSignal)
+    )
     expect(toastMock).toHaveBeenCalledWith({
       title: '更新插件成功',
       description: 'Emoji Plugin 已完成更新/升级',
@@ -927,6 +931,28 @@ describe('usePluginLifecycle', () => {
     act(() => result.current.closeUpdatePluginDialog())
     expect(result.current.updateDialogOpen).toBe(false)
     expect(result.current.updatingPlugin).toBeNull()
+
+    // 更新进行中关闭对话框会中止请求、清空状态并忽略迟到回包
+    act(() => result.current.openUpdatePluginDialog(plugin, makeClickEvent()))
+    const cancelDeferred = createDeferred<{ success: boolean }>()
+    vi.mocked(updatePlugin).mockReturnValueOnce(cancelDeferred.promise as never)
+    await act(async () => {
+      void result.current.handleConfirmUpdatePlugin()
+    })
+    await waitFor(() => expect(result.current.updateProgress?.stage).toBe('loading'))
+    const abortSignal = vi.mocked(updatePlugin).mock.calls[1][4] as AbortSignal
+    expect(abortSignal.aborted).toBe(false)
+
+    act(() => result.current.closeUpdatePluginDialog())
+    expect(abortSignal.aborted).toBe(true)
+    expect(result.current.updateDialogOpen).toBe(false)
+    expect(result.current.updatingPlugin).toBeNull()
+    expect(result.current.updateProgress).toBeNull()
+
+    await act(async () => {
+      cancelDeferred.resolve({ success: true })
+    })
+    expect(options.onChanged).toHaveBeenCalledTimes(1)
 
     act(() => result.current.openUpdatePluginDialog(plugin, makeClickEvent()))
     vi.mocked(updatePlugin).mockRejectedValueOnce(new Error('仓库拉取失败'))
@@ -1013,8 +1039,10 @@ describe('usePluginLifecycle', () => {
     expect(result.current.deleteProgress?.message).toBe('未知错误')
   })
 
-  it('进度订阅只写入匹配的更新/卸载插件，卸载后忽略后续事件', async () => {
-    const plugin = makePlugin('test.emoji', { manifest: { name: 'Emoji Plugin' } })
+  it('进度订阅只写入进行中且匹配的更新/卸载插件，卸载后忽略后续事件', async () => {
+    const plugin = makePlugin('test.emoji', {
+      manifest: { name: 'Emoji Plugin', repository_url: 'https://example.com/emoji.git' },
+    })
     const other = makePlugin('other.plugin')
     const { result, unmount } = renderLifecycle()
     await waitFor(() => expect(progressClient.subscribe).toHaveBeenCalled())
@@ -1022,6 +1050,32 @@ describe('usePluginLifecycle', () => {
     act(() => result.current.openUpdatePluginDialog(plugin, makeClickEvent()))
     act(() => result.current.openDeletePluginDialog(plugin, makeClickEvent()))
     await waitFor(() => expect(progressClient.listener).toBeTruthy())
+
+    // 未开始操作前收到的历史回放事件应被忽略，避免覆盖确认弹窗
+    act(() => {
+      progressClient.emit(
+        makeProgress({ operation: 'update', stage: 'loading', plugin_id: 'test.emoji', progress: 15 })
+      )
+      progressClient.emit(
+        makeProgress({ operation: 'uninstall', stage: 'loading', plugin_id: 'test.emoji', progress: 25 })
+      )
+    })
+    expect(result.current.updateProgress).toBeNull()
+    expect(result.current.deleteProgress).toBeNull()
+
+    const updateDeferred = createDeferred<{ success: boolean }>()
+    const deleteDeferred = createDeferred<{ success: boolean; message: string }>()
+    vi.mocked(updatePlugin).mockReturnValueOnce(updateDeferred.promise as never)
+    vi.mocked(uninstallPlugin).mockReturnValueOnce(deleteDeferred.promise)
+
+    act(() => {
+      void result.current.handleConfirmUpdatePlugin()
+      void result.current.handleConfirmDeletePlugin()
+    })
+    await waitFor(() => {
+      expect(result.current.updateProgress?.stage).toBe('loading')
+      expect(result.current.deleteProgress?.stage).toBe('loading')
+    })
 
     act(() => {
       progressClient.emit(

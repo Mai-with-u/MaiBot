@@ -1,9 +1,11 @@
-import { cleanup, fireEvent, render, screen } from '@testing-library/react'
+import { QueryClient, QueryClientProvider } from '@tanstack/react-query'
+import { cleanup, fireEvent, render, screen, within } from '@testing-library/react'
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest'
 
 import { CommandPermissions } from './CommandPermissions'
 
 import { getChatStreams, type ChatStream } from '@/lib/chat-management-api'
+import { backendApi } from '@/lib/http'
 import { getRuntimeCommands, type RuntimeCommand } from '@/lib/plugin-api'
 
 vi.mock('@/lib/plugin-api', () => ({
@@ -13,6 +15,17 @@ vi.mock('@/lib/plugin-api', () => ({
 vi.mock('@/lib/chat-management-api', () => ({
   getChatStreams: vi.fn(),
 }))
+
+vi.mock('@/lib/http', async (importOriginal) => {
+  const actual = await importOriginal<typeof import('@/lib/http')>()
+  return {
+    ...actual,
+    backendApi: {
+      ...actual.backendApi,
+      get: vi.fn(),
+    },
+  }
+})
 
 // MultiSelect 是 Radix 浮层，jsdom 下交互受限，改为按钮驱动 onChange
 vi.mock('@/components/ui/multi-select', () => ({
@@ -42,6 +55,7 @@ vi.mock('@/components/ui/multi-select', () => ({
 
 const getRuntimeCommandsMock = vi.mocked(getRuntimeCommands)
 const getChatStreamsMock = vi.mocked(getChatStreams)
+const backendApiGetMock = vi.mocked(backendApi.get)
 
 const operatorCommand: RuntimeCommand = {
   aliases: ['k'],
@@ -78,14 +92,43 @@ afterEach(() => {
 beforeEach(() => {
   getRuntimeCommandsMock.mockResolvedValue([operatorCommand, publicCommand])
   getChatStreamsMock.mockResolvedValue(chatStreams)
+  backendApiGetMock.mockImplementation(async (path: string) => {
+    if (path === '/api/chat/platforms') {
+      return { success: true, platforms: [{ platform: 'qq' }] }
+    }
+    return { success: true, persons: [] }
+  })
 })
 
 function renderPermissions(
   pluginSection: Record<string, unknown> | null = {},
   onChange = vi.fn()
 ) {
-  const view = render(<CommandPermissions pluginSection={pluginSection} onChange={onChange} />)
+  const queryClient = new QueryClient({
+    defaultOptions: { queries: { retry: false } },
+  })
+  const view = render(
+    <QueryClientProvider client={queryClient}>
+      <CommandPermissions pluginSection={pluginSection} onChange={onChange} />
+    </QueryClientProvider>
+  )
   return { ...view, onChange }
+}
+
+function getUserSelectSection(label: string) {
+  const section = screen.getByText(label).closest('div.space-y-3')
+  if (!(section instanceof HTMLElement)) {
+    throw new Error(`未找到用户选择区域: ${label}`)
+  }
+  return section
+}
+
+function addScopedUser(label: string, platform: string, userId: string) {
+  const section = getUserSelectSection(label)
+  fireEvent.click(within(section).getByRole('button', { name: '新增' }))
+  fireEvent.change(within(section).getByLabelText('平台'), { target: { value: platform } })
+  fireEvent.change(within(section).getByLabelText('用户'), { target: { value: userId } })
+  fireEvent.click(within(section).getByRole('button', { name: '添加用户' }))
 }
 
 describe('CommandPermissions', () => {
@@ -174,26 +217,26 @@ describe('CommandPermissions', () => {
     expect(screen.getByText('/help', { selector: 'code' })).toBeInTheDocument()
     expect(screen.getByText('公开命令')).toBeInTheDocument()
     expect(screen.getByText('此命令由插件声明为所有用户可用，不需要额外授权。')).toBeInTheDocument()
-    expect(screen.queryByLabelText('全局管理员')).not.toBeInTheDocument()
-    expect(screen.queryByLabelText('仅为此命令放行用户')).not.toBeInTheDocument()
+    expect(screen.queryByText('全局管理员')).not.toBeInTheDocument()
+    expect(screen.queryByText('仅为此命令放行用户')).not.toBeInTheDocument()
   })
 
   it('空 pluginSection 下修改放行用户会写入 command_permissions', async () => {
     const { onChange } = renderPermissions(null)
     await screen.findByRole('heading', { name: '/kick' })
 
-    expect(screen.getByLabelText('全局管理员')).toHaveValue('')
-    expect(screen.getByLabelText('仅为此命令放行用户')).toHaveValue('')
+    expect(within(getUserSelectSection('全局管理员')).getByText('尚未添加用户')).toBeInTheDocument()
+    expect(
+      within(getUserSelectSection('仅为此命令放行用户')).getByText('尚未添加用户')
+    ).toBeInTheDocument()
 
-    fireEvent.change(screen.getByLabelText('仅为此命令放行用户'), {
-      target: { value: ' qq:234567890，qq:111, qq:234567890 ' },
-    })
+    addScopedUser('仅为此命令放行用户', 'QQ', ' 234567890 ')
 
     expect(onChange).toHaveBeenCalledWith({
       command_permissions: {
         'cmd-kick': {
           allow_chats: [],
-          allow_users: ['qq:234567890', 'qq:111'],
+          allow_users: ['qq:234567890'],
         },
       },
     })
@@ -212,18 +255,30 @@ describe('CommandPermissions', () => {
     const { onChange } = renderPermissions(pluginSection)
     await screen.findByRole('heading', { name: '/kick' })
 
-    expect(screen.getByLabelText('仅为此命令放行用户')).toHaveValue('qq:111')
+    const allowUsersSection = getUserSelectSection('仅为此命令放行用户')
+    expect(within(allowUsersSection).getByText('qq:111')).toBeInTheDocument()
     expect(screen.getByTestId('command-chats')).toHaveTextContent('session-group')
 
-    fireEvent.change(screen.getByLabelText('仅为此命令放行用户'), {
-      target: { value: 'qq:999' },
-    })
+    addScopedUser('仅为此命令放行用户', 'qq', '999')
     expect(onChange).toHaveBeenCalledWith({
       enabled: true,
       command_permissions: {
         'cmd-kick': {
           allow_chats: ['session-group'],
-          allow_users: ['qq:999'],
+          allow_users: ['qq:111', 'qq:999'],
+        },
+      },
+    })
+
+    fireEvent.click(
+      within(allowUsersSection).getByRole('button', { name: '从仅为此命令放行用户移除 qq:111' })
+    )
+    expect(onChange).toHaveBeenCalledWith({
+      enabled: true,
+      command_permissions: {
+        'cmd-kick': {
+          allow_chats: ['session-group'],
+          allow_users: [],
         },
       },
     })
@@ -248,13 +303,22 @@ describe('CommandPermissions', () => {
     const { onChange } = renderPermissions(pluginSection)
     await screen.findByRole('heading', { name: '/kick' })
 
-    const operators = screen.getByLabelText('全局管理员')
-    expect(operators).toHaveValue('qq:admin1, qq:admin2')
+    const operatorsSection = getUserSelectSection('全局管理员')
+    expect(within(operatorsSection).getByText('qq:admin1')).toBeInTheDocument()
+    expect(within(operatorsSection).getByText('qq:admin2')).toBeInTheDocument()
 
-    fireEvent.change(operators, { target: { value: 'qq:9 qq:8' } })
+    fireEvent.click(
+      within(operatorsSection).getByRole('button', { name: '从全局管理员移除 qq:admin1' })
+    )
     expect(onChange).toHaveBeenCalledWith({
       command_permissions: {},
-      permission: ['qq:9', 'qq:8'],
+      permission: ['qq:admin2'],
+    })
+
+    addScopedUser('全局管理员', 'qq', '9')
+    expect(onChange).toHaveBeenCalledWith({
+      command_permissions: {},
+      permission: ['qq:admin1', 'qq:admin2', 'qq:9'],
     })
   })
 
@@ -262,6 +326,8 @@ describe('CommandPermissions', () => {
     renderPermissions({ permission: 'qq:admin' })
     await screen.findByRole('heading', { name: '/kick' })
 
-    expect(screen.getByLabelText('全局管理员')).toHaveValue('')
+    const operatorsSection = getUserSelectSection('全局管理员')
+    expect(within(operatorsSection).getByText('尚未添加用户')).toBeInTheDocument()
+    expect(within(operatorsSection).queryByText('qq:admin')).not.toBeInTheDocument()
   })
 })

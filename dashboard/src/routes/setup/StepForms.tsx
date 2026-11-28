@@ -1,5 +1,5 @@
 import { Eye, EyeOff, Maximize2 } from 'lucide-react'
-import { AnimatePresence, motion, useReducedMotion } from 'motion/react'
+import { AnimatePresence, motion } from 'motion/react'
 import { useEffect, useMemo, useState } from 'react'
 import { useTranslation } from 'react-i18next'
 
@@ -21,6 +21,7 @@ import { Slider } from '@/components/ui/slider'
 import { Switch } from '@/components/ui/switch'
 import { Textarea } from '@/components/ui/textarea'
 import { InfoTooltip } from '@/components/ui/info-tooltip'
+import { useMotion } from '@/lib/motion'
 import { validateToken } from '@/lib/token-validator'
 import { cn } from '@/lib/utils'
 import type { ModelListItem } from '@/lib/config-api'
@@ -203,7 +204,7 @@ export function PersonalityPresetSelect({ config, onChange, presetId }: {
 
 export function PersonalityForm({ config, onChange }: PersonalityFormProps) {
   const { t } = useTranslation()
-  const reducedMotion = useReducedMotion()
+  const { enabled, transitions } = useMotion()
   const fields = [
     { key: 'personality', translation: 'personality' },
     { key: 'behavior_style', translation: 'behaviorStyle' },
@@ -243,10 +244,10 @@ export function PersonalityForm({ config, onChange }: PersonalityFormProps) {
                 <motion.div
                   key={isFocused ? 'description' : 'label'}
                   className="flex min-w-0 items-center gap-2"
-                  initial={reducedMotion ? false : { opacity: 0, y: 3 }}
+                  initial={enabled ? { opacity: 0, y: 3 } : false}
                   animate={{ opacity: 1, y: 0 }}
-                  exit={reducedMotion ? undefined : { opacity: 0, y: -3 }}
-                  transition={{ duration: reducedMotion ? 0 : 0.1, ease: 'easeInOut' }}
+                  exit={enabled ? { opacity: 0, y: -3 } : undefined}
+                  transition={transitions.fast}
                 >
                   <Label htmlFor={key} className="leading-snug">
                     <span className="sr-only">{label}</span>
@@ -313,7 +314,7 @@ interface ApiProviderSetupFormProps {
 
 export function ApiProviderSetupForm({ config, onChange, initialCustomMode = false }: ApiProviderSetupFormProps) {
   const { t } = useTranslation()
-  const reduceMotion = useReducedMotion()
+  const { duration } = useMotion()
   const [showApiKey, setShowApiKey] = useState(false)
   const [customMode, setCustomMode] = useState(initialCustomMode)
   const [selectedPreset, setSelectedPreset] = useState('deepseek')
@@ -407,7 +408,7 @@ export function ApiProviderSetupForm({ config, onChange, initialCustomMode = fal
           <motion.div
             initial={false}
             animate={{ width: customMode ? 64 : 80 }}
-            transition={{ duration: reduceMotion ? 0 : 0.2, ease: 'linear' }}
+            transition={{ duration: duration(0.2), ease: 'linear' }}
             className="shrink-0"
           >
             <Button
@@ -477,7 +478,7 @@ export function ModelSetupForm({
 }: ModelSetupFormProps) {
   const { t } = useTranslation()
 
-  const reduceMotion = useReducedMotion()
+  const { enabled, transitions } = useMotion()
   const providerTemplate = findTemplateByBaseUrl(providerBaseUrl)
   const supportsThinkingSwitch = (identifier: string): boolean => {
     if (!identifier.trim()) return false
@@ -501,10 +502,10 @@ export function ModelSetupForm({
         {providerTemplate?.id === 'deepseek' && config[`${role}_thinking`] && (
           <motion.div
             key={`${role}-effort`}
-            initial={{ height: 0, opacity: 0 }}
+            initial={enabled ? { height: 0, opacity: 0 } : false}
             animate={{ height: 'auto', opacity: 1 }}
-            exit={{ height: 0, opacity: 0 }}
-            transition={{ duration: reduceMotion ? 0 : 0.2, ease: 'easeInOut' }}
+            exit={enabled ? { height: 0, opacity: 0 } : undefined}
+            transition={transitions.collapse}
             className="overflow-hidden"
           >
             <div className="space-y-3 px-2 pt-1 pb-2">

@@ -12,10 +12,15 @@ import {
   useResolvedAvatarUrl,
 } from '../avatar-url'
 
-vi.mock('@/lib/api-base', () => ({
-  getApiBaseUrl: vi.fn(),
-  resolveApiPath: vi.fn(),
-}))
+vi.mock('@/lib/api-base', async (importOriginal) => {
+  const actual = await importOriginal<typeof import('@/lib/api-base')>()
+  return {
+    ...actual,
+    getApiBaseUrl: vi.fn(),
+    getControlApiBaseUrl: vi.fn(),
+    resolveApiPath: vi.fn(),
+  }
+})
 
 const runtimeMocks = vi.hoisted(() => ({ isElectron: vi.fn(() => false) }))
 

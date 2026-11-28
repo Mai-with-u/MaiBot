@@ -4,7 +4,6 @@ import { PageFrame } from '@/components/ui/surface'
 import { ConversationTransition } from '@/components/ui/conversation'
 import { useQuery, useQueryClient } from '@tanstack/react-query'
 import { useNavigate, useRouterState } from '@tanstack/react-router'
-import { motion } from 'motion/react'
 import { useCallback, useEffect, useMemo, useRef, useState } from 'react'
 import { useTour } from '@/components/tour/use-tour'
 import { BASIC_FEATURES_TOUR_ID } from '@/components/tour/tours/basic-features-tour'
@@ -1298,19 +1297,7 @@ export function ChatPage() {
   return (
     <div data-chat-workspace="true">
       {/* 平板端提供页内会话列表，桌面端由外壳侧栏提供。 */}
-      <motion.div
-        className="hidden shrink-0 md:block lg:hidden"
-        variants={{
-          initial: { opacity: 0, x: '-100%' },
-          animate: { opacity: 1, x: 0 },
-          exit: {
-            opacity: 0,
-            x: '-100%',
-            transition: { duration: 0.28, ease: [0.22, 1, 0.36, 1] },
-          },
-        }}
-        transition={{ type: 'spring', stiffness: 360, damping: 30, mass: 0.75 }}
-      >
+      <div className="hidden shrink-0 md:block lg:hidden">
         <ChatWorkspaceSidebar
           agentEnabled={agentEnabled}
           agentActive={agentActive}
@@ -1327,7 +1314,7 @@ export function ChatPage() {
           onOpenObservedSettings={openObservedSettings}
           onClose={closeTab}
         />
-      </motion.div>
+      </div>
 
       {/* 移动端：会话列表（未进入对话时） */}
       {!mobileRoomOpen && (
@@ -1358,18 +1345,8 @@ export function ChatPage() {
       )}
 
       {/* 主聊天区 */}
-      <PageFrame asChild><motion.div
+      <PageFrame asChild><div
         className={cn('flex min-h-0 min-w-0 flex-1 flex-col', !mobileRoomOpen && 'max-md:hidden')}
-        variants={{
-          initial: { opacity: 0, y: '100%' },
-          animate: { opacity: 1, y: 0 },
-          exit: {
-            opacity: 0,
-            y: '100%',
-            transition: { duration: 0.28, ease: [0.22, 1, 0.36, 1] },
-          },
-        }}
-        transition={{ type: 'spring', stiffness: 360, damping: 30, mass: 0.75 }}
       >
         {setupTrial && (
           <section className="bg-card mx-4 mt-4 flex shrink-0 flex-wrap items-center justify-between gap-3 rounded-lg border p-4" aria-live="polite">
@@ -1528,7 +1505,7 @@ export function ChatPage() {
         )}
         </ConversationTransition>
         )}
-      </motion.div></PageFrame>
+      </div></PageFrame>
 
       <ChatStreamSettingsDialog
         chat={settingsChat}

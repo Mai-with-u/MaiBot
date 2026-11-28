@@ -14,18 +14,34 @@ import {
   Settings,
   Sun,
 } from 'lucide-react'
-import { motion, useReducedMotion } from 'motion/react'
-import { useContext, useEffect, useRef, useState, type ReactElement } from 'react'
+import { motion } from 'motion/react'
+import {
+  useContext,
+  useEffect,
+  useRef,
+  useState,
+  type FocusEvent as ReactFocusEvent,
+  type PointerEvent as ReactPointerEvent,
+  type ReactElement,
+} from 'react'
 import { useTranslation } from 'react-i18next'
 
 import { SidebarUpdateButton } from '@/components/layout/SidebarUpdateButton'
 import type { MenuItem } from '@/components/layout/types'
+import {
+  ModernGlideHighlight,
+  ModernMorphTooltip,
+  MotionCollapse,
+  MotionIconSwap,
+  type MorphTooltipTarget,
+} from '@/components/motion'
 import { DropdownMenu, DropdownMenuContent, DropdownMenuItem, DropdownMenuTrigger } from '@/components/ui/dropdown-menu'
 import { PromptWarningDot } from '@/components/ui/prompt-warning-dot'
 import { ScrollArea } from '@/components/ui/scroll-area'
 import { Separator } from '@/components/ui/separator'
 import { Tooltip, TooltipContent, TooltipTrigger } from '@/components/ui/tooltip'
 import { toggleThemeWithTransition, useTheme } from '@/components/use-theme'
+import { useMotion } from '@/lib/motion'
 import { promptCatalogQueryOptions } from '@/lib/prompt-query'
 import { TourContext } from '@/components/tour/tour-context'
 import { isDesktopEmbedded, reportDesktopLayout } from '@/lib/desktop-host'
@@ -187,10 +203,13 @@ export function ObservationSidebar({
   const [settingsOpen, setSettingsOpen] = useState(loadSettingsOpen)
   const [toolsOpen, setToolsOpen] = useState(false)
   const [settingsLayout, setSettingsLayout] = useState(loadSettingsLayout)
-  const reducedMotion = useReducedMotion()
+  const { style: motionStyle, enabled: motionEnabled, transitions } = useMotion()
+  const modernSidebarGlide = motionStyle === 'modern' && motionEnabled
   const [settingsPage, setSettingsPage] = useState(0)
   const [settingsPageDirection, setSettingsPageDirection] = useState(1)
+  const [hoveredKeyTooltip, setHoveredKeyTooltip] = useState<MorphTooltipTarget | null>(null)
   const settingsSection = useRef<HTMLElement>(null)
+  const keysListRef = useRef<HTMLUListElement>(null)
   const { data: promptCatalog } = useQuery(
     {
       ...promptCatalogQueryOptions,
@@ -303,6 +322,13 @@ export function ObservationSidebar({
     if (lockChanged) reportLayoutRef.current()
   }, [collapsed, homeLocked])
 
+  useEffect(() => {
+    if (!modernSidebarGlide) return
+    const clearOnScroll = () => setHoveredKeyTooltip(null)
+    window.addEventListener('scroll', clearOnScroll, true)
+    return () => window.removeEventListener('scroll', clearOnScroll, true)
+  }, [modernSidebarGlide])
+
   const toggleSettings = () => {
     setSettingsOpen((current) => {
       try {
@@ -355,7 +381,9 @@ export function ObservationSidebar({
         title={actualTheme === 'dark' ? t('header.switchToLight') : t('header.switchToDark')}
         onClick={(event) => toggleThemeWithTransition(actualTheme === 'dark' ? 'light' : 'dark', setTheme, event)}
       >
-        {actualTheme === 'dark' ? <Sun aria-hidden="true" /> : <Moon aria-hidden="true" />}
+        <MotionIconSwap iconKey={actualTheme === 'dark' ? 'sun' : 'moon'}>
+          {actualTheme === 'dark' ? <Sun aria-hidden="true" /> : <Moon aria-hidden="true" />}
+        </MotionIconSwap>
         {collapsed && <span>{actualTheme === 'dark' ? t('header.switchToLight') : t('header.switchToDark')}</span>}
       </button>)}
       <KeyTooltip label={collapsed ? t('common.search') : `${t('common.search')} · Ctrl K`} side={collapsed ? 'right' : 'bottom'}>
@@ -405,7 +433,9 @@ export function ObservationSidebar({
           title={collapsed ? t('observation.expandSidebar') : t('observation.collapseSidebar')}
           onClick={onToggleCollapsed}
         >
-          {collapsed ? <PanelLeftOpen aria-hidden="true" /> : <PanelLeftClose aria-hidden="true" />}
+          <MotionIconSwap iconKey={collapsed ? 'expand' : 'collapse'}>
+            {collapsed ? <PanelLeftOpen aria-hidden="true" /> : <PanelLeftClose aria-hidden="true" />}
+          </MotionIconSwap>
         </button>
         <Separator variant={dividerVariant} className="absolute inset-x-0 bottom-0" />
       </div>
@@ -478,77 +508,151 @@ export function ObservationSidebar({
             />
           </div>
         )}
-        {settingsVisible && (
-          <ScrollArea
-            scrollbars="vertical"
-            className={collapsed ? 'min-h-0 flex-1' : 'min-h-0'}
-          >
-            <nav aria-label={t('observation.settingsBlock')}>
-              <motion.ul
-                key={settingsPaginated ? currentSettingsPage : 'unpaged'}
-                data-observation-keys="true"
-                data-paginated={settingsPaginated || undefined}
-                style={settingsPaginated ? { gridTemplateRows: `repeat(${settingsLayout.rows}, 3.125rem)` } : undefined}
-                initial={reducedMotion || !settingsPaginated ? false : { opacity: 0, x: settingsPageDirection * 12 }}
-                animate={{ opacity: 1, x: 0 }}
-                transition={{ duration: reducedMotion ? 0 : 0.18, ease: 'easeOut' }}
-              >
-                {visibleSettingsItems.map((item) => {
-                  const Icon = item.icon
-                  const label = item.literalLabel ? item.label : t(item.label)
-                  const shortLabel = SHORT_LABELS[item.path] ? t(SHORT_LABELS[item.path]) : label
-                  const active = isItemActive(item, pathname)
-                  // Bot 还在加载或没有运行时，依赖 Bot 的键不可点；管理与 WebUI 设置照常可用
-                  const disabled = !botAvailable && !isBotIndependentPath(item.path)
-                  const keyContent = (
-                    <>
-                      <Icon className="h-5 w-5" />
-                      {!collapsed && <span data-observation-key-label="true">{shortLabel}</span>}
-                      {!disabled && item.path === '/config/prompts' && hasPromptWarnings && (
-                        <PromptWarningDot />
-                      )}
-                    </>
-                  )
-                  return (
-                    <li key={item.path}>
-                      {/* 键帽里的名字放不下时截断，悬停显示完整名称 */}
-                      <KeyTooltip
-                        label={disabled ? t('observation.keyNeedsBot', { label }) : label}
-                        side={collapsed ? 'right' : 'bottom'}
-                      >
-                        {disabled ? (
-                          <span
-                            role="link"
-                            aria-disabled="true"
-                            aria-label={label}
-                            tabIndex={0}
-                            data-observation-key="true"
-                            data-disabled="true"
-                            data-active="false"
-                            data-tour={item.tourId}
-                          >
-                            {keyContent}
-                          </span>
-                        ) : (
-                          <Link
-                            to={item.path}
-                            aria-label={label}
-                            data-observation-key="true"
-                            data-active={active ? 'true' : 'false'}
-                            data-tour={item.tourId}
-                            aria-current={active ? 'page' : undefined}
-                          >
-                            {keyContent}
-                          </Link>
+        {(() => {
+          const settingsGrid = (
+            <ScrollArea
+              scrollbars="vertical"
+              className={collapsed ? 'min-h-0 flex-1' : 'min-h-0'}
+            >
+              <nav aria-label={t('observation.settingsBlock')}>
+                <motion.ul
+                  ref={keysListRef}
+                  key={settingsPaginated ? currentSettingsPage : 'unpaged'}
+                  data-observation-keys="true"
+                  data-paginated={settingsPaginated || undefined}
+                  data-modern-sidebar-glide={modernSidebarGlide ? 'true' : undefined}
+                  className={modernSidebarGlide ? 'relative' : undefined}
+                  style={settingsPaginated ? { gridTemplateRows: `repeat(${settingsLayout.rows}, 3.125rem)` } : undefined}
+                  initial={!motionEnabled || !settingsPaginated ? false : { opacity: 0, x: settingsPageDirection * 12 }}
+                  animate={{ opacity: 1, x: 0 }}
+                  transition={transitions.fast}
+                  onPointerLeave={modernSidebarGlide ? () => setHoveredKeyTooltip(null) : undefined}
+                  onBlur={
+                    modernSidebarGlide
+                      ? (event) => {
+                          if (!event.currentTarget.contains(event.relatedTarget as Node | null)) {
+                            setHoveredKeyTooltip(null)
+                          }
+                        }
+                      : undefined
+                  }
+                >
+                  <ModernGlideHighlight
+                    containerRef={keysListRef}
+                    itemSelector="[data-observation-key='true']"
+                    className="rounded-lg bg-foreground/[0.05] dark:bg-foreground/[0.08]"
+                  />
+                  {visibleSettingsItems.map((item) => {
+                    const Icon = item.icon
+                    const label = item.literalLabel ? item.label : t(item.label)
+                    const shortLabel = SHORT_LABELS[item.path] ? t(SHORT_LABELS[item.path]) : label
+                    const active = isItemActive(item, pathname)
+                    // Bot 还在加载或没有运行时，依赖 Bot 的键不可点；管理与 WebUI 设置照常可用
+                    const disabled = !botAvailable && !isBotIndependentPath(item.path)
+                    const tooltipLabel = disabled ? t('observation.keyNeedsBot', { label }) : label
+                    const keyContent = (
+                      <>
+                        <Icon className="h-5 w-5" />
+                        {!collapsed && <span data-observation-key-label="true">{shortLabel}</span>}
+                        {!disabled && item.path === '/config/prompts' && hasPromptWarnings && (
+                          <PromptWarningDot />
                         )}
-                      </KeyTooltip>
-                    </li>
-                  )
-                })}
-              </motion.ul>
-            </nav>
-          </ScrollArea>
-        )}
+                      </>
+                    )
+                    const morphHandlers = modernSidebarGlide
+                      ? {
+                          onPointerEnter: (event: ReactPointerEvent<HTMLElement>) => {
+                            if (event.pointerType === 'mouse') {
+                              setHoveredKeyTooltip({
+                                id: item.path,
+                                label: tooltipLabel,
+                                anchor: event.currentTarget,
+                              })
+                            }
+                          },
+                          onFocus: (event: ReactFocusEvent<HTMLElement>) => {
+                            if (event.currentTarget.matches(':focus-visible')) {
+                              setHoveredKeyTooltip({
+                                id: item.path,
+                                label: tooltipLabel,
+                                anchor: event.currentTarget,
+                              })
+                            }
+                          },
+                          onClick: () => setHoveredKeyTooltip(null),
+                        }
+                      : undefined
+                    const keyElement = disabled ? (
+                      <span
+                        role="link"
+                        aria-disabled="true"
+                        aria-label={label}
+                        tabIndex={0}
+                        data-observation-key="true"
+                        data-disabled="true"
+                        data-active="false"
+                        data-tour={item.tourId}
+                        {...morphHandlers}
+                      >
+                        {keyContent}
+                      </span>
+                    ) : (
+                      <Link
+                        to={item.path}
+                        aria-label={label}
+                        data-observation-key="true"
+                        data-active={active ? 'true' : 'false'}
+                        data-tour={item.tourId}
+                        aria-current={active ? 'page' : undefined}
+                        className={modernSidebarGlide ? 'relative isolate' : undefined}
+                        {...morphHandlers}
+                      >
+                        {modernSidebarGlide && active && (
+                          <motion.span
+                            layoutId="modern-sidebar-active-pill"
+                            aria-hidden="true"
+                            transition={transitions.snappy}
+                            className="pointer-events-none absolute inset-0 -z-10 rounded-lg bg-primary/10 ring-1 ring-primary/20 shadow-[0_1px_2px_hsl(var(--foreground)/0.06)] dark:bg-primary/15"
+                          />
+                        )}
+                        {keyContent}
+                      </Link>
+                    )
+                    return (
+                      <li key={item.path}>
+                        {/* 现代风格由单一 ModernMorphTooltip 连续变形跟随；其余风格沿用 KeyTooltip。 */}
+                        {modernSidebarGlide ? (
+                          keyElement
+                        ) : (
+                          <KeyTooltip
+                            label={tooltipLabel}
+                            side={collapsed ? 'right' : 'bottom'}
+                          >
+                            {keyElement}
+                          </KeyTooltip>
+                        )}
+                      </li>
+                    )
+                  })}
+                </motion.ul>
+                <ModernMorphTooltip
+                  target={modernSidebarGlide ? hoveredKeyTooltip : null}
+                  side={collapsed ? 'right' : 'bottom'}
+                />
+              </nav>
+            </ScrollArea>
+          )
+
+          if (collapsed) {
+            return settingsVisible ? settingsGrid : null
+          }
+
+          return (
+            <MotionCollapse open={settingsVisible} className="flex min-h-0 flex-col">
+              {settingsGrid}
+            </MotionCollapse>
+          )
+        })()}
       </section>
 
       <Separator variant={dividerVariant} data-observation-rule="true" />
