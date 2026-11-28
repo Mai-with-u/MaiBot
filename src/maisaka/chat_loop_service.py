@@ -1323,7 +1323,7 @@ class MaisakaChatLoopService:
         )
         private_screen_items = []
         if screen_observations is not None and request_kind == "planner" and not external_planner:
-            # 在普通历史和请求 Hook 之外加入，避免进入共享上下文、附件索引或压缩快照。
+            # 在普通历史和请求 Hook 之外加入，避免进入共享上下文或附件索引。
             observations = tuple(screen_observations())
             if observations:
                 def build_screen_items() -> List[ContextItem]:
@@ -1402,7 +1402,7 @@ class MaisakaChatLoopService:
             self.planner_request_snapshot = (
                 PlannerRequestSnapshot(external_snapshot, tuple(selected_history)) if external_planner else
                 PlannerRequestSnapshot(generation_result.request_snapshot, tuple(selected_history))
-                if generation_result.request_snapshot is not None and not private_screen_items else None
+                if generation_result.request_snapshot is not None else None
             )
         if logical_turn_id:
             generation_result.output_items = bind_output_items_to_turn(

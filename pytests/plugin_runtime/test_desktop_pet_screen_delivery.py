@@ -304,7 +304,12 @@ async def test_planner_consumes_private_observation_without_preview_or_hook_payl
         preview.assert_not_called()
         assert result.private_screen
         assert result.request_messages == []
-        assert service.planner_request_snapshot is None
+        assert service.planner_request_snapshot is not None
+        history_parts = [
+            part for item in service.planner_request_snapshot.request.context_items for part in item.parts
+        ]
+        assert any(isinstance(part, ContextTextPart) and MARKER in part.text for part in history_parts)
+        assert any(isinstance(part, ContextImagePart) for part in history_parts) is (expected == "image")
         assert result.private_reply_snapshot is not None
         assert MARKER not in repr(result.private_reply_snapshot.request.context_items)
         assert not any(
@@ -388,11 +393,13 @@ async def test_interrupt_retains_request_privacy_without_screen_observations(mon
 
 
 @pytest.mark.asyncio
-async def test_history_is_trimmed_when_planner_has_no_snapshot(monkeypatch):
+@pytest.mark.parametrize("has_snapshot", [False, True])
+async def test_history_compaction_waits_for_planner_snapshot(monkeypatch, has_snapshot):
     from src.maisaka import reasoning_engine
 
     old, recent = SimpleNamespace(count_in_context=True), object()
-    request_state = SimpleNamespace(planner_request_snapshot=None, last_planner_prompt_tokens=60)
+    planner_snapshot = object() if has_snapshot else None
+    request_state = SimpleNamespace(planner_request_snapshot=planner_snapshot, last_planner_prompt_tokens=60)
     runtime = SimpleNamespace(
         _chat_history=[old, recent],
         _max_context_size=2,
@@ -417,13 +424,24 @@ async def test_history_is_trimmed_when_planner_has_no_snapshot(monkeypatch):
         ),
     )
     monkeypatch.setattr(reasoning_engine, "emit_flow_step", AsyncMock())
-    summary = AsyncMock()
+    summary = AsyncMock(return_value=None)
     monkeypatch.setattr(reasoning_engine, "build_context_summary", summary)
     engine = reasoning_engine.MaisakaReasoningEngine(runtime)
     await engine._post_process_chat_history_after_cycle(SimpleNamespace(cycle_id=1, time_records={}))
-    assert runtime._chat_history == [recent]
-    assert request_state.last_planner_prompt_tokens == 0
-    summary.assert_not_awaited()
+    if has_snapshot:
+        assert runtime._chat_history == [recent]
+        assert request_state.last_planner_prompt_tokens == 0
+        summary.assert_awaited_once_with(
+            [old],
+            planner_snapshot=planner_snapshot,
+            previous_summary=None,
+            recent_messages=[recent],
+            session_id="test",
+        )
+    else:
+        assert runtime._chat_history == [old, recent]
+        assert request_state.last_planner_prompt_tokens == 60
+        summary.assert_not_awaited()
 
 
 @pytest.mark.asyncio

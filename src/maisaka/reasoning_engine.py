@@ -732,7 +732,6 @@ class MaisakaReasoningEngine:
             )
             def mark_private_screen() -> None:
                 state.private_screen = True
-                self._runtime._chat_loop_service.planner_request_snapshot = None
 
             response = await self._run_interruptible_planner(
                 on_private_screen=mark_private_screen,
@@ -1486,8 +1485,11 @@ class MaisakaReasoningEngine:
 
         trimmed_chat_count = sum(message.count_in_context for message in process_result.removed_messages)
         final_history = process_result.history
-        planner_snapshot = self._runtime._chat_loop_service.planner_request_snapshot
-        if process_result.removed_messages and enable_compaction and planner_snapshot is not None:
+        if process_result.removed_messages and enable_compaction:
+            planner_snapshot = self._runtime._chat_loop_service.planner_request_snapshot
+            if planner_snapshot is None:
+                # 冷启动或上次摘要提交后必须先完成一次 Planner 请求，才能复用真实前缀。
+                return
             summary_started_at = time.time()
             previous_summary = next(
                 (message for message in reversed(original_history) if isinstance(message, ContextSummaryMessage)), None
