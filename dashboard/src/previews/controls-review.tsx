@@ -145,11 +145,11 @@ function Samples({ label, dark }: { label: string; dark: boolean }) {
       <section>
         <h2>Switch 开关 · 关闭 / 开启 / 禁用 / 大尺寸</h2>
         <div className="sample-row">
-          <label>关闭 <Switch aria-label="默认关闭" /></label>
-          <label>开启 <Switch aria-label="默认开启" defaultChecked /></label>
-          <label>禁用 <Switch aria-label="禁用开关" disabled /></label>
-          <label>禁用开启 <Switch aria-label="禁用开启" defaultChecked disabled /></label>
-          <label>仅显示兼容 <Switch aria-label="仅显示兼容" size="lg" defaultChecked /></label>
+          <label htmlFor="review-switch-off">关闭 <Switch id="review-switch-off" aria-label="默认关闭" /></label>
+          <label htmlFor="review-switch-on">开启 <Switch id="review-switch-on" aria-label="默认开启" defaultChecked /></label>
+          <label htmlFor="review-switch-disabled">禁用 <Switch id="review-switch-disabled" aria-label="禁用开关" disabled /></label>
+          <label htmlFor="review-switch-disabled-on">禁用开启 <Switch id="review-switch-disabled-on" aria-label="禁用开启" defaultChecked disabled /></label>
+          <label htmlFor="review-switch-lg">仅显示兼容 <Switch id="review-switch-lg" aria-label="仅显示兼容" size="lg" defaultChecked /></label>
         </div>
       </section>
       <section>
@@ -241,23 +241,23 @@ function Samples({ label, dark }: { label: string; dark: boolean }) {
       <section id="additional-controls" className="additional-controls">
         <h2>复选框 · 未选 / 全选 / 半选 / 禁用 / 紧凑</h2>
         <div className="sample-row">
-          <label><Checkbox aria-label="未选复选框" />未选</label>
-          <label><Checkbox aria-label="已选复选框" defaultChecked />已选</label>
-          <label><Checkbox aria-label="半选复选框" defaultChecked="indeterminate" />部分选中</label>
-          <label><Checkbox aria-label="禁用复选框" defaultChecked disabled />禁用</label>
-          <label><Checkbox aria-label="紧凑复选框" size="sm" defaultChecked />紧凑</label>
+          <label htmlFor="review-checkbox-off"><Checkbox id="review-checkbox-off" aria-label="未选复选框" />未选</label>
+          <label htmlFor="review-checkbox-on"><Checkbox id="review-checkbox-on" aria-label="已选复选框" defaultChecked />已选</label>
+          <label htmlFor="review-checkbox-indeterminate"><Checkbox id="review-checkbox-indeterminate" aria-label="半选复选框" defaultChecked="indeterminate" />部分选中</label>
+          <label htmlFor="review-checkbox-disabled"><Checkbox id="review-checkbox-disabled" aria-label="禁用复选框" defaultChecked disabled />禁用</label>
+          <label htmlFor="review-checkbox-sm"><Checkbox id="review-checkbox-sm" aria-label="紧凑复选框" size="sm" defaultChecked />紧凑</label>
         </div>
       </section>
       <section>
         <h2>单选框 · 标准 / 禁用 / 紧凑</h2>
         <RadioGroup aria-label="执行方式" defaultValue="auto" className="sample-row">
-          <label><RadioGroupItem value="auto" />自动</label>
-          <label><RadioGroupItem value="manual" />手动</label>
-          <label><RadioGroupItem value="disabled" disabled />不可用</label>
+          <label htmlFor="review-radio-auto"><RadioGroupItem id="review-radio-auto" value="auto" />自动</label>
+          <label htmlFor="review-radio-manual"><RadioGroupItem id="review-radio-manual" value="manual" />手动</label>
+          <label htmlFor="review-radio-disabled"><RadioGroupItem id="review-radio-disabled" value="disabled" disabled />不可用</label>
         </RadioGroup>
         <RadioGroup aria-label="紧凑执行方式" defaultValue="auto" className="sample-row sample-radio-compact">
-          <label><RadioGroupItem size="sm" value="auto" />自动（紧凑）</label>
-          <label><RadioGroupItem size="sm" value="manual" />手动（紧凑）</label>
+          <label htmlFor="review-radio-sm-auto"><RadioGroupItem id="review-radio-sm-auto" size="sm" value="auto" />自动（紧凑）</label>
+          <label htmlFor="review-radio-sm-manual"><RadioGroupItem id="review-radio-sm-manual" size="sm" value="manual" />手动（紧凑）</label>
         </RadioGroup>
       </section>
       <section>

@@ -38,8 +38,17 @@ const mocks = vi.hoisted(() => {
     updateAccessToken: vi.fn(),
     fetchSetupModels: vi.fn(),
     testSetupModel: vi.fn(),
+    getInstalledPlugins: vi.fn(),
+    getPluginConfig: vi.fn(),
+    togglePlugin: vi.fn(),
   }
 })
+
+vi.mock('@/lib/plugin-api', () => ({
+  getInstalledPlugins: mocks.getInstalledPlugins,
+  getPluginConfig: mocks.getPluginConfig,
+  togglePlugin: mocks.togglePlugin,
+}))
 
 vi.mock('react-i18next', () => ({
   useTranslation: () => ({
@@ -202,6 +211,10 @@ beforeEach(() => {
   mocks.fetchSetupModels.mockReset()
   mocks.fetchSetupModels.mockResolvedValue([{ id: 'deepseek-v4' }])
   mocks.testSetupModel.mockReset()
+  mocks.getInstalledPlugins.mockReset()
+  mocks.getInstalledPlugins.mockResolvedValue([])
+  mocks.getPluginConfig.mockReset()
+  mocks.togglePlugin.mockReset()
 })
 
 afterEach(() => {
@@ -436,23 +449,35 @@ describe('SetupPage 自定义 Token 步骤', () => {
     expect(screen.getByRole('button', { name: 'setupPage.actions.saveToken' })).toBeInTheDocument()
   })
 
-  it('Token 不满足真实校验规则时提示失败规则且不提交', async () => {
+  it('Token 不满足真实校验规则时禁用保存按钮；仅靠空白凑够长度时提交提示失败规则且不提交', async () => {
     render(<SetupPage />)
     await waitLoadingDone()
 
+    const saveButton = screen.getByRole('button', { name: 'setupPage.actions.saveToken' })
     fireEvent.change(screen.getByLabelText('setupPage.forms.customToken.label'), {
       target: { value: 'short' },
     })
     fireEvent.change(screen.getByLabelText('setupPage.forms.customToken.confirmation'), {
       target: { value: 'short' },
     })
-    fireEvent.click(screen.getByRole('button', { name: 'setupPage.actions.saveToken' }))
+    expect(saveButton).toBeDisabled()
+    expect(mocks.updateAccessToken).not.toHaveBeenCalled()
+
+    // 含前导空格时原串为 10 位使按钮可点，去除空白后不足 10 位会被提交校验拦截
+    fireEvent.change(screen.getByLabelText('setupPage.forms.customToken.label'), {
+      target: { value: ' Abcdefgh!' },
+    })
+    fireEvent.change(screen.getByLabelText('setupPage.forms.customToken.confirmation'), {
+      target: { value: ' Abcdefgh!' },
+    })
+    expect(saveButton).toBeEnabled()
+    fireEvent.click(saveButton)
 
     await waitFor(() => {
       expect(mocks.toast).toHaveBeenCalledWith({
         title: 'setupPage.toast.validationFailedTitle',
         description: `setupPage.validation.customTokenInvalid:${JSON.stringify({
-          failedRules: '长度至少 10 位, 包含大写字母, 包含特殊符号',
+          failedRules: '长度至少 10 位',
         })}`,
         variant: 'destructive',
       })
@@ -623,9 +648,18 @@ describe('SetupPage 错误态与空态', () => {
     mocks.completeSetup.mockRejectedValue(new Error('写入失败'))
     render(<SetupPage />)
     await waitLoadingDone()
-    await advanceTo('personality', 'defineModel', 'replyer', 'planner', 'groupReplies', 'desktopPet', 'dashboardAppearance')
+    await advanceTo(
+      'personality',
+      'defineModel',
+      'replyer',
+      'planner',
+      'groupReplies',
+      'desktopPet',
+      'dashboardAppearance',
+      'chatPlatform'
+    )
 
-    fireEvent.click(screen.getByRole('button', { name: 'setupPage.actions.complete' }))
+    fireEvent.click(screen.getByRole('button', { name: 'setupPage.platform.startChat' }))
 
     await waitFor(() => {
       expect(mocks.toast).toHaveBeenCalledWith({
@@ -768,7 +802,8 @@ it('展开当前阶段，保存基础设置后进入带试聊引导的聊天页'
   await advanceTo('dashboardAppearance')
   expect(screen.queryByRole('switch', { name: 'setupPage.steps.desktopPet.label' })).not.toBeInTheDocument()
   fireEvent.click(screen.getByRole('button', { name: /settings\.appearance\.dashboardStyles\.future-retro\.label/ }))
-  fireEvent.click(screen.getByRole('button', { name: 'setupPage.actions.complete' }))
+  await advanceTo('chatPlatform')
+  fireEvent.click(screen.getByRole('button', { name: 'setupPage.platform.startChat' }))
   await waitFor(() => {
     expect(mocks.navigate).toHaveBeenCalledWith({ to: '/chat', search: { setupTrial: true } })
   })

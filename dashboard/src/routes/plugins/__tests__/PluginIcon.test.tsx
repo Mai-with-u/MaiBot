@@ -128,7 +128,7 @@ describe('PluginIcon 图标回退', () => {
     )
 
     const image = container.querySelector('img')
-    expect(image).toHaveAttribute('src', '/api/webui/plugins/icon/hello%2Fworld')
+    expect(image).toHaveAttribute('src', '/api/webui/plugins/icon/hello%2Fworld?version=&icon=icon.png')
     expect(image).toHaveAttribute('alt', '')
     expect(container.firstElementChild).toHaveClass('custom-wrap')
 
@@ -140,6 +140,7 @@ describe('PluginIcon 图标回退', () => {
       <PluginIcon
         pluginId="local-type-fallback"
         installed
+        installedVersion="1.2.3"
         manifest={{
           plugin_type: 'chat',
           display: { icon: { type: 'local', value: 'icon.png' } },
@@ -149,7 +150,7 @@ describe('PluginIcon 图标回退', () => {
     const typeFallbackImage = container.querySelector('img')
     expect(typeFallbackImage).toHaveAttribute(
       'src',
-      '/api/webui/plugins/icon/local-type-fallback',
+      '/api/webui/plugins/icon/local-type-fallback?version=1.2.3&icon=icon.png',
     )
     fireEvent.error(typeFallbackImage!)
     expect(container.querySelector('svg.lucide-bot')).not.toBeNull()
@@ -167,6 +168,22 @@ describe('PluginIcon 图标回退', () => {
       />,
     )
     expect(container.querySelector('img')).toHaveAttribute('src', 'https://cdn.example/icon.png')
+
+    const cnbIconUrl = 'https://cnb.cool/Mai-with-u/plugin-repo/-/git/raw/main/plugins/demo/icon.png'
+    rerender(
+      <PluginIcon
+        pluginId="cnb-market-icon"
+        marketplaceIconUrl={cnbIconUrl}
+        manifest={{
+          plugin_type: 'integration',
+          display: { icon: { type: 'local', value: 'icon.png' } },
+        }}
+      />,
+    )
+    expect(container.querySelector('img')).toHaveAttribute(
+      'src',
+      `/api/webui/plugins/market-icon?url=${encodeURIComponent(cnbIconUrl)}`,
+    )
 
     rerender(
       <PluginIcon
@@ -190,7 +207,8 @@ describe('PluginIcon 图标回退', () => {
         }}
       />,
     )
+    // 历史 plugin_type "search" 现统一映射到 integration（默认图标 Plug）
     expect(container.querySelector('img')).toBeNull()
-    expect(container.querySelector('svg.lucide-search')).not.toBeNull()
+    expect(container.querySelector('svg.lucide-plug')).not.toBeNull()
   })
 })

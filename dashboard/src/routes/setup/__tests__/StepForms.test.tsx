@@ -1,4 +1,5 @@
 import { cleanup, fireEvent, render, screen } from '@testing-library/react'
+import userEvent from '@testing-library/user-event'
 import { afterEach, describe, expect, it, vi } from 'vitest'
 
 import {
@@ -14,6 +15,16 @@ import type {
   ModelSetupConfig,
   PersonalityConfig,
 } from '../types'
+
+if (!Element.prototype.hasPointerCapture) {
+  Element.prototype.hasPointerCapture = () => false
+}
+if (!Element.prototype.setPointerCapture) {
+  Element.prototype.setPointerCapture = () => {}
+}
+if (!Element.prototype.releasePointerCapture) {
+  Element.prototype.releasePointerCapture = () => {}
+}
 
 // t 必须是稳定引用，返回 key（带参数时附加序列化参数）
 const i18nMocks = vi.hoisted(() => {
@@ -59,11 +70,25 @@ describe('CustomTokenForm', () => {
     expect(onChange).toHaveBeenCalledWith('Abc!123456')
   })
 
+  const ruleIds = ['minLength', 'hasUppercase', 'hasLowercase', 'hasSpecialChar'] as const
+
+  function expectRuleState(ruleId: (typeof ruleIds)[number], passed: boolean) {
+    const item = screen.getByText(`setupPage.forms.customToken.rules.${ruleId}`).closest('li')
+    expect(item).not.toBeNull()
+    expect(item).toHaveClass(passed ? 'text-foreground' : 'text-muted-foreground')
+    const light = item?.querySelector('[data-status-light="true"]')
+    expect(light).toHaveAttribute('data-status', passed ? 'on' : 'off')
+    expect(light).toHaveAttribute(
+      'aria-label',
+      passed ? 'setupPage.forms.customToken.met' : 'setupPage.forms.customToken.unmet'
+    )
+  }
+
   it('空 Token 时四条规则均未通过', () => {
     render(<CustomTokenForm token="" onChange={vi.fn()} {...confirmationProps} />)
 
-    for (const label of ['长度至少 10 位', '包含大写字母', '包含小写字母', '包含特殊符号']) {
-      expect(screen.getByText(label)).toHaveClass('text-muted-foreground')
+    for (const ruleId of ruleIds) {
+      expectRuleState(ruleId, false)
     }
   })
 
@@ -71,17 +96,17 @@ describe('CustomTokenForm', () => {
     // "abc" 只满足小写字母规则
     render(<CustomTokenForm token="abc" onChange={vi.fn()} {...confirmationProps} />)
 
-    expect(screen.getByText('包含小写字母')).toHaveClass('text-green-600')
-    expect(screen.getByText('长度至少 10 位')).toHaveClass('text-muted-foreground')
-    expect(screen.getByText('包含大写字母')).toHaveClass('text-muted-foreground')
-    expect(screen.getByText('包含特殊符号')).toHaveClass('text-muted-foreground')
+    expectRuleState('hasLowercase', true)
+    expectRuleState('minLength', false)
+    expectRuleState('hasUppercase', false)
+    expectRuleState('hasSpecialChar', false)
   })
 
   it('Token 满足全部规则时四条规则均显示通过', () => {
     render(<CustomTokenForm token="Abcdefghij!" onChange={vi.fn()} {...confirmationProps} />)
 
-    for (const label of ['长度至少 10 位', '包含大写字母', '包含小写字母', '包含特殊符号']) {
-      expect(screen.getByText(label)).toHaveClass('text-green-600')
+    for (const ruleId of ruleIds) {
+      expectRuleState(ruleId, true)
     }
   })
 })
@@ -121,7 +146,9 @@ describe('PersonalityForm', () => {
     const onChange = vi.fn()
     render(<PersonalityForm config={config} onChange={onChange} />)
 
-    const textarea = screen.getByLabelText('setupPage.forms.personality.personality.label')
+    const textarea = screen.getByRole('textbox', {
+      name: 'setupPage.forms.personality.personality.label',
+    })
     expect(textarea).toHaveValue('活泼开朗')
 
     fireEvent.change(textarea, { target: { value: '沉稳理性' } })
@@ -133,9 +160,12 @@ describe('PersonalityForm', () => {
     const onChange = vi.fn()
     render(<PersonalityForm config={config} onChange={onChange} />)
 
-    fireEvent.change(screen.getByLabelText('setupPage.forms.personality.replyStyle.label'), {
-      target: { value: '长文详细' },
-    })
+    fireEvent.change(
+      screen.getByRole('textbox', { name: 'setupPage.forms.personality.replyStyle.label' }),
+      {
+        target: { value: '长文详细' },
+      }
+    )
 
     expect(onChange).toHaveBeenCalledWith({ ...config, reply_style: '长文详细' })
   })
@@ -179,7 +209,7 @@ describe('ApiProviderSetupForm', () => {
 
     expect(screen.getByLabelText('setupPage.forms.apiProvider.apiKey.label')).toHaveValue('')
 
-    fireEvent.click(screen.getByRole('button', { name: '自定义' }))
+    fireEvent.click(screen.getByRole('button', { name: 'setupPage.forms.apiProvider.useCustom' }))
     expect(onChange).toHaveBeenCalledWith({ provider_name: '', base_url: '', api_key: '' })
     expect(
       screen.getByPlaceholderText('setupPage.forms.apiProvider.providerName.placeholder')
@@ -200,12 +230,16 @@ describe('ApiProviderSetupForm', () => {
     ).toBeInTheDocument()
   })
 
-  it('预置下拉切换提供商，未知选项被忽略，自定义与预置可往返并编辑字段', () => {
+  it('预置下拉切换提供商，自定义与预置可往返并编辑字段', async () => {
+    const user = userEvent.setup({ pointerEventsCheck: 0 })
     const onChange = vi.fn()
     render(<ApiProviderSetupForm config={config} onChange={onChange} />)
 
-    const presetSelect = screen.getByLabelText('选择预置提供商')
-    fireEvent.change(presetSelect, { target: { value: 'zhipu' } })
+    const presetSelect = screen.getByRole('combobox', {
+      name: 'setupPage.forms.apiProvider.presetSelect',
+    })
+    await user.click(presetSelect)
+    await user.click(await screen.findByRole('option', { name: '智谱 AI (ZhipuAI / GLM)' }))
     expect(onChange).toHaveBeenCalledWith({
       ...config,
       provider_name: 'ZhipuAI',
@@ -213,10 +247,7 @@ describe('ApiProviderSetupForm', () => {
       api_key: '',
     })
 
-    fireEvent.change(presetSelect, { target: { value: 'not-exist' } })
-    expect(onChange).toHaveBeenCalledTimes(1)
-
-    fireEvent.click(screen.getByRole('button', { name: '自定义' }))
+    await user.click(screen.getByRole('button', { name: 'setupPage.forms.apiProvider.useCustom' }))
     fireEvent.change(
       screen.getByPlaceholderText('setupPage.forms.apiProvider.providerName.placeholder'),
       { target: { value: 'Mine' } }
@@ -229,7 +260,7 @@ describe('ApiProviderSetupForm', () => {
     })
     expect(onChange).toHaveBeenLastCalledWith({ ...config, api_key: 'sk-new' })
 
-    fireEvent.click(screen.getByRole('button', { name: '预置' }))
+    await user.click(screen.getByRole('button', { name: 'setupPage.forms.apiProvider.usePreset' }))
     expect(onChange).toHaveBeenLastCalledWith({
       ...config,
       provider_name: 'ZhipuAI',
@@ -332,8 +363,20 @@ describe('ModelSetupForm', () => {
     }
     render(<ModelSetupForm config={emptyConfig} onChange={onChange} />)
 
-    const plannerInput = screen.getByPlaceholderText('gpt-4.1-mini')
-    const replyerInput = screen.getByPlaceholderText('gpt-4.1')
+    const plannerInput = screen.getByRole('textbox', {
+      name: /setupPage\.forms\.modelSetup\.planner\.identifier\.label/,
+    })
+    const replyerInput = screen.getByRole('textbox', {
+      name: /setupPage\.forms\.modelSetup\.replyer\.identifier\.label/,
+    })
+    expect(plannerInput).toHaveAttribute(
+      'placeholder',
+      'setupPage.forms.modelSetup.identifierPlaceholder'
+    )
+    expect(replyerInput).toHaveAttribute(
+      'placeholder',
+      'setupPage.forms.modelSetup.identifierPlaceholder'
+    )
     expect(plannerInput).toHaveValue('')
     expect(replyerInput).toHaveValue('')
 
@@ -343,6 +386,7 @@ describe('ModelSetupForm', () => {
       planner_model_identifier: 'gpt-4.1-mini',
       planner_model_name: 'gpt-4.1-mini',
       planner_thinking: false,
+      planner_reasoning_effort: 'high',
     })
 
     fireEvent.change(replyerInput, { target: { value: ' Deepseek-V4-Pro ' } })
@@ -351,14 +395,29 @@ describe('ModelSetupForm', () => {
       replyer_model_identifier: ' Deepseek-V4-Pro ',
       replyer_model_name: ' Deepseek-V4-Pro ',
       replyer_thinking: true,
+      replyer_reasoning_effort: 'high',
     })
   })
 
-  it('切换规划器与回复器思考开关分别回调对应字段', () => {
+  it('仅在支持思考开关的提供商下展示开关，切换规划器与回复器思考开关分别回调对应字段', () => {
     const onChange = vi.fn()
-    render(<ModelSetupForm config={config} onChange={onChange} />)
+    const { rerender } = render(<ModelSetupForm config={config} onChange={onChange} />)
 
-    const thinkingSwitches = screen.getAllByRole('switch', { name: '启用思考' })
+    expect(
+      screen.queryByRole('switch', { name: 'setupPage.forms.modelSetup.enableThinking' })
+    ).not.toBeInTheDocument()
+
+    rerender(
+      <ModelSetupForm
+        config={config}
+        onChange={onChange}
+        providerBaseUrl="https://open.bigmodel.cn/api/paas/v4"
+      />
+    )
+
+    const thinkingSwitches = screen.getAllByRole('switch', {
+      name: 'setupPage.forms.modelSetup.enableThinking',
+    })
     expect(thinkingSwitches).toHaveLength(2)
 
     fireEvent.click(thinkingSwitches[0])

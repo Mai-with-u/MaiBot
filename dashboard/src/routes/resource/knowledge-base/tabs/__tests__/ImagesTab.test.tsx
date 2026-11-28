@@ -98,10 +98,11 @@ describe('ImagesTab 图片详情请求顺序', () => {
   it('重新排队失败的嵌入与描述任务，并刷新任务列表', async () => {
     api.retryImageJobs.mockResolvedValue({ success: true, count: 2 })
     renderTab()
-    const button = await screen.findByRole('button', {
-      name: '重试失败的嵌入与描述任务',
-      hidden: true,
-    })
+    fireEvent.click(await screen.findByRole('button', { name: '后台处理情况' }))
+    await screen.findByRole('dialog', { name: '图片记忆高级维护' })
+    await waitFor(() => expect(api.getJobs).toHaveBeenCalled())
+    fireEvent.click(screen.getByText('索引状态与任务诊断'))
+    const button = screen.getByRole('button', { name: '重试失败的嵌入与描述任务' })
     const previousCalls = api.getJobs.mock.calls.length
     fireEvent.click(button)
     await waitFor(() => expect(api.retryImageJobs).toHaveBeenCalledOnce())
@@ -155,7 +156,8 @@ describe('ImagesTab 图片详情请求顺序', () => {
       return { success: true, count: 1 }
     })
     renderTab()
-    fireEvent.click(screen.getByText('高级维护 · 历史图片回填与故障处理'))
+    fireEvent.click(await screen.findByRole('button', { name: '后台处理情况' }))
+    await screen.findByRole('dialog', { name: '图片记忆高级维护' })
     fireEvent.click(await screen.findByText('入库失败任务 · 1'))
     expect(screen.getByText(/测试读书会 · 消息 m1/)).toBeInTheDocument()
     expect(screen.getByText('原图缓存已缺失')).toBeInTheDocument()

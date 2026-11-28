@@ -180,11 +180,13 @@ async function renderManager(initialPersonId?: string) {
 
 /**
  * 点开某人的画像详情弹窗。
- * 必须限定在结果表行内：别名维护区的徽标也会渲染同样的姓名文本，
+ * 必须限定在画像列表行内：别名维护区的徽标也会渲染同样的姓名文本，
  * 直接 getByText(name) 会命中多个元素。
  */
 async function openProfileDetail(name: string) {
-  const rowName = screen.getAllByText(name).find((element) => element.closest('tr'))
+  const rowName = screen
+    .getAllByText(name)
+    .find((element) => element.closest('[data-profile-person-row="true"]'))
   if (!rowName) {
     throw new Error(`未在画像列表中找到 ${name} 所在行`)
   }
@@ -227,13 +229,13 @@ describe('ProfileConsole 画像库加载', () => {
     expect(memoryApi.getMemoryProfiles).toHaveBeenCalledWith(80)
     expect(await screen.findByText('张三')).toBeInTheDocument()
     expect(screen.getByText('李四')).toBeInTheDocument()
-    // 有画像覆写的行展示徽章（限定在张三所在表格行内查询）
+    // 有画像覆写的行展示徽章（限定在张三所在列表项内查询）
     const row = screen
       .getAllByText('张三')
-      .map((item) => item.closest('tr'))
+      .map((item) => item.closest('[data-profile-person-row="true"]'))
       .find(Boolean)
-    expect(row).not.toBeNull()
-    expect(within(row as HTMLTableRowElement).getByText('画像覆写')).toBeInTheDocument()
+    expect(row).toBeTruthy()
+    expect(within(row as HTMLElement).getByText('画像覆写')).toBeInTheDocument()
     // 自动选中 p1 后按默认证据数量 12 拉取证据
     await waitFor(() => {
       expect(memoryApi.getMemoryProfileEvidence).toHaveBeenCalledWith({
@@ -283,10 +285,15 @@ describe('ProfileConsole 查询流程', () => {
 
   it('没有任何查询条件时提交只弹提示，不发起请求', async () => {
     await renderManager()
-    fireEvent.click(screen.getByRole('button', { name: /查询人物画像/ }))
+    fireEvent.click(screen.getByRole('button', { name: '切换为精确查询' }))
+    fireEvent.click(screen.getByRole('button', { name: '查询' }))
     await waitFor(() => {
       expect(toastMock).toHaveBeenCalledWith(
-        expect.objectContaining({ title: '请输入查询条件', variant: 'destructive' })
+        expect.objectContaining({
+          title: '请输入查询条件',
+          description: '请填写平台和用户账号。',
+          variant: 'destructive',
+        })
       )
     })
     expect(memoryApi.searchMemoryProfiles).not.toHaveBeenCalled()
@@ -312,7 +319,6 @@ describe('ProfileConsole 查询流程', () => {
     // 查询表单里已无独立的 person_id 高级入口
     expect(screen.queryByLabelText('person_id')).not.toBeInTheDocument()
 
-    fireEvent.click(screen.getByRole('button', { name: '切换为模糊查询' }))
     vi.mocked(memoryApi.getMemoryProfileAliases).mockClear()
     fireEvent.change(screen.getByLabelText('人物关键词'), {
       target: { value: 'person-direct' },
@@ -323,7 +329,7 @@ describe('ProfileConsole 查询流程', () => {
     })
     expect(memoryApi.getMemoryProfileAliases).not.toHaveBeenCalled()
 
-    fireEvent.click(screen.getByRole('button', { name: /查询人物画像/ }))
+    fireEvent.click(screen.getByRole('button', { name: '查询' }))
     await waitFor(() => {
       expect(memoryApi.searchMemoryProfiles).toHaveBeenCalledWith({
         personKeyword: 'person-direct',
@@ -338,9 +344,8 @@ describe('ProfileConsole 查询流程', () => {
 
   it('仅填关键词时走画像检索并更新候选列表', async () => {
     await renderManager()
-    fireEvent.click(screen.getByRole('button', { name: '切换为模糊查询' }))
     fireEvent.change(screen.getByLabelText('人物关键词'), { target: { value: ' 王五 ' } })
-    fireEvent.click(screen.getByRole('button', { name: /查询人物画像/ }))
+    fireEvent.click(screen.getByRole('button', { name: '查询' }))
 
     await waitFor(() => {
       expect(memoryApi.searchMemoryProfiles).toHaveBeenCalledWith({
@@ -356,20 +361,20 @@ describe('ProfileConsole 查询流程', () => {
         })
       )
     })
+    const searchPanel = screen.getByTestId('profile-search-panel')
     expect(screen.queryByText('检索结果')).not.toBeInTheDocument()
-    expect(await screen.findByText('王五')).toBeInTheDocument()
+    expect(await within(searchPanel).findByText('王五')).toBeInTheDocument()
     // 原画像库条目被替换
-    expect(screen.queryByText('张三')).not.toBeInTheDocument()
+    expect(within(searchPanel).queryByText('张三')).not.toBeInTheDocument()
   })
 
   it('切回精确查询后忽略模糊查询中保留的关键词', async () => {
     await renderManager()
-    fireEvent.click(screen.getByRole('button', { name: '切换为模糊查询' }))
     fireEvent.change(screen.getByLabelText('人物关键词'), { target: { value: '王五' } })
     fireEvent.click(screen.getByRole('button', { name: '切换为精确查询' }))
     fireEvent.change(screen.getByLabelText('平台'), { target: { value: 'qq' } })
     fireEvent.change(screen.getByLabelText('用户账号'), { target: { value: '10086' } })
-    fireEvent.click(screen.getByRole('button', { name: /查询人物画像/ }))
+    fireEvent.click(screen.getByRole('button', { name: '查询' }))
 
     await waitFor(() => {
       expect(memoryApi.queryMemoryProfile).toHaveBeenCalledWith({
@@ -385,11 +390,12 @@ describe('ProfileConsole 查询流程', () => {
 
   it('切到模糊查询后忽略精确查询中保留的平台账号', async () => {
     await renderManager()
+    fireEvent.click(screen.getByRole('button', { name: '切换为精确查询' }))
     fireEvent.change(screen.getByLabelText('平台'), { target: { value: 'qq' } })
     fireEvent.change(screen.getByLabelText('用户账号'), { target: { value: '10086' } })
     fireEvent.click(screen.getByRole('button', { name: '切换为模糊查询' }))
     fireEvent.change(screen.getByLabelText('人物关键词'), { target: { value: '王五' } })
-    fireEvent.click(screen.getByRole('button', { name: /查询人物画像/ }))
+    fireEvent.click(screen.getByRole('button', { name: '查询' }))
 
     await waitFor(() => {
       expect(memoryApi.searchMemoryProfiles).toHaveBeenCalledWith({
@@ -402,9 +408,10 @@ describe('ProfileConsole 查询流程', () => {
 
   it('平台加账号定位时先查询画像再检索列表并拉取证据', async () => {
     await renderManager()
+    fireEvent.click(screen.getByRole('button', { name: '切换为精确查询' }))
     fireEvent.change(screen.getByLabelText('平台'), { target: { value: 'qq' } })
     fireEvent.change(screen.getByLabelText('用户账号'), { target: { value: '10086' } })
-    fireEvent.click(screen.getByRole('button', { name: /查询人物画像/ }))
+    fireEvent.click(screen.getByRole('button', { name: '查询' }))
 
     await waitFor(() => {
       expect(memoryApi.queryMemoryProfile).toHaveBeenCalledWith({
@@ -446,9 +453,10 @@ describe('ProfileConsole 查询流程', () => {
       error: '人物不存在',
     })
     await renderManager()
+    fireEvent.click(screen.getByRole('button', { name: '切换为精确查询' }))
     fireEvent.change(screen.getByLabelText('平台'), { target: { value: 'qq' } })
     fireEvent.change(screen.getByLabelText('用户账号'), { target: { value: '10086' } })
-    fireEvent.click(screen.getByRole('button', { name: /查询人物画像/ }))
+    fireEvent.click(screen.getByRole('button', { name: '查询' }))
 
     await waitFor(() => {
       expect(toastMock).toHaveBeenCalledWith(
@@ -737,6 +745,7 @@ describe('ProfileConsole 别名维护', () => {
     await renderManager()
 
     const aliasInput = await screen.findByLabelText('当前有效别名')
+    await waitFor(() => expect(aliasInput).toHaveValue('张三\n阿三'))
     expect((aliasInput as HTMLTextAreaElement).value).not.toContain('产品经理')
 
     fireEvent.click(screen.getByRole('button', { name: '加入 产品经理' }))
@@ -749,7 +758,9 @@ describe('ProfileConsole 别名维护', () => {
     vi.spyOn(window, 'confirm').mockReturnValue(true)
     await renderManager()
 
-    fireEvent.click(await screen.findByRole('button', { name: /恢复可信自动别名/ }))
+    const restoreButton = screen.getByRole('button', { name: /恢复可信自动别名/ })
+    await waitFor(() => expect(restoreButton).toBeEnabled())
+    fireEvent.click(restoreButton)
 
     await waitFor(() => {
       expect(memoryApi.deleteMemoryProfileAliases).toHaveBeenCalledWith('p1')
@@ -785,11 +796,11 @@ describe('ProfileConsole 空列表与检索失败', () => {
   it('模糊检索无命中时展示搜索空态', async () => {
     vi.mocked(memoryApi.searchMemoryProfiles).mockResolvedValue({ success: true, items: [] })
     await renderManager()
-    fireEvent.click(screen.getByRole('button', { name: '切换为模糊查询' }))
     fireEvent.change(screen.getByLabelText('人物关键词'), { target: { value: '不存在的人' } })
-    fireEvent.click(screen.getByRole('button', { name: /查询人物画像/ }))
+    fireEvent.click(screen.getByRole('button', { name: '查询' }))
 
-    expect(await screen.findByText('没有匹配的人物画像')).toBeInTheDocument()
+    const searchPanel = screen.getByTestId('profile-search-panel')
+    expect(await within(searchPanel).findByText('没有匹配的人物画像')).toBeInTheDocument()
     await waitFor(() => {
       expect(toastMock).toHaveBeenCalledWith(
         expect.objectContaining({
@@ -798,7 +809,7 @@ describe('ProfileConsole 空列表与检索失败', () => {
         })
       )
     })
-    expect(screen.queryByText('张三')).not.toBeInTheDocument()
+    expect(within(searchPanel).queryByText('张三')).not.toBeInTheDocument()
     // 检索无命中时不弹详情，列表自身给出空态
     expect(screen.queryByRole('dialog', { name: '画像详情' })).not.toBeInTheDocument()
   })
@@ -806,9 +817,8 @@ describe('ProfileConsole 空列表与检索失败', () => {
   it('模糊检索失败时弹出查询失败 toast', async () => {
     vi.mocked(memoryApi.searchMemoryProfiles).mockRejectedValue(new Error('检索服务挂了'))
     await renderManager()
-    fireEvent.click(screen.getByRole('button', { name: '切换为模糊查询' }))
     fireEvent.change(screen.getByLabelText('人物关键词'), { target: { value: '王五' } })
-    fireEvent.click(screen.getByRole('button', { name: /查询人物画像/ }))
+    fireEvent.click(screen.getByRole('button', { name: '查询' }))
 
     await waitFor(() => {
       expect(toastMock).toHaveBeenCalledWith(
@@ -824,27 +834,26 @@ describe('ProfileConsole 空列表与检索失败', () => {
   it('点击查看画像库会重新加载快照并退出检索空态', async () => {
     vi.mocked(memoryApi.searchMemoryProfiles).mockResolvedValue({ success: true, items: [] })
     await renderManager()
-    fireEvent.click(screen.getByRole('button', { name: '切换为模糊查询' }))
+    const searchPanel = screen.getByTestId('profile-search-panel')
     fireEvent.change(screen.getByLabelText('人物关键词'), { target: { value: '空' } })
-    fireEvent.click(screen.getByRole('button', { name: /查询人物画像/ }))
-    expect(await screen.findByText('没有匹配的人物画像')).toBeInTheDocument()
-    expect(screen.queryByText('张三')).not.toBeInTheDocument()
+    fireEvent.click(screen.getByRole('button', { name: '查询' }))
+    expect(await within(searchPanel).findByText('没有匹配的人物画像')).toBeInTheDocument()
+    expect(within(searchPanel).queryByText('张三')).not.toBeInTheDocument()
 
     fireEvent.click(screen.getByRole('button', { name: /查看画像库/ }))
     await waitFor(() => {
       expect(memoryApi.getMemoryProfiles).toHaveBeenCalledTimes(2)
     })
     // 回到画像库：重新列出快照，空态文案消失
-    expect(await screen.findByText('张三')).toBeInTheDocument()
-    expect(screen.queryByText('没有匹配的人物画像')).not.toBeInTheDocument()
+    expect(await within(searchPanel).findByText('张三')).toBeInTheDocument()
+    expect(within(searchPanel).queryByText('没有匹配的人物画像')).not.toBeInTheDocument()
   })
 })
 
 describe('ProfileConsole 查询补充', () => {
   it('模糊查询未填关键词只弹提示，不发起检索', async () => {
     await renderManager()
-    fireEvent.click(screen.getByRole('button', { name: '切换为模糊查询' }))
-    fireEvent.click(screen.getByRole('button', { name: /查询人物画像/ }))
+    fireEvent.click(screen.getByRole('button', { name: '查询' }))
 
     await waitFor(() => {
       expect(toastMock).toHaveBeenCalledWith(
@@ -867,9 +876,10 @@ describe('ProfileConsole 查询补充', () => {
     )
     vi.mocked(memoryApi.queryMemoryProfile).mockReturnValue(queryPromise)
     await renderManager()
+    fireEvent.click(screen.getByRole('button', { name: '切换为精确查询' }))
     fireEvent.change(screen.getByLabelText('平台'), { target: { value: 'qq' } })
     fireEvent.change(screen.getByLabelText('用户账号'), { target: { value: '10086' } })
-    fireEvent.click(screen.getByRole('button', { name: /查询人物画像/ }))
+    fireEvent.click(screen.getByRole('button', { name: '查询' }))
 
     // 详情移入弹窗后，查询中状态改由列表承载（弹窗此时未打开）
     expect(await screen.findByText('正在查询人物画像')).toBeInTheDocument()
@@ -901,9 +911,10 @@ describe('ProfileConsole 查询补充', () => {
       ],
     })
     await renderManager()
+    fireEvent.click(screen.getByRole('button', { name: '切换为精确查询' }))
     fireEvent.change(screen.getByLabelText('平台'), { target: { value: 'qq' } })
     fireEvent.change(screen.getByLabelText('用户账号'), { target: { value: '10086' } })
-    fireEvent.click(screen.getByRole('button', { name: /查询人物画像/ }))
+    fireEvent.click(screen.getByRole('button', { name: '查询' }))
 
     expect(await screen.findByText('回落人物')).toBeInTheDocument()
     await waitFor(() => {
@@ -923,9 +934,10 @@ describe('ProfileConsole 查询补充', () => {
     expect(screen.queryByLabelText('强制刷新画像')).not.toBeInTheDocument()
     expect(screen.queryByRole('checkbox', { name: '强制刷新画像' })).not.toBeInTheDocument()
 
+    fireEvent.click(screen.getByRole('button', { name: '切换为精确查询' }))
     fireEvent.change(screen.getByLabelText('平台'), { target: { value: 'qq' } })
     fireEvent.change(screen.getByLabelText('用户账号'), { target: { value: '10086' } })
-    fireEvent.click(screen.getByRole('button', { name: /查询人物画像/ }))
+    fireEvent.click(screen.getByRole('button', { name: '查询' }))
 
     await waitFor(() => {
       expect(memoryApi.queryMemoryProfile).toHaveBeenCalledWith({
@@ -949,9 +961,12 @@ describe('ProfileConsole 查询补充', () => {
 
   it('检修侧的证据数量决定证据列表条数，非法值回落默认 12', async () => {
     await renderManager()
+    await screen.findByText('关系证据内容')
+    const refreshButton = screen.getByRole('button', { name: '刷新证据' })
+    await waitFor(() => expect(refreshButton).toBeEnabled())
     const evidenceLimit = screen.getByLabelText('证据数量')
     fireEvent.change(evidenceLimit, { target: { value: '8' } })
-    fireEvent.click(screen.getByRole('button', { name: '刷新证据' }))
+    fireEvent.click(refreshButton)
 
     await waitFor(() => {
       expect(memoryApi.getMemoryProfileEvidence).toHaveBeenLastCalledWith({
@@ -960,9 +975,10 @@ describe('ProfileConsole 查询补充', () => {
         forceRefresh: true,
       })
     })
+    await waitFor(() => expect(refreshButton).toBeEnabled())
 
     fireEvent.change(evidenceLimit, { target: { value: '0' } })
-    fireEvent.click(screen.getByRole('button', { name: '刷新证据' }))
+    fireEvent.click(refreshButton)
     await waitFor(() => {
       expect(memoryApi.getMemoryProfileEvidence).toHaveBeenLastCalledWith({
         personId: 'p1',
@@ -979,9 +995,10 @@ describe('ProfileConsole 查询补充', () => {
       profile: { person_id: 'p9', profile_text: '嵌套画像文本' },
     })
     await renderManager()
+    fireEvent.click(screen.getByRole('button', { name: '切换为精确查询' }))
     fireEvent.change(screen.getByLabelText('平台'), { target: { value: 'qq' } })
     fireEvent.change(screen.getByLabelText('用户账号'), { target: { value: '10086' } })
-    fireEvent.click(screen.getByRole('button', { name: /查询人物画像/ }))
+    fireEvent.click(screen.getByRole('button', { name: '查询' }))
 
     await waitFor(() => {
       expect(memoryApi.queryMemoryProfile).toHaveBeenCalled()
@@ -1045,6 +1062,7 @@ describe('ProfileConsole 查询补充', () => {
 
   it('精确查询只用平台与用户账号定位，表单里不再重复匹配用户预览', async () => {
     await renderManager()
+    fireEvent.click(screen.getByRole('button', { name: '切换为精确查询' }))
     fireEvent.change(screen.getByLabelText('平台'), { target: { value: 'qq' } })
     fireEvent.change(screen.getByLabelText('用户账号'), { target: { value: '10086' } })
 
@@ -1053,7 +1071,7 @@ describe('ProfileConsole 查询补充', () => {
     expect(screen.queryByText('无用户')).not.toBeInTheDocument()
     expect(screen.queryByText('匹配中')).not.toBeInTheDocument()
 
-    fireEvent.click(screen.getByRole('button', { name: /查询人物画像/ }))
+    fireEvent.click(screen.getByRole('button', { name: '查询' }))
     // 平台 + 账号仍是有效的定位条件，随查询一起提交
     await waitFor(() => {
       expect(memoryApi.queryMemoryProfile).toHaveBeenCalledWith(
@@ -1221,6 +1239,7 @@ describe('ProfileConsole 证据/别名/覆写失败与取消', () => {
   it('别名为空时保存只弹提示，不调用接口', async () => {
     await renderManager()
     const aliasInput = await screen.findByLabelText('当前有效别名')
+    await waitFor(() => expect(aliasInput).toHaveValue('张三\n阿三'))
     fireEvent.change(aliasInput, { target: { value: '  \n ， ' } })
     fireEvent.click(screen.getByRole('button', { name: /保存别名/ }))
 
@@ -1239,6 +1258,7 @@ describe('ProfileConsole 证据/别名/覆写失败与取消', () => {
   it('保存别名时忽略空行和重复项', async () => {
     await renderManager()
     const aliasInput = await screen.findByLabelText('当前有效别名')
+    await waitFor(() => expect(aliasInput).toHaveValue('张三\n阿三'))
     fireEvent.change(aliasInput, { target: { value: '张三\n\n张三，三哥' } })
     fireEvent.click(screen.getByRole('button', { name: /保存别名/ }))
 
@@ -1255,7 +1275,8 @@ describe('ProfileConsole 证据/别名/覆写失败与取消', () => {
   it('保存别名抛错时弹出错误 toast', async () => {
     vi.mocked(memoryApi.setMemoryProfileAliases).mockRejectedValue(new Error('别名写入被拒绝'))
     await renderManager()
-    await screen.findByLabelText('当前有效别名')
+    const aliasInput = await screen.findByLabelText('当前有效别名')
+    await waitFor(() => expect(aliasInput).toHaveValue('张三\n阿三'))
     fireEvent.click(screen.getByRole('button', { name: /保存别名/ }))
 
     await waitFor(() => {
@@ -1272,7 +1293,8 @@ describe('ProfileConsole 证据/别名/覆写失败与取消', () => {
   it('保存别名 success=false 时使用接口错误文案', async () => {
     vi.mocked(memoryApi.setMemoryProfileAliases).mockResolvedValue({ success: false })
     await renderManager()
-    await screen.findByLabelText('当前有效别名')
+    const aliasInput = await screen.findByLabelText('当前有效别名')
+    await waitFor(() => expect(aliasInput).toHaveValue('张三\n阿三'))
     fireEvent.click(screen.getByRole('button', { name: /保存别名/ }))
 
     await waitFor(() => {
@@ -1289,7 +1311,9 @@ describe('ProfileConsole 证据/别名/覆写失败与取消', () => {
   it('恢复可信自动别名：取消 confirm 不调用接口', async () => {
     const confirmSpy = vi.spyOn(window, 'confirm').mockReturnValue(false)
     await renderManager()
-    fireEvent.click(await screen.findByRole('button', { name: /恢复可信自动别名/ }))
+    const restoreButton = screen.getByRole('button', { name: /恢复可信自动别名/ })
+    await waitFor(() => expect(restoreButton).toBeEnabled())
+    fireEvent.click(restoreButton)
     expect(confirmSpy).toHaveBeenCalledWith('确认恢复 p1 的可信自动别名？')
     expect(memoryApi.deleteMemoryProfileAliases).not.toHaveBeenCalled()
   })
@@ -1301,7 +1325,9 @@ describe('ProfileConsole 证据/别名/覆写失败与取消', () => {
       error: '不能恢复',
     })
     await renderManager()
-    fireEvent.click(await screen.findByRole('button', { name: /恢复可信自动别名/ }))
+    const restoreButton = screen.getByRole('button', { name: /恢复可信自动别名/ })
+    await waitFor(() => expect(restoreButton).toBeEnabled())
+    fireEvent.click(restoreButton)
 
     await waitFor(() => {
       expect(toastMock).toHaveBeenCalledWith(
@@ -1318,7 +1344,9 @@ describe('ProfileConsole 证据/别名/覆写失败与取消', () => {
     vi.spyOn(window, 'confirm').mockReturnValue(true)
     vi.mocked(memoryApi.deleteMemoryProfileAliases).mockRejectedValue(new Error('别名删除被拒绝'))
     await renderManager()
-    fireEvent.click(await screen.findByRole('button', { name: /恢复可信自动别名/ }))
+    const restoreButton = screen.getByRole('button', { name: /恢复可信自动别名/ })
+    await waitFor(() => expect(restoreButton).toBeEnabled())
+    fireEvent.click(restoreButton)
 
     await waitFor(() => {
       expect(toastMock).toHaveBeenCalledWith(
@@ -1375,10 +1403,10 @@ describe('ProfileConsole 展示边角', () => {
 
     expect(await screen.findByText('人工导入')).toBeInTheDocument()
     expect(screen.getByText('p-no-name')).toBeInTheDocument()
-    const unnamedRow = screen.getByText('p-no-name').closest('tr')
+    const unnamedRow = screen.getByText('p-no-name').closest('[data-profile-person-row="true"]')
     expect(unnamedRow).not.toBeNull()
     // 无穷大时间戳不显示为 Invalid Date，回落到占位符
-    expect(within(unnamedRow as HTMLTableRowElement).getByText('-')).toBeInTheDocument()
+    expect(within(unnamedRow as HTMLElement).getByText('-')).toBeInTheDocument()
 
     // 过期时间只在详情弹窗里展示
     await openProfileDetail('张三')

@@ -43,9 +43,13 @@ vi.mock('@/lib/plugin-api', () => ({
   getInstalledPlugins: vi.fn(),
   getMaimaiVersion: vi.fn(),
   installPlugin: vi.fn(),
+  isPluginCompatibilityMode: vi.fn(),
   isPluginCompatible: vi.fn(),
   uninstallPlugin: vi.fn(),
   updatePlugin: vi.fn(),
+}))
+vi.mock('@/lib/plugin-progress-client', () => ({
+  pluginProgressClient: { subscribe: vi.fn(async () => async () => undefined) },
 }))
 vi.mock('@/lib/plugin-stats', () => ({ recordPluginDownload: vi.fn() }))
 // 展示型子组件打桩：只透出关键内容，避免引入 markdown 渲染与统计请求链路
@@ -139,6 +143,7 @@ beforeEach(() => {
     version_minor: 11,
     version_patch: 0,
   })
+  vi.mocked(pluginApi.isPluginCompatibilityMode).mockReturnValue(false)
   vi.mocked(pluginApi.isPluginCompatible).mockReturnValue(true)
   vi.mocked(pluginApi.checkPluginInstalled).mockReturnValue(false)
   vi.mocked(pluginApi.getInstalledPluginVersion).mockReturnValue(undefined)
@@ -589,7 +594,7 @@ describe('PluginDetailPage 配置信息卡与交互', () => {
       expect(screen.getAllByText('本地插件').length).toBeGreaterThan(0)
     })
     expect(screen.getAllByText('Unknown').length).toBeGreaterThan(0)
-    expect(screen.getAllByText('通用扩展').length).toBeGreaterThan(0)
+    expect(screen.getAllByText('无类别').length).toBeGreaterThan(0)
     expect(screen.getByRole('link', { name: /访问/ })).toHaveAttribute(
       'href',
       'https://local.example'
