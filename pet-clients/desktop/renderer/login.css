@@ -7,6 +7,10 @@ label { display: block; margin: 14px 0 6px; color: #6f685c; }
 input, select, button { font: inherit; color: inherit; border-radius: 7px; }
 input, select { width: 100%; height: 38px; padding: 8px 10px; border: 1px solid #ddd5c8; background: #fffdf9; }
 input::placeholder { color: #a1988b; }
+#credentials { margin-top: 14px; }
+#credentials summary { cursor: pointer; color: #6f685c; }
+#credential-status { margin-inline-start: 6px; color: #356544; font-size: 12px; }
+#forget-credentials { margin-top: 10px; background: transparent; border: 1px solid #ddd5c8; font-weight: normal; }
 .check { display: flex; align-items: center; gap: 8px; margin: 18px 0; cursor: pointer; }
 .check input { width: 15px; height: 15px; margin: 0; accent-color: #967134; }
 #status { margin: 0 0 12px; font-size: 12px; color: #766d60; overflow-wrap: anywhere; }

@@ -1,10 +1,13 @@
 from unittest.mock import AsyncMock, Mock
+import json
 
 import pytest
 
 from src.chat.message_receive.chat_manager import chat_manager
+from src.core.internal_chat import INTERNAL_CHAT_PLATFORM, INTERNAL_CHAT_USER_ID
+from src.desktop_pet.attachments import read_request
 from src.desktop_pet.rendering import render_history_events
-from src.desktop_pet.remote_server import validate_event
+from src.desktop_pet.remote_server import validate_chat_request, validate_event, validate_hello
 from src.desktop_pet.service import DesktopPetService
 from src.maisaka.monitor import event_store
 
@@ -36,6 +39,9 @@ async def test_history_reuses_monitor_cursor_and_only_resolves_owner_sessions(mo
     monkeypatch.setattr(event_store, "load_session_event_page", load)
 
     await service._publish_history({"request_id": "first", "cursors": {}})
+    resolve.assert_called_once_with(
+        platform=INTERNAL_CHAT_PLATFORM, target_id=INTERNAL_CHAT_USER_ID, chat_type="private",
+    )
     load.assert_called_once_with(session_id="owner-session", before_event_id=0)
     response = command.await_args.args[0]
     assert response["cursors"] == {"owner-session": 20}
@@ -74,3 +80,24 @@ def test_history_renders_messages_and_merges_media_updates():
     assert [item["id"] for item in items] == ["user", "bot"]
     assert items[0]["parts"] == [{"kind": "text", "text": "图片内容"}]
     assert [item["who"] for item in items] == ["me", "mai"]
+
+
+def test_legacy_hello_does_not_enable_chat_binding():
+    client_id, capabilities = validate_hello({
+        "type": "hello", "version": 1, "client_id": "pet-1",
+        "capabilities": {"screen_read": False, "skin_assets": True, "chat_binding": True},
+    })
+    assert client_id == "pet-1"
+    assert capabilities == {"screen_read": False, "skin_assets": True, "skin_loading": False}
+
+
+@pytest.mark.parametrize("extra_fields", [{}, {"conversation_id": "qq-group"}])
+def test_chat_protocol_reads_only_text_and_images(tmp_path, extra_fields):
+    payload = {"text": " 私聊 ", "images": [], **extra_fields}
+    request_id = "a" * 32
+    path = tmp_path / f"{request_id}.json"
+    path.write_text(json.dumps(payload), encoding="utf-8")
+    expected = {"text": "私聊", "images": []}
+    assert validate_chat_request(payload) == expected
+    assert read_request(tmp_path, request_id) == expected
+    assert not path.exists()

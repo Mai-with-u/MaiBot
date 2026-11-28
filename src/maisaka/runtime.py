@@ -164,6 +164,8 @@ class MaisakaHeartFlowChatting(MaisakaRuntimeDisplayMixin):
         self._internal_turn_queue: asyncio.Queue[TurnTrigger] = asyncio.Queue()
         self._proactive_trigger_message: Optional[SessionMessage] = None
         self._proactive_logical_turn_id: Optional[str] = None
+        self._desktop_screen_observations: list[InternalContextMessage] = []
+        self._desktop_screen_wake_queued = False
         self._subagent_tasks = SubAgentTaskManager()
         # Focus 成员保留自己的聊天服务，前台 Planner 只在所属共享组中运行。
         self._focus_group: Optional[FocusGroupRuntime] = None
@@ -734,14 +736,6 @@ class MaisakaHeartFlowChatting(MaisakaRuntimeDisplayMixin):
         """本体后台任务复用真实会话上下文和正常 Planner 调度。"""
         task_id = f"{source_kind}:{uuid.uuid4().hex}"
         proactive_trigger_message = self._prepare_task_enqueue(task_id)
-        if source_kind == "desktop_pet_screen":
-            # 持续阅读只保留最近两帧用于对照，避免截图二进制随运行时间无限堆积。
-            previous_frames = [message for message in self._chat_history
-                               if isinstance(message, InternalContextMessage)
-                               and message.source_kind == "desktop_pet_screen"]
-            expired = {id(message) for message in previous_frames[:-1]}
-            if expired:
-                self._chat_history[:] = [message for message in self._chat_history if id(message) not in expired]
         if images:
             # 内部传话没有 IM 消息头，显式给出真实附件的引用，不能让模型用传话 ID 猜工具媒体索引。
             references = [{"msg_id": to_display_message_id(task_id), "index": index} for index in range(len(images))]
@@ -754,6 +748,50 @@ class MaisakaHeartFlowChatting(MaisakaRuntimeDisplayMixin):
         self._arm_forced_turn_state(message_id=task_id, reason=reason)
         self._queue_proactive_turn(proactive_trigger_message)
         return {"task_id": task_id, "queued": True}
+
+    def ensure_desktop_screen_allowed(self) -> None:
+        if self._focus_group is not None:
+            raise RuntimeError("主人私聊启用了共享 Focus，不能投递桌面观察")
+        if global_config.agent.planner_enabled and self.session_id in global_config.agent.planner_sessions:
+            raise RuntimeError("当前外部 Planner 不支持私密桌面观察")
+
+    def enqueue_desktop_screen(self, text: str, image: Optional[ImageComponent]) -> None:
+        """暂存最近两批观察；截图不进入聊天历史、附件索引或共享组。"""
+        self.ensure_desktop_screen_allowed()
+        task_id = f"desktop_pet_screen:{uuid.uuid4().hex}"
+        self._prepare_task_enqueue(task_id)
+        self._desktop_screen_observations[:] = [
+            *self._desktop_screen_observations[-1:],
+            InternalContextMessage(
+                raw_message=MessageSequence([TextComponent(text), *([image] if image is not None else [])]),
+                visible_text=text, timestamp=datetime.now(), message_id=task_id, source_kind="desktop_pet_screen",
+            ),
+        ]
+        if not self._desktop_screen_wake_queued:
+            self._desktop_screen_wake_queued = True
+            self._internal_turn_queue.put_nowait("desktop_pet_screen")
+
+    def clear_desktop_screen(self) -> None:
+        self._desktop_screen_observations.clear()
+
+    def desktop_screen_observations(self) -> tuple[InternalContextMessage, ...]:
+        if self._focus_group is not None or not global_config.desktop_pet.screen_read_enabled:
+            return ()
+        if global_config.agent.planner_enabled and self.session_id in global_config.agent.planner_sessions:
+            return ()
+        return tuple(self._desktop_screen_observations)
+
+    def consume_desktop_screen_wake(self) -> Optional[SessionMessage]:
+        self._desktop_screen_wake_queued = False
+        observations = self.desktop_screen_observations()
+        if not observations or observations[-1].message_id is None:
+            return None
+        if any(isinstance(component, ImageComponent) for component in observations[-1].raw_message.components):
+            from src.maisaka.visual.mode_utils import resolve_enable_visual_planner
+
+            if global_config.visual.max_image_num <= 0 or not resolve_enable_visual_planner():
+                return None
+        return self._build_proactive_trigger_message(observations[-1].message_id, "桌宠桌面阅读")
 
     def _prepare_task_enqueue(self, task_id: str) -> SessionMessage:
         """在修改历史前检查运行状态、构建触发消息，并确保普通消费者存活。"""

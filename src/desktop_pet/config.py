@@ -126,6 +126,14 @@ class DesktopPetConfig(ConfigBase):
     )
     """截图和比较画面的频率，独立于模型调用；有效采样间隔不超过时间线投递间隔。"""
 
+    screen_description_timeout_seconds: int = Field(
+        default=45,
+        ge=1,
+        le=300,
+        json_schema_extra=_number("截图识图超时（秒）", **_SCREEN_COLUMN, **{"x-depends-on": "screen_read_enabled"}),
+    )
+    """纯文本 Planner 路径中，等待单批截图描述的最长时间。"""
+
     screen_change_threshold: float = Field(
         default=0.015,
         ge=0.001,

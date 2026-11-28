@@ -3,8 +3,9 @@
 // Real Windows Tauri/WebView2 windows and a synthetic BasicAuth-protected host; no real credentials or desktop capture.
 const assert = require('node:assert/strict');
 const { spawn } = require('node:child_process');
-const { randomUUID } = require('node:crypto');
+const { createHash, randomUUID } = require('node:crypto');
 const { once } = require('node:events');
+const { readFileSync } = require('node:fs');
 const fs = require('node:fs/promises');
 const http = require('node:http');
 const os = require('node:os');
@@ -18,10 +19,16 @@ const BOT_ID = '0123456789abcdef0123456789abcdef';
 const PASSWORD = 'synthetic-tauri-smoke-password';
 const BASIC_USER = 'synthetic-proxy-user', BASIC_PASSWORD = 'synthetic-proxy-password';
 const BASIC = 'Basic ' + Buffer.from(`${BASIC_USER}:${BASIC_PASSWORD}`).toString('base64');
+const SAVED_LOGIN = process.env.PET_SMOKE_BROWSER_LOGIN !== '1';
+const LEGACY_SKIN = process.env.PET_SMOKE_LEGACY_SKIN === '1';
 const BOT_NAME = '冒烟测试麦麦';
 const BASE = `/api/host/bots/${BOT_ID}/proxy/api/webui/desktop-pet/remote`;
 const IMAGE_ID = 'a'.repeat(64);
-const PNG_URL = 'data:image/png;base64,iVBORw0KGgoAAAANSUhEUgAAAAEAAAABCAYAAAAfFcSJAAAACklEQVR42mP4DwABAQEAG7buVgAAAABJRU5ErkJggg==';
+const PNG_URL = 'data:image/png;base64,iVBORw0KGgoAAAANSUhEUgAAAAEAAAABCAYAAAAfFcSJAAAADUlEQVR4nGN4NcntPwAG7gLCsCLTnQAAAABJRU5ErkJggg==';
+const SKIN_IMAGE = readFileSync(path.resolve(PROJECT, '../../src/desktop_pet/presets/orange_sprout/idle-1.webp'));
+const SKIN_DIGEST = createHash('sha256').update(SKIN_IMAGE).digest('hex');
+const EXTRA_SKIN_IMAGE = readFileSync(path.resolve(PROJECT, '../../src/desktop_pet/presets/orange_sprout/thinking-1.webp'));
+const EXTRA_SKIN_DIGEST = createHash('sha256').update(EXTRA_SKIN_IMAGE).digest('hex');
 const id = () => randomUUID().replaceAll('-', '');
 
 async function until(check, label, timeout = 15_000) {
@@ -35,7 +42,10 @@ class HostFixture {
     this.sessions = new Set(); this.sockets = new Set(); this.acks = new Map();
     this.todos = []; this.chats = []; this.writes = []; this.failures = [];
     this.readyCount = 0; this.verifyCount = 0; this.logoutCount = 0; this.forbiddenRequests = 0;
+    this.requiresCustomToken = false; this.authCheckCount = 0;
     this.basicChallenges = 0; this.basicHTTP = 0; this.basicWS = 0; this.connection = null;
+    this.skinDownloads = 0;
+    this.skinPrefetches = 0;
     this.server = http.createServer((request, response) => this.handle(request, response).catch(error => {
       this.failures.push(error);
       if (!response.headersSent) this.json(response, { detail: error.message }, 500); else response.destroy();
@@ -89,18 +99,35 @@ class HostFixture {
     if (pathname.startsWith('/forbidden-')) { this.forbiddenRequests++; return this.json(response, { error: 'must not navigate' }); }
     const chunks = []; for await (const chunk of request) chunks.push(chunk);
     const raw = Buffer.concat(chunks).toString('utf8'), body = raw ? JSON.parse(raw) : {};
-    if (pathname === '/api/webui/auth/check') return this.json(response, { authenticated: this.sessions.has(this.cookie(request)), requires_custom_token: false });
+    if (pathname === '/api/webui/auth/check') {
+      this.authCheckCount++;
+      return this.json(response, { authenticated: this.sessions.has(this.cookie(request)), requires_custom_token: this.requiresCustomToken });
+    }
     if (pathname === '/api/webui/auth/verify') {
       assert.equal(request.method, 'POST'); assert.equal(body.token, PASSWORD); this.verifyCount++;
       const session = id(); this.sessions.add(session);
       response.setHeader('Set-Cookie', `pet-smoke-session=${session}; Path=/; HttpOnly; SameSite=Lax; Max-Age=3600`);
-      return this.json(response, { valid: true, is_first_setup: false, requires_custom_token: false });
+      return this.json(response, { valid: true, is_first_setup: this.requiresCustomToken, requires_custom_token: this.requiresCustomToken });
     }
     const session = this.authenticate(request);
     if (pathname === '/api/webui/auth/logout') { this.logoutCount++; this.sessions.delete(session); return this.json(response, { success: true }); }
     if (pathname === '/api/host/bots') return this.json(response, { bots: [{ bot_id: BOT_ID, name: BOT_NAME, status: 'running' }] });
     assert.ok(pathname.startsWith(BASE + '/'), 'business requests must use the selected Bot proxy');
     assert.equal(request.headers['x-desktop-pet-connection'], this.connection?.id, 'HTTP must bind to the current WS');
+    if (pathname === BASE + '/skins/assets/' + SKIN_DIGEST) {
+      assert.equal(request.method, 'GET'); assert.equal(raw, '');
+      this.skinDownloads++;
+      await delay(700);
+      response.writeHead(200, {'Content-Type': 'image/webp', 'Cache-Control': 'no-store'});
+      response.end(SKIN_IMAGE);
+      return;
+    }
+    if (pathname === BASE + '/skins/assets/' + EXTRA_SKIN_DIGEST) {
+      this.skinPrefetches++;
+      response.writeHead(200, {'Content-Type': 'image/webp', 'Cache-Control': 'no-store'});
+      response.end(EXTRA_SKIN_IMAGE);
+      return;
+    }
     if (pathname === BASE + '/todos/images/' + IMAGE_ID) {
       assert.equal(request.method, 'GET'); assert.equal(raw, ''); return this.json(response, { data_url: PNG_URL });
     }
@@ -123,8 +150,11 @@ class HostFixture {
     }
     if (new RegExp(`^${BASE}/chat/[0-9a-f]{32}$`).test(pathname)) {
       assert.equal(request.method, 'POST'); this.chats.push(body);
-      this.json(response, { accepted: true, request_id: pathname.split('/').at(-1), message_id: 'sent-user' });
-      this.command('reply', { message_id: 'live-reply', sound: 'wood', parts: [{ kind: 'text', text: '来自本机测试服务器的回复' }] }).catch(error => this.failures.push(error)); return;
+      assert.equal(body.conversation_id, undefined);
+      const requestId = pathname.split('/').at(-1);
+      this.json(response, { accepted: true, request_id: requestId, message_id: `sent-${requestId}` });
+      const reply = this.chats.length === 1 ? '来自本机测试服务器的回复' : '重连后的主人私聊回复';
+      this.command('reply', { message_id: `reply-${requestId}`, sound: 'wood', parts: [{ kind: 'text', text: reply }] }).catch(error => this.failures.push(error)); return;
     }
     throw new Error(`Unexpected fixture endpoint: ${request.method} ${pathname}`);
   }
@@ -136,11 +166,12 @@ class HostFixture {
         const event = JSON.parse(raw.toString());
         if (event.type === 'hello') {
           assert.equal(event.version, 1); assert.equal(event.capabilities.screen_read, false, 'smoke must not authorize desktop capture');
+          assert.equal(event.capabilities.chat_binding, undefined);
           this.connection = connection;
           ws.send(JSON.stringify({ type: 'hello', version: 1, connection_id: connection.id, heartbeat_interval: 1, heartbeat_timeout: 5 }));
         } else if (event.type === 'ready') {
           connection.ready = true; this.readyCount++; ws.send(JSON.stringify({ type: 'ready', version: 1 }));
-          this.command('skin', {skin: {id: 'builtin', name: '内置麦麦', animations: {},
+          if (this.readyCount === 1) this.command('skin', {skin: {id: 'builtin', name: '内置麦麦', animations: {},
             canvas: {width:150, height:107, anchor:[75,107], bubble_anchor:[75,0], hitbox:[0,0,150,107]}}})
             .then(ack => assert.equal(ack.error, undefined))
             .catch(error => this.failures.push(error));
@@ -181,58 +212,6 @@ class HostFixture {
   }
 }
 
-// CDP supplies synthetic input to the browser's HTTP auth challenge, never headers, cookies or app password fields.
-class BrowserAuthentication {
-  constructor(socket, origin) { this.socket = socket; this.origin = origin; this.next = 0; this.pending = new Map(); this.sessions = new Map(); this.challenges = 0; this.errors = []; }
-  send(method, params = {}, sessionId) {
-    const request = ++this.next;
-    return new Promise((resolve, reject) => {
-      this.pending.set(request, { resolve, reject });
-      this.socket.send(JSON.stringify({ id: request, method, params, ...(sessionId ? { sessionId } : {}) }));
-    });
-  }
-  async event(message) {
-    const { method, params, sessionId } = message;
-    if (method === 'Target.attachedToTarget') {
-      const session = params.sessionId;
-      this.sessions.set(params.targetInfo.targetId, session);
-      await this.send('Fetch.enable', { handleAuthRequests: true, patterns: [{ urlPattern: this.origin + '/*' }] }, session);
-      await this.send('Runtime.runIfWaitingForDebugger', {}, session);
-    } else if (method === 'Fetch.requestPaused') await this.send('Fetch.continueRequest', { requestId: params.requestId }, sessionId);
-    else if (method === 'Fetch.authRequired') {
-      const expected = new URL(params.request.url).origin === this.origin;
-      if (expected) this.challenges++;
-      await this.send('Fetch.continueWithAuth', { requestId: params.requestId, authChallengeResponse: expected
-        ? { response: 'ProvideCredentials', username: BASIC_USER, password: BASIC_PASSWORD } : { response: 'CancelAuth' } }, sessionId);
-    }
-  }
-  async disableFor(url) {
-    const { targetInfos } = await this.send('Target.getTargets');
-    for (const target of targetInfos) if (target.url === url && this.sessions.has(target.targetId)) {
-      await this.send('Fetch.disable', {}, this.sessions.get(target.targetId));
-    }
-  }
-  static async connect(endpoint, origin) {
-    const version = await (await fetch(endpoint + '/json/version')).json();
-    const socket = new WebSocket(version.webSocketDebuggerUrl); await once(socket, 'open');
-    const auth = new BrowserAuthentication(socket, origin);
-    socket.on('message', raw => {
-      const message = JSON.parse(raw);
-      if (message.id) {
-        const request = auth.pending.get(message.id); auth.pending.delete(message.id);
-        if (message.error) request?.reject(new Error(message.error.message)); else request?.resolve(message.result);
-      } else auth.event(message).catch(error => {
-        if (!/closed|No session|No resource|Invalid InterceptionId|Target.*not found/i.test(error.message)) auth.errors.push(error);
-      });
-    });
-    socket.on('close', () => { for (const request of auth.pending.values()) request.reject(new Error('CDP closed')); auth.pending.clear(); });
-    await auth.send('Target.setAutoAttach', { autoAttach: true, waitForDebuggerOnStart: true, flatten: true,
-      filter: [{ type: 'page' }, { exclude: true }] });
-    return auth;
-  }
-  close() { this.socket.close(); }
-}
-
 async function freePort() {
   const server = http.createServer(); server.listen(0, '127.0.0.1'); await once(server, 'listening');
   const port = server.address().port; await new Promise(resolve => server.close(resolve)); return port;
@@ -263,7 +242,7 @@ async function executable() {
   }
   throw new Error('Build Tauri first or set PET_EXECUTABLE to the built application');
 }
-async function launch(fixture, temporary, pageErrors) {
+async function launch(temporary, pageErrors) {
   const shared = process.env.PET_SMOKE_SHARED_PROFILE === '1';
   const port = shared ? await freePort() : 0;
   const directory = path.join(temporary, 'settings');
@@ -275,41 +254,28 @@ async function launch(fixture, temporary, pageErrors) {
   if (shared) env.WEBVIEW2_USER_DATA_FOLDER = path.join(temporary, 'webview2');
   const child = spawn(await executable(), [], { cwd: PROJECT, windowsHide: true, stdio: ['ignore', 'pipe', 'pipe'], env });
   let output = '', launchError, closing = false, poll, scanning;
-  const browsers = new Map(), attaching = new Set(), backgroundErrors = [];
-  const pages = () => [...browsers.values()].flatMap(({ browser }) => browser.contexts().flatMap(context => context.pages()));
-  const authentication = {
-    get challenges() { return [...browsers.values()].reduce((n, item) => n + item.authentication.challenges, 0); },
-    get errors() { return backgroundErrors.concat([...browsers.values()].flatMap(item => item.authentication.errors)); },
-    async disableFor(url) { for (const item of browsers.values()) await item.authentication.disableFor(url); },
-  };
+  const browsers = new Map(), backgroundErrors = [];
+  const pages = () => [...browsers.values()].flatMap(browser => browser.contexts().flatMap(context => context.pages()));
   child.on('error', error => { launchError = error; });
   for (const pipe of [child.stdout, child.stderr]) pipe.on('data', data => { output = (output + data.toString()).slice(-65536); });
   async function scan() {
     if (closing || scanning) return scanning;
     scanning = (async () => {
       const endpoints = shared ? [{ endpoint: `http://127.0.0.1:${port}`, filename: '' }] : await debugEndpoints(directory);
-      for (const { endpoint, filename } of endpoints) {
-        if (closing || browsers.has(endpoint) || attaching.has(endpoint)) continue;
+      for (const { endpoint } of endpoints) {
+        if (closing || browsers.has(endpoint)) continue;
         try { if (!(await fetch(endpoint + '/json/version', { signal: AbortSignal.timeout(500) })).ok) continue; } catch { continue; }
-        attaching.add(endpoint);
         try {
-          const auth = await BrowserAuthentication.connect(endpoint, fixture.url);
-          const browser = await chromium.connectOverCDP(endpoint);
-          if (closing) { auth.close(); await browser.close(); continue; }
+          const browser = await chromium.connectOverCDP(endpoint, {timeout: 2000});
+          if (closing) { await browser.close(); continue; }
           const watch = page => page.on('pageerror', error => pageErrors.push(error.message));
           for (const context of browser.contexts()) { context.setDefaultTimeout(15_000); context.on('page', watch); context.pages().forEach(watch); }
-          browsers.set(endpoint, { browser, authentication: auth, filename });
-          if (!shared && filename.includes('web-sessions')) {
-            // This browser process starts only when the auth WebView is created. If its initial
-            // challenge preceded CDP attachment, retry that navigation after enabling Fetch auth.
-            for (const page of browser.contexts().flatMap(context => context.pages())) {
-              const initialized = await page.evaluate(() => Boolean(window.__petTransport)).catch(() => false);
-              if (!initialized) page.goto(fixture.url + '/auth').catch(error => {
-                if (!/interrupted|closed|aborted|ERR_ABORTED/i.test(error.message) && !closing) backgroundErrors.push(error);
-              });
-            }
-          }
-        } finally { attaching.delete(endpoint); }
+          browsers.set(endpoint, browser);
+          browser.once('disconnected', () => browsers.delete(endpoint));
+        } catch (error) {
+          // A rejected native login can close a WebView while CDP is attaching.
+          if (!/closed|ECONNREFUSED|timeout|socket hang up/i.test(error.message)) throw error;
+        }
       }
     })().finally(() => { scanning = null; });
     return scanning;
@@ -321,36 +287,70 @@ async function launch(fixture, temporary, pageErrors) {
       await scan(); return browsers.size > 0;
     }, 'WebView2 remote debugging endpoint', 30_000);
     poll = setInterval(() => scan().catch(error => { if (!closing) backgroundErrors.push(error); }), 100);
-    return { child, authentication, pages, output: () => output, profileCount: () => browsers.size,
+    return { child, backgroundErrors, pages, output: () => output, profileCount: () => browsers.size,
       async close() {
         closing = true; clearInterval(poll);
         const pet = pages().find(page => { try { return new URL(page.url()).pathname === '/pet/index.html'; } catch { return false; } });
         if (pet) await pet.evaluate(() => window.desktopPetBridge.api.exit_client()).catch(() => {});
         if (child.exitCode === null) await Promise.race([once(child, 'exit'), delay(5000)]);
         if (child.exitCode === null) child.kill();
-        for (const item of browsers.values()) { item.authentication.close(); await item.browser.close().catch(() => {}); }
+        for (const browser of browsers.values()) await browser.close().catch(() => {});
         await scanning?.catch(() => {});
         if (child.exitCode === null) await Promise.race([once(child, 'exit'), delay(3000)]);
       },
     };
   } catch (error) {
     closing = true; clearInterval(poll); child.kill();
-    for (const item of browsers.values()) { item.authentication.close(); await item.browser.close().catch(() => {}); }
+    for (const browser of browsers.values()) await browser.close().catch(() => {});
     throw new Error(`${error.message}\n${output}`);
   }
 }
 const localPage = (app, pathname) => app.pages().find(page => {
   try { const url = new URL(page.url()); return url.hostname === 'tauri.localhost' && url.pathname === pathname; } catch { return false; }
 });
-async function connectClient(app, fixture, firstLogin) {
+async function connectClient(app, fixture, firstLogin, expectSaveWarning = false) {
   const login = await until(() => localPage(app, '/login/login.html'), 'local login window');
   await login.waitForFunction(() => window.desktopPetBridge && document.querySelector('#server')?.value);
-  assert.equal(await login.locator('input[type=password]').count(), 0, 'desktop form must never ask for a password');
-  await login.locator('#server').fill(fixture.url); await login.locator('#connect').click();
-  const auth = await until(() => app.pages().find(page => page.url().startsWith(fixture.url + '/')), 'remote authentication window');
-  if (firstLogin) { await auth.locator('#webui-password').fill(PASSWORD); await auth.locator('#webui-login button').click(); }
+  const credentialStatus = login.locator('#credential-status');
+  if (!firstLogin) {
+    await credentialStatus.filter({hasText: SAVED_LOGIN ? /^已加密保存：Nginx、WebUI$/ : /^已加密保存：Nginx$/}).waitFor({timeout: 5000});
+    assert.equal(await login.locator('#basic-password').inputValue(), '');
+    assert.equal(await login.locator('#webui-token').inputValue(), '');
+    await login.locator('#server').fill('http://127.0.0.1:1');
+    await credentialStatus.waitFor({state: 'hidden'});
+  }
+  await login.locator('#server').fill(fixture.url);
+  if (!firstLogin) {
+    await credentialStatus.waitFor({state: 'visible'});
+    if (process.env.PET_KEEP_ARTIFACTS === '1') await login.locator('main').screenshot({ path: path.join(fixture.artifactDirectory, 'saved-credentials.png') });
+  }
+  if (firstLogin) {
+    await login.locator('#connect').click();
+    // The first HTTP 401 must return to the app-owned form without CDP or a native modal.
+    await login.getByText('服务器要求 Nginx 登录', {exact: false}).waitFor({timeout: 8000});
+    await login.locator('#basic-user').fill(BASIC_USER);
+    await login.locator('#basic-password').fill('synthetic-invalid-password');
+    await login.locator('#connect').click();
+    await login.getByText('Nginx 未接受', {exact: false}).waitFor({timeout: 8000});
+    assert.equal(await login.locator('#basic-password').inputValue(), '', 'clear a rejected password');
+    await login.locator('#basic-password').fill(BASIC_PASSWORD);
+    if (SAVED_LOGIN) await login.locator('#webui-token').fill(PASSWORD);
+  }
+  await login.locator('#connect').click();
+  if (!SAVED_LOGIN && firstLogin) {
+    const auth = await until(() => app.pages().find(page => page.url() === fixture.url + '/auth'), 'remote WebUI login');
+    await auth.locator('#webui-password').fill(PASSWORD);
+    await auth.locator('#webui-login button').click();
+  }
+  if (expectSaveWarning) {
+    await login.getByText('登录成功，但未能加密保存 WebUI 凭据。').waitFor({timeout: 8000});
+    await credentialStatus.filter({hasText: /^已加密保存：Nginx$/}).waitFor();
+    assert.equal(await login.locator('#bot').inputValue(), BOT_ID);
+    await login.getByRole('button', {name: '启动桌宠'}).click();
+  }
   const pet = await until(() => localPage(app, '/pet/index.html'), 'pet window', 25_000);
   await pet.locator('#remote-indicator[data-connected="true"]').waitFor();
+  const auth = await until(() => app.pages().find(page => page.url() === fixture.url + '/api/host/desktop-pet/session'), 'authenticated transport window');
   assert.equal(new URL(auth.url()).pathname, '/api/host/desktop-pet/session', 'authenticated transport must use the lightweight session page');
   if (process.env.PET_SMOKE_SHARED_PROFILE !== '1') assert.ok(app.profileCount() >= 2, 'local and remote must use separate WebView2 profiles');
   return { pet, auth };
@@ -373,9 +373,6 @@ async function isolation(app, auth, pet, fixture) {
   assert.match(nonceDenied, /不匹配|not allowed|denied/i);
   assert.equal(await auth.evaluate(() => document.cookie.includes('pet-smoke-session')), false, 'session must remain HttpOnly');
   const original = pet.url();
-  // Request interception can advance a navigation before the native NavigationStarting cancellation.
-  // Local windows never need proxy credentials, so remove the test interceptor before testing navigation.
-  await app.authentication.disableFor(original);
   await pet.evaluate(url => { window.location.assign(url); }, fixture.url + '/forbidden-navigation').catch(() => {});
   await delay(150); assert.equal(pet.url(), original, 'native navigation denial must prevent remote document commit');
   // WebView2 can issue the initial network request before denying the navigation. The URL is
@@ -383,19 +380,28 @@ async function isolation(app, auth, pet, fixture) {
 }
 function skin() {
   return { schema_version: 1, id: 'smoke.skin', name: '测试声明式皮肤', version: '1',
-    canvas: { width: 150, height: 107, anchor: [75, 107], bubble_anchor: [75, 0], hitbox: [0, 0, 150, 107] },
-    resources: { 'pixel.png': PNG_URL }, states: { idle: 'idle', thinking: 'idle', talking: 'idle', dragging: 'idle' },
-    events: {}, animations: { idle: { duration_ms: 1000, motion: 'bob', sequence: [{ file: 'pixel.png', rect: [0, 0, 1, 1], duration_ms: 1000 }] } } };
+    canvas: { width: 220, height: 240, anchor: [110, 240], bubble_anchor: [110, 22], hitbox: [36, 32, 148, 204] },
+    resources: { 'idle.webp': SKIN_DIGEST, 'thinking.webp': EXTRA_SKIN_DIGEST }, states: { idle: 'idle', thinking: 'idle', talking: 'idle', dragging: 'idle' },
+    events: {}, animations: { idle: { duration_ms: 1000, motion: 'bob', sequence: [{ file: 'idle.webp', rect: [0, 0, 330, 360], duration_ms: 1000 }] } } };
+}
+function skinPayload(manifest = skin()) {
+  if (!LEGACY_SKIN) return {skin: manifest, skin_assets: true};
+  return {skin: {...manifest, resources: {
+    'idle.webp': 'data:image/webp;base64,' + SKIN_IMAGE.toString('base64'),
+    'thinking.webp': 'data:image/webp;base64,' + EXTRA_SKIN_IMAGE.toString('base64'),
+  }}};
 }
 async function run() {
   if (process.platform !== 'win32') throw new Error('This smoke validates Windows WebView2; run it on Windows');
   const temporary = await fs.mkdtemp(path.join(os.tmpdir(), 'maibot-tauri-smoke-'));
   const keep = process.env.PET_KEEP_ARTIFACTS === '1', fixture = new HostFixture(), pageErrors = [];
+  fixture.artifactDirectory = temporary;
   let app, passed = false;
   try {
-    await fixture.start(); app = await launch(fixture, temporary, pageErrors);
+    await fixture.start(); app = await launch(temporary, pageErrors);
     let { pet, auth } = await connectClient(app, fixture, true);
-    assert.equal(fixture.verifyCount, 1); assert.ok(app.authentication.challenges > 0);
+    assert.equal(fixture.verifyCount, 1);
+    assert.ok(fixture.basicChallenges > 0, 'reverse proxy must actually challenge the client');
     console.log('Tauri WebUI login passed through HTTP Basic authentication.');
     await pet.locator('#builtin-pet').waitFor({state: 'visible'});
     // Tauri adds style hashes to CSP; without style-src-attr, existing inline styles are ignored.
@@ -412,9 +418,44 @@ async function run() {
       await once(process.stdin, 'data');
       process.stdin.pause();
     }
-    const installed = await fixture.command('skin', { skin: skin() });
+    const installing = fixture.command('skin', skinPayload());
+    if (!LEGACY_SKIN) {
+      await pet.locator('#skin-loading').waitFor({state: 'visible', timeout: 500});
+      assert.equal(await pet.locator('#builtin-pet').isVisible(), true, 'keep the previous pet while loading');
+      assert.equal(await pet.locator('#skin-loading-ring').evaluate(el => getComputedStyle(el).animationName), 'skin-loading-spin');
+      if (keep) await pet.screenshot({ path: path.join(temporary, 'skin-loading.png'), omitBackground: true });
+    }
+    const installed = await installing;
+    await pet.locator('#skin-loading').waitFor({state: 'hidden'});
     assert.equal(installed.error, undefined); assert.equal(installed.result.id, 'smoke.skin');
-    const info = await fixture.command('animation', { action: 'get_skin', args: {}, owner: 'smoke' }); assert.equal(info.result.id, 'smoke.skin');
+    const firstFrame = await pet.locator('#skin-canvas').evaluate(canvas => {
+      const box = canvas.getBoundingClientRect();
+      const pixel = canvas.getContext('2d').getImageData(Math.floor(canvas.width / 2), Math.floor(canvas.height / 2), 1, 1).data;
+      return {box: box.toJSON(), width: canvas.width, viewport: [innerWidth, innerHeight], devicePixelRatio, pixel: [...pixel]};
+    });
+    assert.ok(firstFrame.box.left >= 0 && firstFrame.box.right <= firstFrame.viewport[0]
+      && firstFrame.box.top >= 0 && firstFrame.box.bottom <= firstFrame.viewport[1], JSON.stringify(firstFrame));
+    assert.equal(firstFrame.width, Math.round(firstFrame.box.width * Math.min(4, firstFrame.devicePixelRatio)));
+    assert.ok(firstFrame.pixel[3] !== 0, 'downloaded frame must not be blank');
+    if (keep) await pet.screenshot({ path: path.join(temporary, 'skin-preview.png'), omitBackground: true });
+    assert.equal(fixture.skinDownloads, LEGACY_SKIN ? 0 : 1);
+    const cached = await fixture.command('skin', skinPayload({...skin(), id: 'smoke.cached'}));
+    assert.equal(cached.result?.id, 'smoke.cached');
+    assert.equal(fixture.skinDownloads, LEGACY_SKIN ? 0 : 1, 'switching to an already downloaded image must use the local cache');
+    if (!LEGACY_SKIN) {
+      await until(async () => {
+        try {
+          const asset = await pet.evaluate(digest => window.desktopPetBridge.api.skin_asset(digest, false, true), EXTRA_SKIN_DIGEST);
+          assert.ok(asset.startsWith('data:image/webp;base64,'));
+          return true;
+        } catch (error) {
+          if (!error.message.includes('本机没有该皮肤图片')) throw error;
+          return false;
+        }
+      }, 'background skin asset written to local cache');
+      assert.equal(fixture.skinPrefetches, 1);
+    }
+    const info = await fixture.command('animation', { action: 'get_skin', args: {}, owner: 'smoke' }); assert.equal(info.result.id, 'smoke.cached');
     const geometry = await pet.evaluate(() => ({ width: innerWidth, height: innerHeight, outerWidth, outerHeight, devicePixelRatio,
       visualScale: visualViewport.scale, screen: { width: screen.width, height: screen.height, availWidth: screen.availWidth, availHeight: screen.availHeight } }));
     console.log('Window geometry:', JSON.stringify(geometry));
@@ -464,20 +505,85 @@ async function run() {
     await pet.locator('#remote-indicator[data-connected="true"]').waitFor(); assert.notEqual(fixture.connection.id, previousConnection);
     assert.equal((await pet.evaluate(() => window.desktopPetBridge.api.todos(true))).length, 1);
     assert.equal(fixture.chats.length, 1); assert.equal(fixture.writes.length, 3);
+    await openPanel(pet, '#orb-chat', 'chat');
+    await pet.getByText('历史回复 29', {exact: true}).waitFor();
+    await pet.locator('#chat-input').fill('重连后发给主人私聊');
+    await pet.locator('#chat-input').press('Enter');
+    await until(() => fixture.chats.length === 2, 'owner chat submission after reconnect');
+    assert.equal(fixture.chats[1].text, '重连后发给主人私聊');
+    await pet.getByText('重连后的主人私聊回复', { exact: true }).waitFor();
     if (keep) { await pet.screenshot({ path: path.join(temporary, 'pet.png') }); await records.screenshot({ path: path.join(temporary, 'records.png') }); }
-    await isolation(app, auth, pet, fixture); assert.deepEqual(app.authentication.errors.map(error => error.message), []);
+    await isolation(app, auth, pet, fixture); assert.deepEqual(app.backgroundErrors.map(error => error.message), []);
     await app.close(); app = null; await delay(1000);
+    if (SAVED_LOGIN) fixture.sessions.clear(); // Force a new WebUI login, not just cookie reuse.
     // Relaunch the same synthetic profile; the WebUI password is not supplied a second time.
-    app = await launch(fixture, temporary, pageErrors); ({ pet, auth } = await connectClient(app, fixture, false));
-    assert.equal(fixture.verifyCount, 1, 'persistent cookie must avoid a second WebUI password submission'); assert.equal(fixture.logoutCount, 0);
+    app = await launch(temporary, pageErrors); ({ pet, auth } = await connectClient(app, fixture, false));
+    // No skin command has been sent on this connection. The existing skin must be visible already.
+    await pet.locator('#skin-canvas').waitFor({state: 'visible', timeout: 2500});
+    const before = await pet.evaluate(() => window.petSkin.command('get_skin').id);
+    assert.equal(before, 'smoke.cached');
+    const restored = await fixture.command('skin', skinPayload());
+    assert.equal(restored.result?.id, 'smoke.skin');
+    assert.equal(fixture.skinDownloads, LEGACY_SKIN ? 0 : 1, 'restarting the process must not download the same skin again');
+    const prefetched = await pet.evaluate(digest => window.desktopPetBridge.api.skin_asset(digest, false, true), EXTRA_SKIN_DIGEST);
+    assert.ok(prefetched.startsWith('data:image/webp;base64,'));
+    assert.equal(fixture.skinPrefetches, LEGACY_SKIN ? 0 : 1, 'prefetched actions must also be reusable after restart');
+    assert.equal(fixture.verifyCount, SAVED_LOGIN ? 2 : 1, 'restart must authenticate without asking for credentials');
+    assert.equal(fixture.logoutCount, 0);
     assert.equal((await pet.evaluate(() => window.desktopPetBridge.api.todos(true))).length, 1);
     assert.ok(fixture.basicHTTP > 0 && fixture.basicWS >= fixture.readyCount);
     const saved = await fs.readFile(path.join(temporary, 'settings', 'settings.json'), 'utf8');
     for (const secret of [PASSWORD, BASIC_PASSWORD, BASIC, ...fixture.sessions]) assert.ok(!saved.includes(secret), 'settings must not persist browser secrets');
+    if (SAVED_LOGIN) {
+      const profile = createHash('sha256').update(fixture.url).digest('hex');
+      for (const kind of ['nginx', 'webui']) {
+        const encrypted = await fs.readFile(path.join(temporary, 'settings', 'saved-logins', profile, kind));
+        for (const secret of [BASIC_USER, BASIC_PASSWORD, PASSWORD, BASIC]) {
+          assert.ok(!encrypted.includes(secret), 'credential files must not contain plaintext');
+        }
+      }
+    }
     await isolation(app, auth, pet, fixture); assert.deepEqual(fixture.failures.map(error => error.message), []); assert.deepEqual(pageErrors, []);
+    if (SAVED_LOGIN) {
+      await app.close(); app = null;
+      const blocked = path.join(temporary, 'credential-write-failure');
+      const profile = createHash('sha256').update(fixture.url).digest('hex');
+      // The destination is a directory, so saving WebUI must fail after Nginx was saved.
+      await fs.mkdir(path.join(blocked, 'settings', 'saved-logins', profile, 'webui'), {recursive: true});
+      app = await launch(blocked, pageErrors);
+      await connectClient(app, fixture, true, true);
+      assert.deepEqual(fixture.failures.map(error => error.message), []); assert.deepEqual(pageErrors, []);
+      console.log('A WebUI credential write failure was reported without blocking the connection.');
+
+      await app.close(); app = null;
+      const firstSetup = path.join(temporary, 'first-setup-reload');
+      fixture.requiresCustomToken = true;
+      const verifyCount = fixture.verifyCount, authCheckCount = fixture.authCheckCount;
+      app = await launch(firstSetup, pageErrors);
+      const login = await until(() => localPage(app, '/login/login.html'), 'first setup login form');
+      await login.waitForFunction(() => window.desktopPetBridge && document.querySelector('#server')?.value);
+      await login.locator('#server').fill(fixture.url);
+      await login.locator('details').first().evaluate(element => { element.open = true; });
+      await login.locator('#basic-user').fill(BASIC_USER);
+      await login.locator('#basic-password').fill(BASIC_PASSWORD);
+      await login.locator('#webui-token').fill(PASSWORD);
+      await login.locator('#connect').click();
+      const setupPage = await until(() => app.pages().find(page => page.url() === fixture.url + '/auth'), 'first setup WebUI');
+      await until(() => fixture.authCheckCount > authCheckCount, 'session checked after temporary password verification');
+      const checksBeforeReload = fixture.authCheckCount;
+      await setupPage.reload({ waitUntil: 'load' });
+      await until(() => fixture.authCheckCount > checksBeforeReload, 'reloaded WebUI checks the verified session');
+      assert.ok(!localPage(app, '/pet/index.html'), 'discovery must wait for first setup to finish');
+      fixture.requiresCustomToken = false;
+      const reloadedPet = await until(() => localPage(app, '/pet/index.html'), 'pet after first setup and reload');
+      await reloadedPet.locator('#remote-indicator[data-connected="true"]').waitFor();
+      assert.equal(fixture.verifyCount, verifyCount + 1, 'reload must not reuse the temporary password');
+      await assert.rejects(fs.access(path.join(firstSetup, 'settings', 'saved-logins', profile, 'webui')), { code: 'ENOENT' });
+      assert.deepEqual(fixture.failures.map(error => error.message), []); assert.deepEqual(pageErrors, []);
+      console.log('First setup survived an auth page reload without saving the temporary password.');
+    }
     passed = true;
-    console.log('Tauri smoke passed: BasicAuth HTTP/WS, browser login, cross-process cookie reuse, skin, chat, todos, records, consent, IPC isolation, reconnect.');
-    console.log('CDP automates authentication input; the native challenge-dialog appearance is checked separately.');
+    console.log('Tauri smoke passed: BasicAuth HTTP/WS, restart login, skin assets, chat, todos, records, consent, IPC isolation, reconnect.');
   } catch (error) {
     if (app) {
       for (const [index, page] of app.pages().entries()) await page.screenshot({ path: path.join(temporary, `failure-${index}.png`) }).catch(() => {});
@@ -499,4 +605,4 @@ async function run() {
   }
 }
 if (require.main === module) run().catch(error => { console.error(error); process.exitCode = 1; });
-module.exports = { HostFixture, BrowserAuthentication };
+module.exports = { HostFixture };

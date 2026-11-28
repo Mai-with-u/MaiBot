@@ -2,7 +2,7 @@ const {test} = require('node:test');
 const assert = require('node:assert/strict');
 const fs = require('node:fs');
 const vm = require('node:vm');
-function setup() {
+function setup({decode = () => Promise.resolve(), dpr = 1} = {}) {
   let now = 0, callback;
   const element = () => {
     const draws = [], stack = [];
@@ -13,14 +13,96 @@ function setup() {
       restore(){[this.globalAlpha,this.globalCompositeOperation]=stack.pop()}};
     return {draws, style: {setProperty(){}}, dataset: {}, querySelectorAll(){return []}, classList: {values: new Set(), add(n){this.values.add(n)}, remove(n){this.values.delete(n)}, contains(n){return this.values.has(n)}}, getContext: () => ctx};
   };
-  const elements = Object.fromEntries(['stage','pet','builtin-pet','skin-canvas'].map(id => [id, element()]));
-  const context = {document:{getElementById:id=>elements[id],createElement:element}, window:{dispatchEvent(){}}, Event:class{}, Image:class {async decode(){}}, performance:{now:()=>now}, requestAnimationFrame:f=>{callback=f}, crypto:require('node:crypto').webcrypto};
+  const elements = Object.fromEntries(['stage','pet','builtin-pet','skin-canvas','skin-loading'].map(id => [id, element()]));
+  elements['skin-loading'].hidden = true;
+  const context = {document:{getElementById:id=>elements[id],createElement:element}, window:{dispatchEvent(){},devicePixelRatio:dpr}, Event:class{}, Image:class {decode(){return decode(this.src)}}, performance:{now:()=>now}, requestAnimationFrame:f=>{callback=f}, setTimeout, clearTimeout, crypto:require('node:crypto').webcrypto};
   vm.runInNewContext(fs.readFileSync('src/desktop_pet/web/alpha-region.js','utf8'),context);
   vm.runInNewContext(fs.readFileSync('src/desktop_pet/web/skin.js','utf8'),context);
   const frame={file:'image',rect:[0,0,100,100],duration_ms:1000};
   const skin={id:'custom',name:'test',version:'1',canvas:{width:128,height:128,anchor:[64,128],bubble_anchor:[64,0],hitbox:[0,0,128,128]}, resources:{image:'data:'},animations:{idle:{duration_ms:1000,sequence:[frame]},wave:{duration_ms:1000,sequence:[frame]}},states:{idle:'idle',thinking:'idle',talking:'idle',dragging:'idle'},events:{greeting:'wave'}};
   return {api:context.window.petSkin, skin, elements, tick:t=>{now=t;callback(t)}};
 }
+test('switch displays the first frame without waiting for unrelated assets, at display resolution', async () => {
+  const fetched = [];
+  const {api,skin,elements} = setup({dpr: 2.5});
+  skin.resources = {image:'a'.repeat(64), action:'b'.repeat(64)};
+  skin.animations.wave.sequence = [{...skin.animations.idle.sequence[0], file:'action'}];
+  await api.install(skin, async id => {
+    fetched.push(id);
+    return 'data:image/png;base64,' + id;
+  });
+  assert.deepEqual(fetched, ['a'.repeat(64)]);
+  assert.equal(elements['skin-canvas'].width, 320);
+  assert.equal(elements['skin-canvas'].draws.length, 1);
+});
+test('after the first frame is displayed, the rest of the skin is prefetched once', async () => {
+  const {api, skin} = setup();
+  const first = 'a'.repeat(64), secondary = 'b'.repeat(64);
+  skin.resources = {image: first, action: secondary, duplicate: secondary};
+  const calls = [];
+  await api.install(skin, async digest => {
+    calls.push(['display', digest]);
+    return 'data:image/png;base64,' + digest;
+  }, async digest => {
+    assert.equal(api.command('get_skin').id, skin.id);
+    calls.push(['prefetch', digest]);
+  });
+  await new Promise(resolve => setImmediate(resolve));
+  assert.deepEqual(calls, [['display', first], ['prefetch', secondary]]);
+});
+test('a temporarily failed lazy asset retries after backoff and stays deduplicated after success', async () => {
+  const {api, skin, elements, tick} = setup();
+  const first = 'a'.repeat(64), secondary = 'b'.repeat(64);
+  skin.resources = {image: first, action: secondary};
+  skin.animations.wave.duration_ms = 5000;
+  skin.animations.wave.sequence = [{...skin.animations.idle.sequence[0], file: 'action'}];
+  const calls = [];
+  let resolveRetry;
+  await api.install(skin, async digest => {
+    calls.push(digest);
+    if (digest === secondary) {
+      const attempts = calls.filter(item => item === secondary).length;
+      if (attempts === 1) throw new Error('temporary network failure');
+      if (attempts === 2) return new Promise(resolve => { resolveRetry = resolve; });
+    }
+    return 'data:image/png;base64,' + digest;
+  });
+
+  api.command('play_animation', {name: 'wave', repeat: 1}, 'test');
+  tick(0);
+  await new Promise(resolve => setImmediate(resolve));
+  assert.deepEqual(calls, [first, secondary]);
+
+  tick(100);
+  await new Promise(resolve => setImmediate(resolve));
+  assert.deepEqual(calls, [first, secondary]);
+
+  tick(1000);
+  tick(1001);
+  assert.deepEqual(calls, [first, secondary, secondary]);
+  resolveRetry('data:image/png;base64,' + secondary);
+  await new Promise(resolve => setImmediate(resolve));
+  tick(1002);
+  const lastDraw = elements['skin-canvas'].draws.at(-1);
+  assert.equal(lastDraw?.args[0].src, 'data:image/png;base64,' + secondary);
+
+  tick(1100);
+  await new Promise(resolve => setImmediate(resolve));
+  assert.deepEqual(calls, [first, secondary, secondary]);
+});
+test('a failed download hides the spinner and preserves the previous skin', async () => {
+  const {api, skin, elements} = setup();
+  await api.install(skin);
+  let rejectAsset;
+  const pending = api.install({...skin, id: 'new'}, () => new Promise((_, reject) => { rejectAsset = reject; }));
+  await new Promise(resolve => setTimeout(resolve, 150));
+  assert.equal(elements['skin-loading'].hidden, false);
+  assert.equal(api.command('get_skin').id, skin.id);
+  rejectAsset(new Error('asset unavailable'));
+  await assert.rejects(pending, /asset unavailable/);
+  assert.equal(elements['skin-loading'].hidden, true);
+  assert.equal(api.command('get_skin').id, skin.id);
+});
 test('ownership, replacement, status, preemption and hidden window',async()=>{
  const {api,skin,elements,tick}=setup();await api.install(skin);
  const first=api.command('play_event',{event:'greeting'},'a');assert.equal(first.status,'playing');

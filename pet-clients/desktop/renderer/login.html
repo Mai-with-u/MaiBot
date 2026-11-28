@@ -13,6 +13,16 @@
     <form id="connection">
       <label for="server">服务器地址</label>
       <input id="server" type="url" placeholder="http://127.0.0.1:8001" required spellcheck="false" autocomplete="url">
+      <details id="credentials" hidden>
+        <summary>登录凭据 <span id="credential-status" role="status" hidden></span></summary>
+        <label for="basic-user">Nginx 用户名（如有）</label>
+        <input id="basic-user" maxlength="4096" autocomplete="off" spellcheck="false">
+        <label for="basic-password">Nginx 密码</label>
+        <input id="basic-password" type="password" maxlength="4096" autocomplete="off">
+        <label for="webui-token">WebUI 密码</label>
+        <input id="webui-token" type="password" maxlength="4096" autocomplete="off">
+        <button id="forget-credentials" type="button">忘记此服务器的凭据</button>
+      </details>
       <div id="bot-field" hidden>
         <label for="bot">机器人</label>
         <select id="bot" required disabled><option value="">请选择机器人</option></select>

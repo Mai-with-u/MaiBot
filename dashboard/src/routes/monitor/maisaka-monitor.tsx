@@ -2040,6 +2040,13 @@ export function TimelineEventRenderer({
     case 'planner.finalized':
     case 'planner.progress': {
       const data = entry.data as PlannerFinalizedEvent
+      if (data.private_screen_tool_names !== undefined) {
+        return data.private_screen_tool_names.length > 0 ? (
+          <div className="text-muted-foreground font-mono text-xs break-words">
+            {data.private_screen_tool_names.join(' · ')}
+          </div>
+        ) : null
+      }
       const endDetail = data.final_state.end_detail
       if (isPlannerInterrupted(data)) {
         return <PlannerInterruptedCard data={data} />
@@ -2177,7 +2184,12 @@ const MonitorTimeline = memo(function MonitorTimeline({
 
   // 展开状态放在虚拟列表外，屏外轮次重新挂载时仍保留用户选择。
   const [roundExpansion, setRoundExpansion] = useState<{ all: boolean; entries: Record<string, boolean> }>({ all: true, entries: {} })
-  const allRoundsExpanded = timeline.filter(entry => entry.type === 'planner.finalized' || entry.type === 'planner.progress' || (entry.type === 'flow.step' && (entry.data as FlowStepEvent).step === 'context.trimmed')).every(entry => roundExpansion.entries[entry.id] ?? roundExpansion.all)
+  const allRoundsExpanded = timeline.filter(entry => {
+    if (entry.type === 'planner.finalized' || entry.type === 'planner.progress') {
+      return (entry.data as PlannerFinalizedEvent).private_screen_tool_names === undefined
+    }
+    return entry.type === 'flow.step' && (entry.data as FlowStepEvent).step === 'context.trimmed'
+  }).every(entry => roundExpansion.entries[entry.id] ?? roundExpansion.all)
   const scrollRef = useRef<HTMLDivElement>(null)
   const [scrollViewport, setScrollViewport] = useState<HTMLDivElement | null>(null)
   const [timelineElement, setTimelineElement] = useState<HTMLDivElement | null>(null)
@@ -2329,6 +2341,13 @@ const MonitorTimeline = memo(function MonitorTimeline({
       }
 
       if (entry.type === 'planner.response' || entry.type === 'planner.finalized' || entry.type === 'planner.progress') {
+        if (entry.type !== 'planner.response') {
+          const privateToolNames = (entry.data as PlannerFinalizedEvent).private_screen_tool_names
+          if (privateToolNames !== undefined) {
+            if (privateToolNames.length > 0) visibleEntries.push(entry)
+            continue
+          }
+        }
         const data = entry.data as PlannerResponseEvent | PlannerFinalizedEvent
         const cycleKey = buildCycleKey(data.session_id, data.cycle_id)
         if (
@@ -2380,9 +2399,11 @@ const MonitorTimeline = memo(function MonitorTimeline({
       if (entry.type === 'planner.progress' || entry.type === 'planner.finalized') return entry
     }
   }, [timeline])
+  const latestPlannerSnapshot = latestPlannerEntry?.data as PlannerFinalizedEvent | undefined
+  const privatePlanner = latestPlannerSnapshot?.private_screen_tool_names !== undefined
+  const latestPlannerData = privatePlanner ? undefined : latestPlannerSnapshot
   const activeWaitUntil =
-    selectedStageStatus?.agentState === 'wait' ? selectedStageStatus.waitUntil : undefined
-  const latestPlannerData = latestPlannerEntry?.data as PlannerFinalizedEvent | undefined
+    !privatePlanner && selectedStageStatus?.agentState === 'wait' ? selectedStageStatus.waitUntil : undefined
   // 工具是否在执行由当前调用 ID 决定，不依赖工具名或阶段文案（Replyer 会覆盖阶段名称）。
   const activeToolCallId = selectedStageStatus?.agentState === 'wait'
     ? latestPlannerData?.tools.find((tool) => isWaitTool(tool.tool_name))?.tool_call_id
@@ -2663,6 +2684,7 @@ const MonitorTimeline = memo(function MonitorTimeline({
 
       currentStats.cycles += 1
       const finalized = entry.data as PlannerFinalizedEvent
+      if (finalized.private_screen_tool_names !== undefined) continue
       currentStats.toolCalls += finalized.tools?.length ?? 0
       const planner = finalized.planner
       if (!planner) {
@@ -2715,7 +2737,9 @@ const MonitorTimeline = memo(function MonitorTimeline({
       onScrollToTop={scrollToTop}
       onScrollToBottom={scrollToBottom}
       stats={stats}
-      status={selectedStageStatus}
+      status={privatePlanner && selectedStageStatus?.waitUntil !== undefined
+        ? { ...selectedStageStatus, waitUntil: undefined }
+        : selectedStageStatus}
       hideStatus={executingTool}
     />
   )
@@ -2831,24 +2855,26 @@ const MonitorTimeline = memo(function MonitorTimeline({
           </div>
           </TimelineScrollPosition>
         </ScrollArea>
-        <AnimatePresence>
-          {executingTool && !activeToolVisible && selectedStageStatus && (
-            <motion.div
-              key="current-tool-status"
-              initial={motionEnabled ? { opacity: 0, y: motionProfile.distances.overlayY * 2 } : false}
-              animate={{ opacity: 1, y: 0 }}
-              exit={
-                motionEnabled
-                  ? { opacity: 0, y: motionProfile.distances.overlayY, transition: motionTransitions.exit }
-                  : undefined
-              }
-              transition={motionTransitions.overlay}
-              className="pointer-events-none absolute right-4 bottom-3 left-4 z-20 flex justify-center"
-            >
-              <FloatingToolStatus key={activeToolCallId} status={selectedStageStatus} args={activeToolArgs} />
-            </motion.div>
-          )}
-        </AnimatePresence>
+        {!privatePlanner && (
+          <AnimatePresence>
+            {executingTool && !activeToolVisible && selectedStageStatus && (
+              <motion.div
+                key="current-tool-status"
+                initial={motionEnabled ? { opacity: 0, y: motionProfile.distances.overlayY * 2 } : false}
+                animate={{ opacity: 1, y: 0 }}
+                exit={
+                  motionEnabled
+                    ? { opacity: 0, y: motionProfile.distances.overlayY, transition: motionTransitions.exit }
+                    : undefined
+                }
+                transition={motionTransitions.overlay}
+                className="pointer-events-none absolute right-4 bottom-3 left-4 z-20 flex justify-center"
+              >
+                <FloatingToolStatus key={activeToolCallId} status={selectedStageStatus} args={activeToolArgs} />
+              </motion.div>
+            )}
+          </AnimatePresence>
+        )}
       </DataPanel>
       {/* 上下文统计、子代理与事项共用的检查器右侧栏 */}
       <InspectorPanel stats={stats} sessionId={selectedSession} />

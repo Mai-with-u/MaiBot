@@ -315,6 +315,7 @@ export interface PlannerFinalizedEvent {
   request: MaisakaRequestBlock | null
   planner: MaisakaPlannerBlock | null
   tools: MaisakaFinalizedToolResult[]
+  private_screen_tool_names?: string[]
   active_tool_call_id?: string
   interrupted?: boolean
   final_state: {

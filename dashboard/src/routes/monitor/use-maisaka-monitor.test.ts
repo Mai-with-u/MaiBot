@@ -1416,6 +1416,21 @@ describe('历史分页', () => {
     })
   })
 
+  it('keeps the latest private screen names when replaying an older Planner snapshot', async () => {
+    const view = await mountMonitor(await importHookModule())
+    const planner = { session_id: 'session-a', run_id: 'r', cycle_id: 1, timestamp: 100, tools: [] }
+    emitMonitorEvent('planner.progress', { ...planner, event_id: 303, private_screen_tool_names: ['wait'] })
+    emitMonitorEvent('planner.finalized', { ...planner, event_id: 305, private_screen_tool_names: [] })
+    emitMonitorEvent('planner.progress', { ...planner, event_id: 301 })
+
+    expect(view.result.current.timeline).toHaveLength(1)
+    expect(view.result.current.timeline[0]).toMatchObject({
+      id: 'evt_301',
+      type: 'planner.finalized',
+      data: { event_id: 305, private_screen_tool_names: [] },
+    })
+  })
+
   it('重连后最新一页接不上断线前的条目时丢弃旧条目，接得上则合并', async () => {
     const view = await mountMonitor(await importHookModule())
     emitMonitorEvent('message.ingested', makeMessageData({ event_id: 10, message_id: 'm10' }))

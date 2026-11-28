@@ -1,9 +1,10 @@
 """Maisaka 对话循环服务。"""
 
+from contextlib import nullcontext
 from copy import deepcopy
-from dataclasses import dataclass
+from dataclasses import dataclass, field
 from datetime import datetime
-from typing import Any, Dict, List, Optional, Sequence
+from typing import Any, Callable, Dict, List, Optional, Sequence
 
 import asyncio
 import time
@@ -13,7 +14,7 @@ from rich.console import RenderableType
 from src.chat.message_receive.chat_manager import chat_manager
 
 from src.common.data_models.llm_service_data_models import LLMGenerationOptions
-from src.common.data_models.message_component_data_model import AtComponent
+from src.common.data_models.message_component_data_model import AtComponent, ImageComponent
 from src.common.i18n import get_locale
 from src.common.logger import get_logger
 from src.common.prompt_i18n import load_prompt
@@ -46,6 +47,7 @@ from src.llm_models.payload_content.tool_option import (
     normalize_tool_option,
     normalize_tool_options,
 )
+from src.llm_models.request_privacy import suppress_request_snapshots
 from src.plugin_runtime.hook_payloads import (
     deserialize_prompt_items,
     serialize_prompt_items,
@@ -60,6 +62,7 @@ from src.maisaka.builtin_tool import get_builtin_tools, is_builtin_tool_in_actio
 from src.maisaka.context.history import collect_tool_turn_anchor_indices, normalize_tool_call_result_pairs
 from src.maisaka.context.messages import (
     IMAGE_QUALITY_MAX_SIDE,
+    InternalContextMessage,
     LLMContextMessage,
     ModelOutputContextMessage,
     ReferenceMessage,
@@ -124,6 +127,8 @@ class ChatResponse:
     prompt_cache_hit_tokens: int = 0
     prompt_cache_miss_tokens: int = 0
     context_sections: tuple[ContextSectionUsage, ...] = ()
+    private_screen: bool = False
+    private_reply_snapshot: PlannerRequestSnapshot | None = field(default=None, repr=False)
 
     @property
     def content(self) -> Optional[str]:
@@ -1181,6 +1186,8 @@ class MaisakaChatLoopService:
         system_prompt: Optional[str] = None,
         tail_user_messages: Sequence[str] | None = None,
         logical_turn_id: str | None = None,
+        screen_observations: Callable[[], Sequence[InternalContextMessage]] | None = None,
+        on_private_screen: Callable[[], None] | None = None,
     ) -> ChatResponse:
         """执行一轮 Maisaka 规划器请求。
 
@@ -1309,6 +1316,35 @@ class MaisakaChatLoopService:
                 tool_provider_by_name.get(resolve_tool_definition_name(definition), "")
                 for definition in all_tools
             ]
+        external_planner = (
+            request_kind == "planner"
+            and global_config.agent.planner_enabled
+            and self._session_id in global_config.agent.planner_sessions
+        )
+        private_screen_items = []
+        if screen_observations is not None and request_kind == "planner" and not external_planner:
+            # 在普通历史和请求 Hook 之外加入，避免进入共享上下文或附件索引。
+            observations = tuple(screen_observations())
+            if observations:
+                def build_screen_items() -> List[ContextItem]:
+                    visual = enable_visual_message and global_config.visual.max_image_num > 0
+                    return [
+                        item for observation in observations
+                        if visual or not any(
+                            isinstance(component, ImageComponent) for component in observation.raw_message.components
+                        )
+                        for item in build_context_items_from_history_entry(observation, enable_visual_message=visual)
+                    ]
+
+                private_screen_items = await asyncio.to_thread(build_screen_items)
+                if tuple(screen_observations()) != observations:
+                    private_screen_items = []
+            if private_screen_items:
+                built_messages = [*built_messages, *private_screen_items]
+                if enable_visual_message:
+                    built_messages = limit_latest_images_in_messages(
+                        built_messages, max_image_num=global_config.visual.max_image_num,
+                    )
         if request_kind == "planner":
             self._active_tool_names = tuple(
                 name for definition in all_tools if (name := resolve_tool_definition_name(definition))
@@ -1326,11 +1362,6 @@ class MaisakaChatLoopService:
         prompt_html_uri: str | None = None
 
         llm_started_at = time.perf_counter()
-        external_planner = (
-            request_kind == "planner"
-            and global_config.agent.planner_enabled
-            and self._session_id in global_config.agent.planner_sessions
-        )
         if external_planner:
             from src.agent.planner import ACPPlannerSnapshot, generate_planner_response
 
@@ -1344,17 +1375,29 @@ class MaisakaChatLoopService:
             )
         else:
             llm_chat = self._get_llm_chat_client(request_kind)
-            generation_result = await llm_chat.generate_response_with_context(
-                context_factory=context_factory,
-                options=LLMGenerationOptions(
-                    tool_options=all_tools if all_tools else None,
-                    response_format=response_format,
-                    interrupt_flag=self._interrupt_flag,
-                    force_stream_mode=request_kind == "planner" and (
-                        self._is_group_chat is False or global_config.chat.reply_timing.planner_message_steering
+            if private_screen_items and on_private_screen is not None:
+                on_private_screen()
+            with suppress_request_snapshots() if private_screen_items else nullcontext():
+                generation_result = await llm_chat.generate_response_with_context(
+                    context_factory=context_factory,
+                    options=LLMGenerationOptions(
+                        tool_options=all_tools if all_tools else None,
+                        response_format=response_format,
+                        interrupt_flag=self._interrupt_flag,
+                        force_stream_mode=request_kind == "planner" and (
+                            self._is_group_chat is False or global_config.chat.reply_timing.planner_message_steering
+                        ),
                     ),
-                ),
-            )
+                )
+        private_reply_snapshot = None
+        if private_screen_items and generation_result.request_snapshot is not None:
+            screen_ids = {item.meta.item_id for item in private_screen_items}
+            snapshot = generation_result.request_snapshot
+            # 保留实际请求的模型设置，但补充器只能看到普通聊天内容。
+            clean_request = snapshot.copy_with(context_items=[
+                item for item in snapshot.context_items if item.meta.item_id not in screen_ids
+            ])
+            private_reply_snapshot = PlannerRequestSnapshot(clean_request, tuple(selected_history))
         if request_kind == "planner":
             self.planner_request_snapshot = (
                 PlannerRequestSnapshot(external_snapshot, tuple(selected_history)) if external_planner else
@@ -1409,10 +1452,11 @@ class MaisakaChatLoopService:
                 logger.warning(f"Hook maisaka.planner.after_response 返回的 output_items 无法反序列化，已忽略: {exc}")
         action_judgment = None
         if request_kind == "planner" and self._get_chat_prompt_name() in {"planner_default_group", "planner_default_private", "planner_focus"}:
-            action_judgment = await complete_missing_planner_action(
-                final_output_items, all_tools, session_id=self._session_id,
-                logical_turn_id=logical_turn_id, chat_history=selected_history, interrupt_flag=self._interrupt_flag,
-            )
+            with suppress_request_snapshots() if private_screen_items else nullcontext():
+                action_judgment = await complete_missing_planner_action(
+                    final_output_items, all_tools, session_id=self._session_id,
+                    logical_turn_id=logical_turn_id, chat_history=selected_history, interrupt_flag=self._interrupt_flag,
+                )
             if action_judgment is not None:
                 final_output_items = (*final_output_items, action_judgment.tool_call)
                 llm_duration_ms = round((time.perf_counter() - llm_started_at) * 1000, 2)
@@ -1450,7 +1494,7 @@ class MaisakaChatLoopService:
         }
         if action_judgment is not None:
             prompt_metadata["planner_action_judge"] = action_judgment.metadata
-        if global_config.debug.save_maisaka_reasoning:
+        if global_config.debug.save_maisaka_reasoning and not private_screen_items:
             prompt_section_result = await asyncio.to_thread(
                 PromptCLIVisualizer.build_prompt_section_result,
                 built_messages,
@@ -1472,7 +1516,7 @@ class MaisakaChatLoopService:
 
         return ChatResponse(
             output_items=tuple(final_output_items),
-            request_messages=list(built_messages),
+            request_messages=[] if private_screen_items else list(built_messages),
             selected_history_count=len(selected_history),
             tool_count=len(all_tools),
             prompt_tokens=prompt_tokens,
@@ -1487,6 +1531,8 @@ class MaisakaChatLoopService:
             prompt_cache_hit_tokens=prompt_cache_hit_tokens,
             prompt_cache_miss_tokens=prompt_cache_miss_tokens,
             context_sections=tuple(context_sections),
+            private_screen=bool(private_screen_items),
+            private_reply_snapshot=private_reply_snapshot,
         )
 
     @staticmethod

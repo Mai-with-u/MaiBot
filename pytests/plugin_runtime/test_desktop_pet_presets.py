@@ -1,6 +1,7 @@
 from pathlib import Path
 from PIL import Image
 from typing import Any, Dict
+import hashlib
 import json
 import pytest
 import zipfile
@@ -42,6 +43,19 @@ def test_bundled_presets_are_available_to_separate_instances(tmp_path: Path, mon
         assert skin["resources"]["frame.png"].startswith("data:image/png;base64,")
         assert skin["animations"]["idle"]["duration_ms"] == 125
         assert not instance.exists()
+
+
+def test_remote_manifest_uses_content_addressed_assets(tmp_path: Path) -> None:
+    path = write_skin(tmp_path / "data/desktop_pet/skins/test", "test")
+    blobs: skins.SkinAssets = {}
+    raw = (path.parent / "frame.png").read_bytes()
+    digest = hashlib.sha256(raw).hexdigest()
+    remote = skins.find_skin(tmp_path, "test", asset_blobs=blobs)
+    local = skins.find_skin(tmp_path, "test")
+    assert remote["resources"] == {"frame.png": digest}
+    assert blobs == {digest: ("image/png", raw)}
+    assert remote["animations"] == local["animations"]
+    assert local["resources"]["frame.png"].startswith("data:image/png;base64,")
 
 
 @pytest.mark.parametrize("relative_directory", ("data/desktop_pet/skins/local", "plugins/example/skins/local"))
