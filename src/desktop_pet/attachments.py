@@ -12,12 +12,6 @@ MAX_IMAGE_BYTES = 8 * 1024 * 1024
 MAX_REQUEST_BYTES = 48 * 1024 * 1024
 
 
-def reject_legacy_chat_target(payload: Dict[str, Any]) -> None:
-    """旧客户端仍可发主人私聊，但不能把原本发往外部会话的消息悄悄改投。"""
-    if payload.get("conversation_id") not in (None, ""):
-        raise ValueError("桌宠已不支持绑定聊天流，请重启桌宠后在主人私聊中发送")
-
-
 def read_request(directory: Path, request_id: str) -> Dict[str, Any]:
     if not re.fullmatch(r"[0-9a-f]{32}", request_id):
         raise ValueError("无效的桌宠请求 ID")
@@ -26,7 +20,6 @@ def read_request(directory: Path, request_id: str) -> Dict[str, Any]:
         if path.stat().st_size > MAX_REQUEST_BYTES:
             raise ValueError("图文消息过大")
         request = json.loads(path.read_text("utf-8"))
-        reject_legacy_chat_target(request)
         text = request["text"].strip()
         images: List[Dict[str, str]] = request["images"]
         if len(text) > 10000 or len(images) > 4 or not (text or images):

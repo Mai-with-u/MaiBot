@@ -91,25 +91,13 @@ def test_legacy_hello_does_not_enable_chat_binding():
     assert capabilities == {"screen_read": False, "skin_assets": True, "skin_loading": False}
 
 
-@pytest.mark.parametrize("target", [{}, {"conversation_id": ""}, {"conversation_id": None}])
-def test_chat_protocol_accepts_owner_messages_from_old_and_new_clients(tmp_path, target):
-    payload = {"text": " 私聊 ", "images": [], **target}
+@pytest.mark.parametrize("extra_fields", [{}, {"conversation_id": "qq-group"}])
+def test_chat_protocol_reads_only_text_and_images(tmp_path, extra_fields):
+    payload = {"text": " 私聊 ", "images": [], **extra_fields}
     request_id = "a" * 32
     path = tmp_path / f"{request_id}.json"
     path.write_text(json.dumps(payload), encoding="utf-8")
     expected = {"text": "私聊", "images": []}
     assert validate_chat_request(payload) == expected
     assert read_request(tmp_path, request_id) == expected
-    assert not path.exists()
-
-
-def test_chat_protocol_rejects_stale_external_target_without_rerouting(tmp_path):
-    payload = {"text": "旧草稿", "images": [], "conversation_id": "qq-group"}
-    request_id = "a" * 32
-    path = tmp_path / f"{request_id}.json"
-    path.write_text(json.dumps(payload), encoding="utf-8")
-    with pytest.raises(ValueError, match="已不支持绑定聊天流"):
-        validate_chat_request(payload)
-    with pytest.raises(ValueError, match="已不支持绑定聊天流"):
-        read_request(tmp_path, request_id)
     assert not path.exists()

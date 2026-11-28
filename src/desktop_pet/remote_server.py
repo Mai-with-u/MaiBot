@@ -18,7 +18,7 @@ import time
 
 from src.common.runtime_loop import get_main_loop, run_on_main_loop
 
-from .attachments import MAX_IMAGE_BYTES, reject_legacy_chat_target
+from .attachments import MAX_IMAGE_BYTES
 from .skins import SkinAssets
 
 PROTOCOL_VERSION = 1
@@ -144,7 +144,6 @@ def validate_todo_payload(action: str, payload: Dict[str, Any]) -> None:
 
 
 def validate_chat_request(payload: Dict[str, Any]) -> Dict[str, Any]:
-    reject_legacy_chat_target(payload)
     """校验实际图片内容；在工作线程执行解码和图片检查。"""
     text = payload.get("text")
     images = payload.get("images")
