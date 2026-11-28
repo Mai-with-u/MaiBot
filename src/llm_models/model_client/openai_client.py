@@ -5,6 +5,7 @@ from uuid import uuid4
 
 from httpx import Response
 
+import array
 import asyncio
 import base64
 import binascii
@@ -1947,9 +1948,19 @@ class OpenaiClient(AdapterClient[AsyncStream[ChatCompletionChunk], ChatCompletio
         }
 
         try:
-            request_overrides = split_openai_request_overrides(extra_params)
+            request_overrides = split_openai_request_overrides(
+                extra_params,
+                reserved_body_keys={"encoding_format"},
+            )
+            extra_body = dict(request_overrides.extra_body or {})
+            encoding_format = (extra_params or {}).get("encoding_format")
+            if encoding_format is None:
+                encoding_format = extra_body.pop("encoding_format", "float")
+            else:
+                extra_body.pop("encoding_format", None)
             snapshot_provider_request["request_kwargs"] = {
-                "extra_body": request_overrides.extra_body or None,
+                "encoding_format": encoding_format,
+                "extra_body": extra_body or None,
                 "extra_headers": request_overrides.extra_headers or None,
                 "extra_query": request_overrides.extra_query or None,
                 "input": embedding_input,
@@ -1958,9 +1969,10 @@ class OpenaiClient(AdapterClient[AsyncStream[ChatCompletionChunk], ChatCompletio
             raw_response = await self.client.embeddings.create(
                 model=model_info.model_identifier,
                 input=embedding_input,
+                encoding_format=encoding_format,
                 extra_headers=self._build_request_headers(request_overrides.extra_headers),
                 extra_query=request_overrides.extra_query or None,
-                extra_body=request_overrides.extra_body or None,
+                extra_body=extra_body or None,
             )
         except APIConnectionError as exc:
             snapshot_path = await asyncio.to_thread(
@@ -2026,7 +2038,26 @@ class OpenaiClient(AdapterClient[AsyncStream[ChatCompletionChunk], ChatCompletio
             attach_request_snapshot(exc, snapshot_path)
             raise exc
         if raw_response.data:
-            response.embedding = raw_response.data[0].embedding
+            embedding_value = raw_response.data[0].embedding
+            if isinstance(embedding_value, str):
+                try:
+                    embedding_value = array.array("f", base64.b64decode(embedding_value)).tolist()
+                except (binascii.Error, ValueError) as decode_error:
+                    exc = RespParseException(raw_response, "嵌入响应解析失败，base64 解码失败。")
+                    snapshot_path = await asyncio.to_thread(
+                        save_failed_request_snapshot,
+                        api_provider=self.api_provider,
+                        client_type="openai",
+                        error=exc,
+                        internal_request=serialize_embedding_request_snapshot(request),
+                        model_info=model_info,
+                        operation="embeddings.create",
+                        provider_request=snapshot_provider_request,
+                        trace_context=request.trace_context,
+                    )
+                    attach_request_snapshot(exc, snapshot_path)
+                    raise exc from decode_error
+            response.embedding = embedding_value
         else:
             raise RespParseException(raw_response, "响应解析失败，缺失嵌入数据。")
 
