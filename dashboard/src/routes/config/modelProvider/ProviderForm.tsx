@@ -17,11 +17,12 @@ import { Tooltip, TooltipContent, TooltipProvider, TooltipTrigger } from '@/comp
 import { useToast } from '@/hooks/use-toast'
 import { fetchModelClientTypes, type ModelClientType } from '@/lib/config-api'
 
-import { PROVIDER_TEMPLATES } from '../providerTemplates'
+import { normalizeUrl, PROVIDER_TEMPLATES } from '../providerTemplates'
 import type { APIProvider, FormErrors } from './types'
 import { validateProvider } from './utils'
 import '@/styles/provider-form.css'
 
+const BUILTIN_CLIENT_TYPES = ['openai', 'openai_responses', 'gemini', 'anthropic']
 const PROVIDER_TEMPLATE_OPTIONS = PROVIDER_TEMPLATES.filter((template) => template.id !== 'custom')
 const DEFAULT_PROVIDER_TEMPLATE = PROVIDER_TEMPLATES.find(
   (template) => template.id === 'deepseek'
@@ -111,13 +112,17 @@ export function ProviderForm({
 
     // 编辑时匹配已有配置；新增时默认使用 DeepSeek 模板。
     if (editingIndex !== null && editingProvider) {
-      const matchedTemplate = PROVIDER_TEMPLATES.find(
-        (template) =>
-          template.base_url === editingProvider.base_url &&
-          (template.allowed_client_types ?? [template.client_type]).some(
-            (clientType) => clientType === editingProvider.client_type
-          )
-      )
+      const providerUrl = normalizeUrl(editingProvider.base_url)
+      const matchedTemplate = PROVIDER_TEMPLATES.find((template) => {
+        const supportedClientTypes = template.allowed_client_types ?? [template.client_type]
+        if (!supportedClientTypes.some((type) => type === editingProvider.client_type)) return false
+
+        const protocolUrl = template.baseUrlsByClientType?.[editingProvider.client_type]
+        return protocolUrl
+          ? providerUrl === protocolUrl || providerUrl === `${protocolUrl}/v1`
+          : template.base_url === editingProvider.base_url ||
+            (template.baseUrlsByClientType !== undefined && template.baseUrlPattern?.test(providerUrl) === true)
+      })
       setSelectedTemplate(matchedTemplate?.id || 'custom')
       if (matchedTemplate?.defaultApiKey) {
         setLocalProvider({ ...editingProvider, api_key: matchedTemplate.defaultApiKey })
@@ -154,14 +159,14 @@ export function ProviderForm({
     const options = [...clientTypes]
     const knownTypes = new Set(options.map((item) => item.client_type))
 
-    for (const clientType of ['openai', 'openai_responses', 'gemini', localProvider?.client_type].filter(Boolean) as string[]) {
-      if (!knownTypes.has(clientType)) {
+    for (const clientType of [...BUILTIN_CLIENT_TYPES, localProvider?.client_type]) {
+      if (clientType && !knownTypes.has(clientType)) {
         options.push({
           client_type: clientType,
           owner_plugin_id: null,
           version: '',
           description: '',
-          builtin: clientType === 'openai' || clientType === 'openai_responses' || clientType === 'gemini',
+          builtin: BUILTIN_CLIENT_TYPES.includes(clientType),
         })
         knownTypes.add(clientType)
       }
@@ -173,8 +178,9 @@ export function ProviderForm({
     const allowedClientTypes = selectedTemplateConfig?.allowed_client_types
     if (!allowedClientTypes?.length) return clientTypeOptions
 
-    const allowedClientTypeSet = new Set<string>(allowedClientTypes)
-    return clientTypeOptions.filter((item) => allowedClientTypeSet.has(item.client_type))
+    return allowedClientTypes.flatMap((clientType) =>
+      clientTypeOptions.filter((item) => item.client_type === clientType)
+    )
   }, [clientTypeOptions, selectedTemplateConfig])
 
   const handleTemplateChange = useCallback((templateId: string) => {
@@ -459,6 +465,7 @@ export function ProviderForm({
                               <li><strong>OpenAI：</strong>兼容 OpenAI API 格式的提供商</li>
                               <li><strong>OpenAI Responses：</strong>OpenAI Responses API 原生格式</li>
                               <li><strong>Gemini：</strong>Google Gemini 专用格式</li>
+                              <li><strong>Anthropic Messages：</strong>Anthropic Messages API 原生格式</li>
                               <li>已加载的插件可以在这里提供新的客户端类型</li>
                             </ul>
                           </div>
@@ -470,11 +477,14 @@ export function ProviderForm({
                   >
                     <Select
                       value={localProvider?.client_type || 'openai'}
-                      onValueChange={(value) =>
+                      onValueChange={(value) => {
+                        const baseUrl = selectedTemplateConfig?.baseUrlsByClientType
+                          ? selectedTemplateConfig.baseUrlsByClientType[value] ?? selectedTemplateConfig.base_url
+                          : undefined
                         setLocalProvider((prev) =>
-                          prev ? { ...prev, client_type: value } : null
+                          prev ? { ...prev, client_type: value, base_url: baseUrl ?? prev.base_url } : null
                         )
-                      }
+                      }}
                       disabled={isClientTypeLocked}
                     >
                       <SelectTrigger id="client_type" data-provider-locked={isClientTypeLocked ? 'true' : undefined}>
@@ -483,7 +493,7 @@ export function ProviderForm({
                       <SelectContent>
                         {visibleClientTypeOptions.map((item) => (
                           <SelectItem key={item.client_type} value={item.client_type}>
-                            {item.client_type}
+                            {item.client_type === 'anthropic' ? 'Anthropic Messages' : item.client_type}
                             {item.owner_plugin_id ? ` (${item.owner_plugin_id})` : ''}
                           </SelectItem>
                         ))}
