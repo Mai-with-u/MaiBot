@@ -41,7 +41,7 @@ import {
   XCircle,
 } from 'lucide-react'
 import type { LucideIcon } from 'lucide-react'
-import { AnimatePresence, motion, useReducedMotion } from 'motion/react'
+import { AnimatePresence, motion } from 'motion/react'
 import { memo, useCallback, useEffect, useLayoutEffect, useMemo, useRef, useState } from 'react'
 import { createPortal } from 'react-dom'
 
@@ -60,6 +60,7 @@ import { ScrollArea } from '@/components/ui/scroll-area'
 import { Separator } from '@/components/ui/separator'
 import { Tooltip, TooltipContent, TooltipProvider, TooltipTrigger } from '@/components/ui/tooltip'
 import { useResolvedAvatarUrl } from '@/lib/avatar-url'
+import { useMotion } from '@/lib/motion'
 import { useVirtualizerUnmountGuard } from '@/lib/use-virtualizer-unmount-guard'
 import { useToast } from '@/hooks/use-toast'
 import { backendApi } from '@/lib/http'
@@ -273,7 +274,7 @@ function ToolExecutionElapsed({ startedAt }: { startedAt: number }) {
 
 function FloatingToolStatus({ status, args }: { status: StageStatusInfo; args: Record<string, unknown> }) {
   const [expanded, setExpanded] = useState(false)
-  const reducedMotion = useReducedMotion()
+  const { enabled, transitions } = useMotion()
   return (
     <div
       data-maisaka-floating-status="true"
@@ -292,10 +293,10 @@ function FloatingToolStatus({ status, args }: { status: StageStatusInfo; args: R
       <AnimatePresence initial={false}>
         {expanded && (
           <motion.div
-            initial={{ height: 0, opacity: 0 }}
+            initial={enabled ? { height: 0, opacity: 0 } : false}
             animate={{ height: 'auto', opacity: 1 }}
-            exit={{ height: 0, opacity: 0 }}
-            transition={{ duration: reducedMotion ? 0 : 0.18 }}
+            exit={enabled ? { height: 0, opacity: 0 } : undefined}
+            transition={transitions.collapse}
             className="overflow-hidden"
           >
             <div className="flex max-h-60 flex-wrap gap-2 overflow-auto border-t px-3 py-2">
@@ -2391,7 +2392,7 @@ const MonitorTimeline = memo(function MonitorTimeline({
     ?? latestPlannerData?.tools.find((tool) => tool.tool_call_id === activeToolCallId)?.tool_args
     ?? {}
   const activeToolVisible = useActiveToolVisible(scrollViewport, activeToolCallId)
-  const reducedMotion = useReducedMotion()
+  const { enabled: motionEnabled, profile: motionProfile, transitions: motionTransitions } = useMotion()
 
   useLayoutEffect(() => {
     if (!scrollViewport || !timelineElement) return
@@ -2834,10 +2835,14 @@ const MonitorTimeline = memo(function MonitorTimeline({
           {executingTool && !activeToolVisible && selectedStageStatus && (
             <motion.div
               key="current-tool-status"
-              initial={{ opacity: 0, y: reducedMotion ? 0 : 16 }}
+              initial={motionEnabled ? { opacity: 0, y: motionProfile.distances.overlayY * 2 } : false}
               animate={{ opacity: 1, y: 0 }}
-              exit={{ opacity: 0, y: reducedMotion ? 0 : 12 }}
-              transition={{ duration: reducedMotion ? 0 : 0.22, ease: [0.22, 1, 0.36, 1] }}
+              exit={
+                motionEnabled
+                  ? { opacity: 0, y: motionProfile.distances.overlayY, transition: motionTransitions.exit }
+                  : undefined
+              }
+              transition={motionTransitions.overlay}
               className="pointer-events-none absolute right-4 bottom-3 left-4 z-20 flex justify-center"
             >
               <FloatingToolStatus key={activeToolCallId} status={selectedStageStatus} args={activeToolArgs} />

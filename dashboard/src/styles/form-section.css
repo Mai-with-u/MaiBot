@@ -92,7 +92,7 @@
   fill: none;
   stroke: currentColor;
   stroke-width: 2.2;
-  transition: transform 220ms ease-out;
+  transition: transform var(--motion-duration-fast) var(--motion-ease);
 }
 
 [data-fold-trigger][aria-expanded='true'] [data-fold-chevron] {
@@ -103,7 +103,9 @@
   display: grid;
   grid-template-rows: 0fr;
   opacity: 0;
-  transition: grid-template-rows 260ms cubic-bezier(0.2, 0.8, 0.2, 1), opacity 200ms ease-out;
+  transition:
+    grid-template-rows var(--motion-collapse-duration) var(--motion-collapse-ease),
+    opacity var(--motion-duration-fast) var(--motion-ease);
 }
 
 [data-fold-body][data-open='true'] {

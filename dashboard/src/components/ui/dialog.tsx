@@ -1,12 +1,12 @@
 import * as React from 'react'
 import * as DialogPrimitive from '@radix-ui/react-dialog'
-
-import { cn } from '@/lib/utils'
 import { X } from 'lucide-react'
 
-import { isEditableTarget, matchesShortcut } from '@/lib/keyboard'
-
+import { MotionDialogSurface, MotionOverlayBackdrop } from '@/components/motion'
 import { ScrollArea } from '@/components/ui/scroll-area'
+import { useMediaQuery } from '@/hooks/use-media-query'
+import { isEditableTarget, matchesShortcut } from '@/lib/keyboard'
+import { cn } from '@/lib/utils'
 
 const Dialog = DialogPrimitive.Root
 
@@ -19,16 +19,15 @@ const DialogClose = DialogPrimitive.Close
 const DialogOverlay = React.forwardRef<
   React.ElementRef<typeof DialogPrimitive.Overlay>,
   React.ComponentPropsWithoutRef<typeof DialogPrimitive.Overlay>
->(({ className, ...props }, ref) => (
-  <DialogPrimitive.Overlay
-    ref={ref}
-    data-dashboard-dialog-overlay="true"
-    className={cn(
-      'data-[state=open]:animate-in data-[state=closed]:animate-out data-[state=closed]:fade-out-0 data-[state=open]:fade-in-0 fixed inset-0 z-50 bg-black/80',
-      className
-    )}
-    {...props}
-  />
+>(({ className, children, ...props }, ref) => (
+  <DialogPrimitive.Overlay ref={ref} asChild {...props}>
+    <MotionOverlayBackdrop
+      data-dashboard-dialog-overlay="true"
+      className={cn('fixed inset-0 z-50 bg-black/80', className)}
+    >
+      {children}
+    </MotionOverlayBackdrop>
+  </DialogPrimitive.Overlay>
 ))
 DialogOverlay.displayName = DialogPrimitive.Overlay.displayName
 
@@ -71,68 +70,78 @@ const DialogContent = React.forwardRef<
       ...props
     },
     ref
-  ) => (
-    <DialogPortal>
-      {!hideOverlay && <DialogOverlay className={overlayClassName} />}
-      <DialogPrimitive.Content
-        ref={ref}
-        data-dashboard-dialog-content="true"
-        data-dashboard-dialog-side={side}
-        className={cn(
-          'bg-background data-[state=open]:animate-in data-[state=closed]:animate-out data-[state=closed]:fade-out-0 data-[state=open]:fade-in-0 fixed z-50 flex flex-col gap-4 overflow-hidden border p-6 shadow-lg outline-none duration-200',
-          side === 'right'
-            ? 'top-20 right-4 max-h-[min(75dvh,48rem)] w-[min(calc(100vw-2rem),var(--dialog-width,32rem))] rounded-none pb-[max(1.5rem,env(safe-area-inset-bottom))] [animation-fill-mode:both] data-[state=open]:animate-slide-in-from-right data-[state=closed]:animate-slide-out-to-right motion-reduce:animate-none'
-            : 'data-[state=closed]:zoom-out-95 data-[state=open]:zoom-in-95 data-[state=closed]:slide-out-to-left-1/2 data-[state=closed]:slide-out-to-top-[48%] data-[state=open]:slide-in-from-left-1/2 data-[state=open]:slide-in-from-top-[48%] top-[50%] left-[50%] max-h-[calc(100vh-2rem)] w-[min(calc(100vw-2rem),var(--dialog-width,32rem))] translate-x-[-50%] translate-y-[-50%] sm:rounded-lg',
-          // 手机上改为从底部升起的弹层：贴底、顶部大圆角、留出底部安全区
-          side === 'center' &&
-            'max-sm:top-auto max-sm:bottom-0 max-sm:left-0 max-sm:max-h-[92dvh] max-sm:w-full max-sm:translate-x-0 max-sm:translate-y-0 max-sm:rounded-t-[28px] max-sm:border-x-0 max-sm:border-b-0 max-sm:pb-[calc(env(safe-area-inset-bottom)+1.5rem)] max-sm:data-[state=open]:slide-in-from-bottom max-sm:data-[state=closed]:slide-out-to-bottom max-sm:data-[state=open]:slide-in-from-left-0 max-sm:data-[state=closed]:slide-out-to-left-0 max-sm:data-[state=open]:zoom-in-100 max-sm:data-[state=closed]:zoom-out-100',
-          className
-        )}
-        onPointerDownOutside={preventOutsideClose ? (e) => e.preventDefault() : undefined}
-        onInteractOutside={preventOutsideClose ? (e) => e.preventDefault() : undefined}
-        onKeyDownCapture={(event) => {
-          onKeyDownCapture?.(event)
-          if (
-            !confirmOnEnter ||
-            !event.currentTarget.contains(event.target as Node) ||
-            event.defaultPrevented ||
-            !matchesShortcut(event, ['enter']) ||
-            event.nativeEvent.isComposing ||
-            isEditableTarget(event.target)
-          ) {
-            return
-          }
+  ) => {
+    const isMobileSheet = useMediaQuery('(max-width: 639.98px)')
 
-          const confirmButton = event.currentTarget.querySelector<HTMLElement>(
-            '[data-dialog-action="confirm"]:not([disabled])'
-          )
-          if (!confirmButton) {
-            return
-          }
+    return (
+      <DialogPortal>
+        {!hideOverlay && <DialogOverlay className={overlayClassName} />}
+        <DialogPrimitive.Content
+          ref={ref}
+          asChild
+          onPointerDownOutside={preventOutsideClose ? (e) => e.preventDefault() : undefined}
+          onInteractOutside={preventOutsideClose ? (e) => e.preventDefault() : undefined}
+          onKeyDownCapture={(event) => {
+            onKeyDownCapture?.(event)
+            if (
+              !confirmOnEnter ||
+              !event.currentTarget.contains(event.target as Node) ||
+              event.defaultPrevented ||
+              !matchesShortcut(event, ['enter']) ||
+              event.nativeEvent.isComposing ||
+              isEditableTarget(event.target)
+            ) {
+              return
+            }
 
-          event.preventDefault()
-          confirmButton.click()
-        }}
-        {...props}
-      >
-        {/* 底部弹层的拖动条，只在手机上显示 */}
-        {side === 'center' && (
-          <div
-            data-dialog-grabber="true"
-            aria-hidden="true"
-            className="bg-muted-foreground/30 mx-auto -mt-3 h-1.5 w-9 shrink-0 rounded-full sm:hidden"
-          />
-        )}
-        {children}
-        {!hideCloseButton && (
-          <DialogPrimitive.Close className="ring-offset-background focus:ring-ring data-[state=open]:bg-accent data-[state=open]:text-muted-foreground absolute top-4 right-4 rounded-sm opacity-70 transition-opacity hover:opacity-100 focus:ring-2 focus:ring-offset-2 focus:outline-none disabled:pointer-events-none">
-            <X className="h-4 w-4" />
-            <span className="sr-only">关闭</span>
-          </DialogPrimitive.Close>
-        )}
-      </DialogPrimitive.Content>
-    </DialogPortal>
-  )
+            const confirmButton = event.currentTarget.querySelector<HTMLElement>(
+              '[data-dialog-action="confirm"]:not([disabled])'
+            )
+            if (!confirmButton) {
+              return
+            }
+
+            event.preventDefault()
+            confirmButton.click()
+          }}
+          {...props}
+        >
+          <MotionDialogSurface
+            side={side}
+            isMobileSheet={side === 'center' && isMobileSheet}
+            data-dashboard-dialog-content="true"
+            data-dashboard-dialog-side={side}
+            className={cn(
+              'bg-background fixed z-50 flex flex-col gap-4 overflow-hidden border p-6 shadow-lg outline-none',
+              side === 'right'
+                ? 'top-20 right-4 max-h-[min(75dvh,48rem)] w-[min(calc(100vw-2rem),var(--dialog-width,32rem))] rounded-none pb-[max(1.5rem,env(safe-area-inset-bottom))]'
+                : 'top-[50%] left-[50%] max-h-[calc(100vh-2rem)] w-[min(calc(100vw-2rem),var(--dialog-width,32rem))] translate-x-[-50%] translate-y-[-50%] sm:rounded-lg',
+              // 手机上改为从底部升起的弹层：贴底、顶部大圆角、留出底部安全区
+              side === 'center' &&
+                'max-sm:top-auto max-sm:bottom-0 max-sm:left-0 max-sm:max-h-[92dvh] max-sm:w-full max-sm:translate-x-0 max-sm:translate-y-0 max-sm:rounded-t-[28px] max-sm:border-x-0 max-sm:border-b-0 max-sm:pb-[calc(env(safe-area-inset-bottom)+1.5rem)]',
+              className
+            )}
+          >
+            {/* 底部弹层的拖动条，只在手机上显示 */}
+            {side === 'center' && (
+              <div
+                data-dialog-grabber="true"
+                aria-hidden="true"
+                className="bg-muted-foreground/30 mx-auto -mt-3 h-1.5 w-9 shrink-0 rounded-full sm:hidden"
+              />
+            )}
+            {children}
+            {!hideCloseButton && (
+              <DialogPrimitive.Close className="ring-offset-background focus:ring-ring data-[state=open]:bg-accent data-[state=open]:text-muted-foreground absolute top-4 right-4 rounded-sm opacity-70 transition-opacity hover:opacity-100 focus:ring-2 focus:ring-offset-2 focus:outline-none disabled:pointer-events-none">
+                <X className="h-4 w-4" />
+                <span className="sr-only">关闭</span>
+              </DialogPrimitive.Close>
+            )}
+          </MotionDialogSurface>
+        </DialogPrimitive.Content>
+      </DialogPortal>
+    )
+  }
 )
 DialogContent.displayName = DialogPrimitive.Content.displayName
 

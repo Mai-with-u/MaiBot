@@ -1,5 +1,7 @@
 import type { ReactNode } from 'react'
-import { AnimatePresence, motion, useIsPresent, useReducedMotion } from 'motion/react'
+import { AnimatePresence, motion, useIsPresent } from 'motion/react'
+
+import { useMotion } from '@/lib/motion'
 
 export function SetupFlip({ viewKey, direction, className, children }: {
   viewKey: string
@@ -22,24 +24,24 @@ function FlipPanel({ children, direction, className }: {
   className?: string
 }) {
   const isPresent = useIsPresent()
-  const reducedMotion = useReducedMotion()
+  const { enabled, transitions } = useMotion()
 
   return (
     <motion.div
       className={className}
       inert={!isPresent}
       transformTemplate={(_, transform) => transform ? `perspective(1400px) ${transform}` : 'none'}
-      initial={reducedMotion ? false : { rotateX: 75 * direction, opacity: 0 }}
+      initial={enabled ? { rotateX: 75 * direction, opacity: 0 } : false}
       animate={{ rotateX: 0, opacity: 1 }}
-      exit={reducedMotion ? undefined : 'leave'}
+      exit={enabled ? 'leave' : undefined}
       variants={{
         leave: (nextDirection: 1 | -1) => ({
           rotateX: -75 * nextDirection,
           opacity: 0,
-          transition: { duration: 0.16, ease: 'easeIn' },
+          transition: transitions.exit,
         }),
       }}
-      transition={{ duration: reducedMotion ? 0 : 0.22, ease: 'easeOut' }}
+      transition={transitions.normal}
     >
       {children}
     </motion.div>

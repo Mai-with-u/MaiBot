@@ -4,6 +4,7 @@ import { QueryClientProvider } from '@tanstack/react-query'
 import { RouterProvider } from '@tanstack/react-router'
 
 import './index.css'
+import './styles/motion.css'
 import './styles/controls.css'
 import './styles/millennium.css'
 import './styles/modern.css'
@@ -19,6 +20,7 @@ import { ElectronShell } from './components/electron/electron-shell'
 import { AnnouncerProvider } from './components/ui/announcer'
 import { AssetStoreProvider } from './components/asset-provider'
 import { AnimationProvider } from './components/animation-provider'
+import { MotionProvider } from './components/motion'
 import { ThemeProvider } from './components/theme-provider'
 import { TourProvider } from './components/tour/tour-provider'
 import { LazyTourRenderer } from './components/tour/lazy-tour-renderer'
@@ -50,13 +52,15 @@ void bootstrapHostRuntime()
                   <HostRuntimeObserver />
                   <HostVersionCompatibility />
                   <AnimationProvider>
-                    <TourProvider>
-                      {isElectron() && <ElectronShell />}
-                      <RouterProvider router={router} />
-                      <LazyTourRenderer />
-                      <Toaster />
-                      <CodeUpdateConfirmation />
-                    </TourProvider>
+                    <MotionProvider>
+                      <TourProvider>
+                        {isElectron() && <ElectronShell />}
+                        <RouterProvider router={router} />
+                        <LazyTourRenderer />
+                        <Toaster />
+                        <CodeUpdateConfirmation />
+                      </TourProvider>
+                    </MotionProvider>
                   </AnimationProvider>
                 </ThemeProvider>
               </AssetStoreProvider>

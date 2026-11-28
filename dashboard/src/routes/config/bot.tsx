@@ -1571,7 +1571,7 @@ function DynamicConfigTabs(props: DynamicConfigTabsProps) {
                 key={pane.id}
                 value={pane.id}
                 data-config-bot-extra-tab={pane.advanced ? 'true' : undefined}
-                className={cn(pane.advanced && 'motion-safe:animate-[config-tab-enter_300ms_ease-out_both]')}
+                className={cn(pane.advanced && 'motion-safe:animate-[config-tab-enter_var(--motion-duration-normal)_var(--motion-ease)_both]')}
               >
                 {pane.label}
               </TabsTrigger>
@@ -1700,7 +1700,7 @@ function DynamicConfigTabs(props: DynamicConfigTabsProps) {
         <TabsContent
           key={tab.id}
           value={tab.id}
-          className="space-y-4 motion-safe:animate-[config-tab-content-enter_180ms_ease-out_both]"
+          className="space-y-4 motion-safe:animate-[config-tab-content-enter_var(--motion-duration-fast)_var(--motion-ease)_both]"
         >
           {renderTabContent(tab)}
         </TabsContent>

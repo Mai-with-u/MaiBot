@@ -14,18 +14,20 @@ import {
   Settings,
   Sun,
 } from 'lucide-react'
-import { motion, useReducedMotion } from 'motion/react'
+import { motion } from 'motion/react'
 import { useContext, useEffect, useRef, useState, type ReactElement } from 'react'
 import { useTranslation } from 'react-i18next'
 
 import { SidebarUpdateButton } from '@/components/layout/SidebarUpdateButton'
 import type { MenuItem } from '@/components/layout/types'
+import { MotionCollapse } from '@/components/motion'
 import { DropdownMenu, DropdownMenuContent, DropdownMenuItem, DropdownMenuTrigger } from '@/components/ui/dropdown-menu'
 import { PromptWarningDot } from '@/components/ui/prompt-warning-dot'
 import { ScrollArea } from '@/components/ui/scroll-area'
 import { Separator } from '@/components/ui/separator'
 import { Tooltip, TooltipContent, TooltipTrigger } from '@/components/ui/tooltip'
 import { toggleThemeWithTransition, useTheme } from '@/components/use-theme'
+import { useMotion } from '@/lib/motion'
 import { promptCatalogQueryOptions } from '@/lib/prompt-query'
 import { TourContext } from '@/components/tour/tour-context'
 import { isDesktopEmbedded, reportDesktopLayout } from '@/lib/desktop-host'
@@ -187,7 +189,7 @@ export function ObservationSidebar({
   const [settingsOpen, setSettingsOpen] = useState(loadSettingsOpen)
   const [toolsOpen, setToolsOpen] = useState(false)
   const [settingsLayout, setSettingsLayout] = useState(loadSettingsLayout)
-  const reducedMotion = useReducedMotion()
+  const { enabled: motionEnabled, transitions } = useMotion()
   const [settingsPage, setSettingsPage] = useState(0)
   const [settingsPageDirection, setSettingsPageDirection] = useState(1)
   const settingsSection = useRef<HTMLElement>(null)
@@ -478,77 +480,89 @@ export function ObservationSidebar({
             />
           </div>
         )}
-        {settingsVisible && (
-          <ScrollArea
-            scrollbars="vertical"
-            className={collapsed ? 'min-h-0 flex-1' : 'min-h-0'}
-          >
-            <nav aria-label={t('observation.settingsBlock')}>
-              <motion.ul
-                key={settingsPaginated ? currentSettingsPage : 'unpaged'}
-                data-observation-keys="true"
-                data-paginated={settingsPaginated || undefined}
-                style={settingsPaginated ? { gridTemplateRows: `repeat(${settingsLayout.rows}, 3.125rem)` } : undefined}
-                initial={reducedMotion || !settingsPaginated ? false : { opacity: 0, x: settingsPageDirection * 12 }}
-                animate={{ opacity: 1, x: 0 }}
-                transition={{ duration: reducedMotion ? 0 : 0.18, ease: 'easeOut' }}
-              >
-                {visibleSettingsItems.map((item) => {
-                  const Icon = item.icon
-                  const label = item.literalLabel ? item.label : t(item.label)
-                  const shortLabel = SHORT_LABELS[item.path] ? t(SHORT_LABELS[item.path]) : label
-                  const active = isItemActive(item, pathname)
-                  // Bot 还在加载或没有运行时，依赖 Bot 的键不可点；管理与 WebUI 设置照常可用
-                  const disabled = !botAvailable && !isBotIndependentPath(item.path)
-                  const keyContent = (
-                    <>
-                      <Icon className="h-5 w-5" />
-                      {!collapsed && <span data-observation-key-label="true">{shortLabel}</span>}
-                      {!disabled && item.path === '/config/prompts' && hasPromptWarnings && (
-                        <PromptWarningDot />
-                      )}
-                    </>
-                  )
-                  return (
-                    <li key={item.path}>
-                      {/* 键帽里的名字放不下时截断，悬停显示完整名称 */}
-                      <KeyTooltip
-                        label={disabled ? t('observation.keyNeedsBot', { label }) : label}
-                        side={collapsed ? 'right' : 'bottom'}
-                      >
-                        {disabled ? (
-                          <span
-                            role="link"
-                            aria-disabled="true"
-                            aria-label={label}
-                            tabIndex={0}
-                            data-observation-key="true"
-                            data-disabled="true"
-                            data-active="false"
-                            data-tour={item.tourId}
-                          >
-                            {keyContent}
-                          </span>
-                        ) : (
-                          <Link
-                            to={item.path}
-                            aria-label={label}
-                            data-observation-key="true"
-                            data-active={active ? 'true' : 'false'}
-                            data-tour={item.tourId}
-                            aria-current={active ? 'page' : undefined}
-                          >
-                            {keyContent}
-                          </Link>
+        {(() => {
+          const settingsGrid = (
+            <ScrollArea
+              scrollbars="vertical"
+              className={collapsed ? 'min-h-0 flex-1' : 'min-h-0'}
+            >
+              <nav aria-label={t('observation.settingsBlock')}>
+                <motion.ul
+                  key={settingsPaginated ? currentSettingsPage : 'unpaged'}
+                  data-observation-keys="true"
+                  data-paginated={settingsPaginated || undefined}
+                  style={settingsPaginated ? { gridTemplateRows: `repeat(${settingsLayout.rows}, 3.125rem)` } : undefined}
+                  initial={!motionEnabled || !settingsPaginated ? false : { opacity: 0, x: settingsPageDirection * 12 }}
+                  animate={{ opacity: 1, x: 0 }}
+                  transition={transitions.fast}
+                >
+                  {visibleSettingsItems.map((item) => {
+                    const Icon = item.icon
+                    const label = item.literalLabel ? item.label : t(item.label)
+                    const shortLabel = SHORT_LABELS[item.path] ? t(SHORT_LABELS[item.path]) : label
+                    const active = isItemActive(item, pathname)
+                    // Bot 还在加载或没有运行时，依赖 Bot 的键不可点；管理与 WebUI 设置照常可用
+                    const disabled = !botAvailable && !isBotIndependentPath(item.path)
+                    const keyContent = (
+                      <>
+                        <Icon className="h-5 w-5" />
+                        {!collapsed && <span data-observation-key-label="true">{shortLabel}</span>}
+                        {!disabled && item.path === '/config/prompts' && hasPromptWarnings && (
+                          <PromptWarningDot />
                         )}
-                      </KeyTooltip>
-                    </li>
-                  )
-                })}
-              </motion.ul>
-            </nav>
-          </ScrollArea>
-        )}
+                      </>
+                    )
+                    return (
+                      <li key={item.path}>
+                        {/* 键帽里的名字放不下时截断，悬停显示完整名称 */}
+                        <KeyTooltip
+                          label={disabled ? t('observation.keyNeedsBot', { label }) : label}
+                          side={collapsed ? 'right' : 'bottom'}
+                        >
+                          {disabled ? (
+                            <span
+                              role="link"
+                              aria-disabled="true"
+                              aria-label={label}
+                              tabIndex={0}
+                              data-observation-key="true"
+                              data-disabled="true"
+                              data-active="false"
+                              data-tour={item.tourId}
+                            >
+                              {keyContent}
+                            </span>
+                          ) : (
+                            <Link
+                              to={item.path}
+                              aria-label={label}
+                              data-observation-key="true"
+                              data-active={active ? 'true' : 'false'}
+                              data-tour={item.tourId}
+                              aria-current={active ? 'page' : undefined}
+                            >
+                              {keyContent}
+                            </Link>
+                          )}
+                        </KeyTooltip>
+                      </li>
+                    )
+                  })}
+                </motion.ul>
+              </nav>
+            </ScrollArea>
+          )
+
+          if (collapsed) {
+            return settingsVisible ? settingsGrid : null
+          }
+
+          return (
+            <MotionCollapse open={settingsVisible} className="flex min-h-0 flex-col">
+              {settingsGrid}
+            </MotionCollapse>
+          )
+        })()}
       </section>
 
       <Separator variant={dividerVariant} data-observation-rule="true" />

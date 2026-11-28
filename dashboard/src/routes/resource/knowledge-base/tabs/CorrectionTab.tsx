@@ -15,7 +15,7 @@ import {
   X,
   WandSparkles,
 } from 'lucide-react'
-import { AnimatePresence, motion, useReducedMotion } from 'motion/react'
+import { AnimatePresence, motion } from 'motion/react'
 
 import { Alert, AlertDescription } from '@/components/ui/alert'
 import {
@@ -39,6 +39,7 @@ import { TabsContent } from '@/components/ui/tabs'
 import { Textarea } from '@/components/ui/textarea'
 import { ThinkingIllustration } from '@/components/ui/thinking-illustration'
 import { formatChatAccountLabel, formatChatDisplayName } from '@/lib/chat-display'
+import { useMotion } from '@/lib/motion'
 import { cn } from '@/lib/utils'
 import type {
   MemoryCorrectionCandidatePayload,
@@ -429,7 +430,7 @@ export function CorrectionTab({ correction }: CorrectionTabProps) {
   } = correction
   const [executeDialogOpen, setExecuteDialogOpen] = useState(false)
   const [rollbackDialogOpen, setRollbackDialogOpen] = useState(false)
-  const reduceMotion = useReducedMotion()
+  const { enabled: motionEnabled, transitions: motionTransitions } = useMotion()
 
   const selectedChatTarget = useMemo(() => {
     const normalizedChatId = chatId.trim()
@@ -499,10 +500,10 @@ export function CorrectionTab({ correction }: CorrectionTabProps) {
                       <motion.div
                         key={personLookupMode}
                         className="w-full space-y-2"
-                        initial={reduceMotion ? false : { y: '100%' }}
+                        initial={motionEnabled ? { y: '100%' } : false}
                         animate={{ y: 0 }}
-                        exit={reduceMotion ? undefined : { y: '-100%' }}
-                        transition={{ duration: reduceMotion ? 0 : 0.24, ease: 'easeInOut' }}
+                        exit={motionEnabled ? { y: '-100%' } : undefined}
+                        transition={motionTransitions.normal}
                       >
                         <Label htmlFor={`memory-correction-person-${personLookupMode}`}>
                           {personLookupMode === 'id' ? '人物 ID' : '人物关键词'}

@@ -2,9 +2,11 @@
 
 import * as React from 'react'
 import * as SelectPrimitive from '@radix-ui/react-select'
+import { Check, ChevronDown, ChevronUp } from 'lucide-react'
+
+import { MotionFloating } from '@/components/motion'
 import { cn } from '@/lib/utils'
 import { controlSizeClassNames, type ControlSize } from './control-size'
-import { Check, ChevronDown, ChevronUp } from 'lucide-react'
 
 const Select = SelectPrimitive.Root
 
@@ -28,7 +30,7 @@ const SelectTrigger = React.forwardRef<
   >
     {children}
     <SelectPrimitive.Icon asChild>
-      <ChevronDown className="h-4 w-4 opacity-50" />
+      <ChevronDown data-select-chevron="true" className="h-4 w-4 opacity-50" />
     </SelectPrimitive.Icon>
   </SelectPrimitive.Trigger>
 ))
@@ -69,39 +71,44 @@ const SelectContent = React.forwardRef<
   <SelectPrimitive.Portal>
     <SelectPrimitive.Content
       ref={ref}
-      data-dashboard-select-content="true"
-      className={cn(
-        'border-border data-[state=open]:animate-in data-[state=closed]:animate-out data-[state=closed]:fade-out-0 data-[state=open]:fade-in-0 data-[state=closed]:zoom-out-95 data-[state=open]:zoom-in-95 data-[side=bottom]:slide-in-from-top-2 data-[side=left]:slide-in-from-right-2 data-[side=right]:slide-in-from-left-2 data-[side=top]:slide-in-from-bottom-2 relative z-[100] min-w-[8rem] origin-[--radix-select-content-transform-origin] overflow-hidden rounded-md border bg-white text-gray-900 shadow-lg dark:bg-gray-900 dark:text-gray-100',
-        position === 'popper' &&
-          'data-[side=bottom]:translate-y-1 data-[side=left]:-translate-x-1 data-[side=right]:translate-x-1 data-[side=top]:-translate-y-1',
-        className
-      )}
       position={position}
       style={{
         maxHeight: 'min(var(--radix-select-content-available-height, 20rem), 20rem)',
         ...style,
       }}
-      onWheel={(event) => {
-        onWheel?.(event)
-        event.stopPropagation()
-      }}
-      onTouchMove={(event) => {
-        onTouchMove?.(event)
-        event.stopPropagation()
-      }}
+      asChild
       {...props}
     >
-      <SelectScrollUpButton />
-      <SelectPrimitive.Viewport
+      <MotionFloating
+        variant="select"
+        data-dashboard-select-content="true"
         className={cn(
-          'p-1',
+          'border-border relative z-[100] min-w-[8rem] origin-[var(--radix-select-content-transform-origin)] overflow-hidden rounded-md border bg-white text-gray-900 shadow-lg dark:bg-gray-900 dark:text-gray-100',
           position === 'popper' &&
-            'h-[var(--radix-select-trigger-height)] w-full min-w-[var(--radix-select-trigger-width)]'
+            'data-[side=bottom]:translate-y-1 data-[side=left]:-translate-x-1 data-[side=right]:translate-x-1 data-[side=top]:-translate-y-1',
+          className
         )}
+        onWheel={(event) => {
+          onWheel?.(event)
+          event.stopPropagation()
+        }}
+        onTouchMove={(event) => {
+          onTouchMove?.(event)
+          event.stopPropagation()
+        }}
       >
-        {children}
-      </SelectPrimitive.Viewport>
-      <SelectScrollDownButton />
+        <SelectScrollUpButton />
+        <SelectPrimitive.Viewport
+          className={cn(
+            'p-1',
+            position === 'popper' &&
+              'h-[var(--radix-select-trigger-height)] w-full min-w-[var(--radix-select-trigger-width)]'
+          )}
+        >
+          {children}
+        </SelectPrimitive.Viewport>
+        <SelectScrollDownButton />
+      </MotionFloating>
     </SelectPrimitive.Content>
   </SelectPrimitive.Portal>
 ))

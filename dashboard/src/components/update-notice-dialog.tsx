@@ -22,6 +22,7 @@ import {
   DialogHeader,
   DialogTitle,
 } from '@/components/ui/dialog'
+import { useMotion } from '@/lib/motion'
 import { getSetting } from '@/lib/settings-manager'
 import {
   ackUpdateNotice,
@@ -79,6 +80,7 @@ function getUpdateStatus(plugin: IncompatiblePluginNotice) {
 
 export function UpdateNoticeDialog() {
   const navigate = useNavigate()
+  const { enabled: motionEnabled, profile: motionProfile, transitions: motionTransitions, staggerDelay, duration } = useMotion()
   const alwaysShowUpdateNotice = getSetting('alwaysShowUpdateNotice')
   const [notice, setNotice] = useState<UpdateNoticeResponse | null>(null)
   const [stage, setStage] = useState<NoticeStage>(null)
@@ -383,7 +385,9 @@ export function UpdateNoticeDialog() {
                 ? undefined
                 : {
                     height: noticeBodyHeight,
-                    transition: 'height 480ms cubic-bezier(0.22, 1, 0.36, 1)',
+                    transition: motionEnabled
+                      ? 'height var(--motion-duration-slow) var(--motion-ease)'
+                      : 'none',
                   }
             }
             onWheelCapture={(event) => {
@@ -415,12 +419,20 @@ export function UpdateNoticeDialog() {
                     <motion.div
                       aria-hidden="true"
                       className="text-primary/60 pointer-events-none sticky bottom-1 flex h-8 items-center justify-center"
-                      animate={{ y: [0, 5, 0], opacity: [0.55, 0.9, 0.55] }}
-                      transition={{
-                        duration: 1.6,
-                        ease: 'easeInOut',
-                        repeat: Infinity,
-                      }}
+                      animate={
+                        motionEnabled
+                          ? { y: [0, 5, 0], opacity: [0.55, 0.9, 0.55] }
+                          : { y: 0, opacity: 0.75 }
+                      }
+                      transition={
+                        motionEnabled
+                          ? {
+                              duration: duration(1.6),
+                              ease: 'easeInOut',
+                              repeat: Infinity,
+                            }
+                          : motionTransitions.instant
+                      }
                     >
                       <ChevronDown className="h-5 w-5" strokeWidth={2} />
                     </motion.div>
@@ -442,13 +454,20 @@ export function UpdateNoticeDialog() {
                                 ? (extractWebuiVersion(entry.content) ?? '—')
                                 : entry.version
                             }
-                            layout="position"
-                            initial={{ opacity: 0, y: 24, filter: 'blur(4px)' }}
+                            layout={motionEnabled ? 'position' : false}
+                            initial={
+                              motionEnabled
+                                ? {
+                                    opacity: 0,
+                                    y: motionProfile.distances.listItemY * 2,
+                                    filter: 'blur(4px)',
+                                  }
+                                : false
+                            }
                             animate={{ opacity: 1, y: 0, filter: 'blur(0px)' }}
                             transition={{
-                              duration: 0.45,
-                              delay: (index % 3) * 0.08,
-                              ease: [0.22, 1, 0.36, 1],
+                              ...motionTransitions.normal,
+                              delay: staggerDelay(index % 3),
                             }}
                             className="py-8 first:pt-0 last:pb-0"
                           >

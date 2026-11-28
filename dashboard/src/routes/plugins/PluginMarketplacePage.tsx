@@ -1,7 +1,7 @@
 import { memo, startTransition, useCallback, useEffect, useLayoutEffect, useMemo, useRef, useState } from 'react'
 import { useNavigate, useSearch } from '@tanstack/react-router'
 import { useQueryClient } from '@tanstack/react-query'
-import { useReducedMotion } from 'motion/react'
+import { useMotion } from '@/lib/motion'
 import { Badge } from '@/components/ui/badge'
 import { Button } from '@/components/ui/button'
 import { Card, CardContent, CardDescription, CardHeader, CardTitle } from '@/components/ui/card'
@@ -246,7 +246,7 @@ function PluginMarketplacePageContent({ embedded }: Required<PluginMarketplacePa
   const [detailPluginId, setVisibleDetailPluginId] = useState<string | null>(routeDetailPluginId)
   const [lastDetailPluginId, setLastDetailPluginId] = useState<string | null>(detailPluginId)
   const displayedDetailPluginId = detailPluginId ?? lastDetailPluginId
-  const reducedMotion = useReducedMotion()
+  const { enabled: motionEnabled } = useMotion()
   const [deferDetailContent, setDeferDetailContent] = useState(false)
   const previousDetailPluginIdRef = useRef(routeDetailPluginId)
   const pendingDetailNavigationRef = useRef<{ pluginId: string | null } | null>(null)
@@ -263,16 +263,16 @@ function PluginMarketplacePageContent({ embedded }: Required<PluginMarketplacePa
   }, [embedded, navigate])
   const setDetailPluginId = useCallback((pluginId: string | null) => {
     // 先准备滑动状态，避免进入过程中解析文档；返回后保留最近详情以免集中销毁 DOM。
-    setDeferDetailContent(pluginId !== null && !reducedMotion)
+    setDeferDetailContent(pluginId !== null && motionEnabled)
     if (pluginId) setLastDetailPluginId(pluginId)
     setVisibleDetailPluginId(pluginId)
     // 点击只更新当前视图，路由工作推迟到滑动结束，避免阻塞动画首帧。
-    if (reducedMotion) syncDetailAddress(pluginId)
+    if (!motionEnabled) syncDetailAddress(pluginId)
     else pendingDetailNavigationRef.current = { pluginId }
-  }, [reducedMotion, syncDetailAddress])
+  }, [motionEnabled, syncDetailAddress])
   
   useLayoutEffect(() => {
-    if (reducedMotion) {
+    if (!motionEnabled) {
       setDeferDetailContent(false)
       const pending = pendingDetailNavigationRef.current
       if (pending) {
@@ -287,8 +287,8 @@ function PluginMarketplacePageContent({ embedded }: Required<PluginMarketplacePa
     pendingDetailNavigationRef.current = null
     setVisibleDetailPluginId(routeDetailPluginId)
     if (routeDetailPluginId) setLastDetailPluginId(routeDetailPluginId)
-    setDeferDetailContent(routeDetailPluginId !== null && !reducedMotion)
-  }, [detailPluginId, routeDetailPluginId, reducedMotion, syncDetailAddress])
+    setDeferDetailContent(routeDetailPluginId !== null && motionEnabled)
+  }, [detailPluginId, motionEnabled, routeDetailPluginId, syncDetailAddress])
 
   const handleDetail = useCallback((plugin: PluginInfo) => setDetailPluginId(plugin.id), [setDetailPluginId])
   const handleCloseDetail = useCallback(() => setDetailPluginId(null), [setDetailPluginId])
@@ -1276,7 +1276,11 @@ function PluginMarketplacePageContent({ embedded }: Required<PluginMarketplacePa
   return (
     <div className="relative h-full min-h-0 min-w-0 overflow-hidden max-lg:h-auto max-lg:overflow-x-clip max-lg:overflow-y-visible">
       <div
-        className="flex h-full min-h-0 w-full will-change-transform transition-transform duration-200 ease-[cubic-bezier(0.22,1,0.36,1)] motion-reduce:transition-none max-lg:h-auto max-lg:items-start"
+        className={
+          motionEnabled
+            ? 'flex h-full min-h-0 w-full will-change-transform transition-transform duration-[var(--motion-duration-normal)] ease-[var(--motion-ease)] motion-reduce:transition-none max-lg:h-auto max-lg:items-start'
+            : 'flex h-full min-h-0 w-full transition-none max-lg:h-auto max-lg:items-start'
+        }
         style={{ transform: detailPluginId ? 'translate3d(-100%, 0, 0)' : 'translate3d(0, 0, 0)' }}
         onTransitionEnd={(event) => {
           if (event.target !== event.currentTarget || event.propertyName !== 'transform') return

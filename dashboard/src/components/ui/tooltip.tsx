@@ -1,6 +1,8 @@
 import * as React from "react"
 import * as TooltipPrimitive from "@radix-ui/react-tooltip"
+import { animate } from "motion/react"
 
+import { useMotion } from "@/lib/motion"
 import { cn } from "@/lib/utils"
 
 const TooltipProvider = TooltipPrimitive.Provider
@@ -12,20 +14,72 @@ const TooltipTrigger = TooltipPrimitive.Trigger
 const TooltipContent = React.forwardRef<
   React.ElementRef<typeof TooltipPrimitive.Content>,
   React.ComponentPropsWithoutRef<typeof TooltipPrimitive.Content>
->(({ className, sideOffset = 4, ...props }, ref) => (
-  <TooltipPrimitive.Portal>
-    <TooltipPrimitive.Content
-      ref={ref}
-      data-dashboard-floating-content="true"
-      sideOffset={sideOffset}
-      className={cn(
-        "z-50 overflow-hidden rounded-md border bg-popover px-3 py-1.5 text-xs text-popover-foreground shadow-lg animate-in fade-in-0 zoom-in-95 data-[state=closed]:animate-out data-[state=closed]:fade-out-0 data-[state=closed]:zoom-out-95 data-[side=bottom]:slide-in-from-top-2 data-[side=left]:slide-in-from-right-2 data-[side=right]:slide-in-from-left-2 data-[side=top]:slide-in-from-bottom-2 origin-[--radix-tooltip-content-transform-origin]",
-        className
-      )}
-      {...props}
-    />
-  </TooltipPrimitive.Portal>
-))
+>(({ className, sideOffset = 4, ...props }, ref) => {
+  const motion = useMotion()
+  const motionRef = React.useRef(motion)
+  React.useLayoutEffect(() => {
+    motionRef.current = motion
+  }, [motion])
+
+  const nodeRef = React.useRef<HTMLDivElement | null>(null)
+  const controlsRef = React.useRef<ReturnType<typeof animate> | null>(null)
+
+  React.useEffect(
+    () => () => {
+      controlsRef.current?.stop()
+      controlsRef.current = null
+    },
+    []
+  )
+
+  const composedRef = React.useCallback(
+    (node: HTMLDivElement | null) => {
+      const previousNode = nodeRef.current
+      nodeRef.current = node
+
+      if (node !== previousNode) {
+        controlsRef.current?.stop()
+        controlsRef.current = null
+
+        if (node && motionRef.current.enabled) {
+          const { overlayScale, overlayY } = motionRef.current.profile.distances
+          const offset = Math.max(2, Math.round(overlayY * 0.6))
+          controlsRef.current = animate(
+            node,
+            { opacity: [0, 1], scale: [overlayScale, 1], y: [offset, 0] },
+            motionRef.current.transitions.overlay
+          )
+        }
+      }
+
+      if (typeof ref === "function") {
+        ref(node)
+      } else if (ref) {
+        ref.current = node
+      }
+    },
+    [ref]
+  )
+
+  return (
+    <TooltipPrimitive.Portal>
+      {/* TooltipPrimitive.Content 内部用 Slottable + VisuallyHidden，不能传 asChild，
+          否则会与嵌套 react-slot 的本地 Symbol 冲突并抛出 React.Children.only。
+          这里直接用 motion/react 的 animate 驱动同款入场曲线，退场交由 motion.css 衔接。 */}
+      <TooltipPrimitive.Content
+        ref={composedRef}
+        data-dashboard-floating-content="true"
+        data-motion-floating="tooltip"
+        sideOffset={sideOffset}
+        className={cn(
+          "z-50 overflow-hidden rounded-md border bg-popover px-3 py-1.5 text-xs text-popover-foreground shadow-lg origin-[var(--radix-tooltip-content-transform-origin)]",
+          className
+        )}
+        {...props}
+      />
+    </TooltipPrimitive.Portal>
+  )
+})
 TooltipContent.displayName = TooltipPrimitive.Content.displayName
 
 export { Tooltip, TooltipTrigger, TooltipContent, TooltipProvider }

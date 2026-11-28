@@ -141,7 +141,7 @@ export function OptionCard({
       onClick={onSelect}
       data-dashboard-option-card="true"
       className={cn(
-        'bg-card hover:border-primary/70 hover:bg-accent/40 flex items-start gap-3 rounded-lg border p-4 text-left transition-all disabled:cursor-not-allowed disabled:opacity-50',
+        'bg-card hover:border-primary/70 hover:bg-accent/40 flex items-start gap-3 rounded-lg border p-4 text-left transition-[background-color,border-color,box-shadow] [transition-duration:var(--motion-duration-fast)] [transition-timing-function:var(--motion-ease)] disabled:cursor-not-allowed disabled:opacity-50',
         selected && 'border-primary bg-primary/10 shadow-sm',
         className
       )}

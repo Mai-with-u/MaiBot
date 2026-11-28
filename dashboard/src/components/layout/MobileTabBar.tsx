@@ -1,12 +1,12 @@
 import { Link, useNavigate, useRouterState } from '@tanstack/react-router'
 import { ChevronRight, House, LayoutGrid, MessageCircle, Search } from 'lucide-react'
-import { AnimatePresence, LayoutGroup, MotionConfig, motion, useReducedMotion } from 'motion/react'
+import { AnimatePresence, LayoutGroup, motion } from 'motion/react'
 import { useEffect, useLayoutEffect, useRef, useState } from 'react'
 import { useTranslation } from 'react-i18next'
 import type { LucideIcon } from 'lucide-react'
 
-import { useAnimation } from '@/hooks/use-animation'
 import { useMediaQuery } from '@/hooks/use-media-query'
+import { useMotion } from '@/lib/motion'
 import { cn } from '@/lib/utils'
 import { StageStatusLabel } from '@/routes/monitor/StageStatusLabel'
 import { useMaisakaMonitorOverview } from '@/routes/monitor/use-maisaka-monitor'
@@ -37,8 +37,6 @@ const MOBILE_MEDIA_QUERY = '(max-width: 1023.98px)'
 const COLLAPSE_SCROLL_TOP = 48
 const SCROLL_DELTA_THRESHOLD = 6
 const LOG_VIEWER_PATHS = new Set(['/logs', '/reasoning-process', '/statistics'])
-// 收起 / 展开用同一条弹簧：尺寸、位置连续过渡，不跳变
-const DOCK_SPRING = { type: 'spring', stiffness: 420, damping: 36, mass: 0.8 } as const
 
 /** 底部浮层占用的高度写到根元素上，页面据此给内容留出底部空间 */
 const DOCK_HEIGHT_CSS_VAR = '--mobile-dock-height'
@@ -143,10 +141,8 @@ function pickLatestStageStatus(stageStatuses: Map<string, StageStatusInfo>) {
 
 function TabBarDock({ onSearch }: Pick<MobileTabBarProps, 'onSearch'>) {
   const { t } = useTranslation()
-  const { enableAnimations } = useAnimation()
-  const prefersReducedMotion = useReducedMotion()
-  const animate = enableAnimations && !prefersReducedMotion
-  const dockTransition = animate ? DOCK_SPRING : { duration: 0 }
+  const { enabled: motionEnabled, transitions } = useMotion()
+  const dockTransition = transitions.snappy
   const navigate = useNavigate()
   const pathname = useRouterState({ select: (state) => state.location.pathname })
   const activeTab = resolveMobileTab(pathname)
@@ -215,104 +211,102 @@ function TabBarDock({ onSearch }: Pick<MobileTabBarProps, 'onSearch'>) {
   )
 
   return (
-    <MotionConfig reducedMotion={animate ? 'user' : 'always'}>
-      <LayoutGroup>
-        <div
-          ref={dockRef}
-          data-mobile-tabbar="true"
-          data-collapsed={collapsed ? 'true' : 'false'}
-          className="fixed inset-x-4 bottom-[calc(env(safe-area-inset-bottom)+14px)] z-40 flex flex-col gap-2.5"
-        >
-          {showLive && !collapsed && liveStrip}
-          <nav aria-label={t('mobileNav.label')} className="flex items-center gap-2.5">
-            {/* 收起时只留下当前标签，其余标签淡出，容器宽度随之收缩成圆键 */}
-            <motion.div
-              layout
-              layoutDependency={collapsed}
-              transition={dockTransition}
-              data-mobile-tabbar-tabs="true"
-              onClick={collapsed ? () => setCollapsed(false) : undefined}
-              className={cn(
-                'relative flex rounded-full p-1',
-                collapsed ? 'h-[52px] w-[52px] flex-none' : 'h-[62px] flex-1',
-                MOBILE_GLASS_CLASS
-              )}
-            >
-              {/* 底板常驻，用 transform 切换标签，避免导航时跨节点测量共享布局。 */}
-              {activeTabIndex >= 0 && (
-                <span className="pointer-events-none absolute inset-1" aria-hidden="true">
-                  <span
-                    data-mobile-tab-indicator="true"
-                    className="bg-foreground/[0.07] block h-full rounded-full transition-transform duration-200 ease-out motion-reduce:transition-none"
-                    style={{
-                      width: collapsed ? '100%' : `${100 / TABS.length}%`,
-                      transform: `translateX(${collapsed ? 0 : activeTabIndex * 100}%)`,
-                      transitionDuration: animate ? undefined : '0s',
-                    }}
-                  />
-                </span>
-              )}
-              <AnimatePresence initial={false} mode="popLayout">
-                {TABS.filter(({ tab }) => !collapsed || tab === activeTab).map(
-                  ({ tab, to, labelKey, icon: Icon }) => {
-                    const active = activeTab === tab
-                    return (
-                      <motion.div
-                        key={tab}
-                        layout
-                        layoutDependency={collapsed}
-                        transition={dockTransition}
-                        initial={{ opacity: 0, scale: 0.8 }}
-                        animate={{ opacity: 1, scale: 1 }}
-                        exit={{ opacity: 0, scale: 0.8 }}
-                        className="flex min-w-0 flex-1"
+    <LayoutGroup>
+      <div
+        ref={dockRef}
+        data-mobile-tabbar="true"
+        data-collapsed={collapsed ? 'true' : 'false'}
+        className="fixed inset-x-4 bottom-[calc(env(safe-area-inset-bottom)+14px)] z-40 flex flex-col gap-2.5"
+      >
+        {showLive && !collapsed && liveStrip}
+        <nav aria-label={t('mobileNav.label')} className="flex items-center gap-2.5">
+          {/* 收起时只留下当前标签，其余标签淡出，容器宽度随之收缩成圆键 */}
+          <motion.div
+            layout
+            layoutDependency={collapsed}
+            transition={dockTransition}
+            data-mobile-tabbar-tabs="true"
+            onClick={collapsed ? () => setCollapsed(false) : undefined}
+            className={cn(
+              'relative flex rounded-full p-1',
+              collapsed ? 'h-[52px] w-[52px] flex-none' : 'h-[62px] flex-1',
+              MOBILE_GLASS_CLASS
+            )}
+          >
+            {/* 底板常驻，用 transform 切换标签，避免导航时跨节点测量共享布局。 */}
+            {activeTabIndex >= 0 && (
+              <span className="pointer-events-none absolute inset-1" aria-hidden="true">
+                <span
+                  data-mobile-tab-indicator="true"
+                  className="bg-foreground/[0.07] block h-full rounded-full transition-transform [transition-duration:var(--motion-duration-normal)] [transition-timing-function:var(--motion-ease)] motion-reduce:transition-none"
+                  style={{
+                    width: collapsed ? '100%' : `${100 / TABS.length}%`,
+                    transform: `translateX(${collapsed ? 0 : activeTabIndex * 100}%)`,
+                    transitionDuration: motionEnabled ? undefined : '0s',
+                  }}
+                />
+              </span>
+            )}
+            <AnimatePresence initial={false} mode="popLayout">
+              {TABS.filter(({ tab }) => !collapsed || tab === activeTab).map(
+                ({ tab, to, labelKey, icon: Icon }) => {
+                  const active = activeTab === tab
+                  return (
+                    <motion.div
+                      key={tab}
+                      layout
+                      layoutDependency={collapsed}
+                      transition={dockTransition}
+                      initial={motionEnabled ? { opacity: 0, scale: 0.8 } : false}
+                      animate={{ opacity: 1, scale: 1 }}
+                      exit={motionEnabled ? { opacity: 0, scale: 0.8 } : undefined}
+                      className="flex min-w-0 flex-1"
+                    >
+                      <Link
+                        to={to}
+                        data-mobile-tab="true"
+                        data-active={active ? 'true' : 'false'}
+                        aria-current={active ? 'page' : undefined}
+                        aria-label={collapsed ? t(labelKey) : undefined}
+                        onClick={collapsed ? (event) => event.preventDefault() : undefined}
+                        className={cn(
+                          'relative flex min-w-0 flex-1 flex-col items-center justify-center gap-0.5 rounded-full text-[10px] font-semibold transition-colors [transition-duration:var(--motion-duration-fast)]',
+                          active ? 'text-primary' : 'text-foreground'
+                        )}
                       >
-                        <Link
-                          to={to}
-                          data-mobile-tab="true"
-                          data-active={active ? 'true' : 'false'}
-                          aria-current={active ? 'page' : undefined}
-                          aria-label={collapsed ? t(labelKey) : undefined}
-                          onClick={collapsed ? (event) => event.preventDefault() : undefined}
-                          className={cn(
-                            'relative flex min-w-0 flex-1 flex-col items-center justify-center gap-0.5 rounded-full text-[10px] font-semibold transition-colors duration-300',
-                            active ? 'text-primary' : 'text-foreground'
-                          )}
-                        >
-                          <span className="relative flex">
-                            <Icon
-                              className="h-[22px] w-[22px]"
-                              strokeWidth={active ? 2 : 1.7}
-                              aria-hidden="true"
-                            />
-                          </span>
-                          {!collapsed && (
-                            <span className="relative truncate">{t(labelKey)}</span>
-                          )}
-                        </Link>
-                      </motion.div>
-                    )
-                  }
-                )}
-              </AnimatePresence>
-            </motion.div>
-            {collapsed && (showLive ? liveStrip : <span className="flex-1" />)}
-            <button
-              type="button"
-              data-mobile-tabbar-search="true"
-              onClick={onSearch}
-              aria-label={t('mobileNav.search')}
-              className={cn(
-                'text-foreground flex shrink-0 items-center justify-center rounded-full',
-                collapsed ? 'h-[52px] w-[52px]' : 'h-[62px] w-[62px]',
-                MOBILE_GLASS_CLASS
+                        <span className="relative flex">
+                          <Icon
+                            className="h-[22px] w-[22px]"
+                            strokeWidth={active ? 2 : 1.7}
+                            aria-hidden="true"
+                          />
+                        </span>
+                        {!collapsed && (
+                          <span className="relative truncate">{t(labelKey)}</span>
+                        )}
+                      </Link>
+                    </motion.div>
+                  )
+                }
               )}
-            >
-              <Search className="h-[22px] w-[22px]" strokeWidth={1.7} aria-hidden="true" />
-            </button>
-          </nav>
-        </div>
-      </LayoutGroup>
-    </MotionConfig>
+            </AnimatePresence>
+          </motion.div>
+          {collapsed && (showLive ? liveStrip : <span className="flex-1" />)}
+          <button
+            type="button"
+            data-mobile-tabbar-search="true"
+            onClick={onSearch}
+            aria-label={t('mobileNav.search')}
+            className={cn(
+              'text-foreground flex shrink-0 items-center justify-center rounded-full',
+              collapsed ? 'h-[52px] w-[52px]' : 'h-[62px] w-[62px]',
+              MOBILE_GLASS_CLASS
+            )}
+          >
+            <Search className="h-[22px] w-[22px]" strokeWidth={1.7} aria-hidden="true" />
+          </button>
+        </nav>
+      </div>
+    </LayoutGroup>
   )
 }

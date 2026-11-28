@@ -3,6 +3,7 @@
 import * as React from 'react'
 import * as TabsPrimitive from '@radix-ui/react-tabs'
 
+import { MotionTabContent } from '@/components/motion'
 import { cn } from '@/lib/utils'
 
 const Tabs = TabsPrimitive.Root
@@ -32,7 +33,7 @@ const TabsTrigger = React.forwardRef<
     data-dashboard-tabs-trigger="true"
     data-control-size={size}
     className={cn(
-      'ring-offset-background focus-visible:ring-ring data-[state=active]:bg-background data-[state=active]:text-foreground inline-flex cursor-pointer items-center justify-center rounded-md px-3 py-1 text-sm font-medium whitespace-nowrap transition-all duration-300 focus-visible:ring-2 focus-visible:ring-offset-2 focus-visible:outline-none disabled:pointer-events-none disabled:opacity-50 data-[state=active]:shadow',
+      'ring-offset-background focus-visible:ring-ring data-[state=active]:bg-background data-[state=active]:text-foreground inline-flex cursor-pointer items-center justify-center rounded-md px-3 py-1 text-sm font-medium whitespace-nowrap focus-visible:ring-2 focus-visible:ring-offset-2 focus-visible:outline-none disabled:pointer-events-none disabled:opacity-50 data-[state=active]:shadow',
       size === 'sm' ? 'min-h-[var(--tab-height-sm)]' : 'min-h-[var(--tab-height)]',
       className
     )}
@@ -44,16 +45,26 @@ TabsTrigger.displayName = TabsPrimitive.Trigger.displayName
 const TabsContent = React.forwardRef<
   React.ElementRef<typeof TabsPrimitive.Content>,
   React.ComponentPropsWithoutRef<typeof TabsPrimitive.Content>
->(({ className, ...props }, ref) => (
-  <TabsPrimitive.Content
-    ref={ref}
-    className={cn(
-      'ring-offset-background focus-visible:ring-ring data-[state=active]:animate-in data-[state=active]:fade-in mt-2 focus-visible:ring-2 focus-visible:ring-offset-2 focus-visible:outline-none data-[state=active]:duration-300',
-      className
-    )}
-    {...props}
-  />
-))
+>(({ className, children, asChild = false, ...props }, ref) => {
+  const mergedClassName = cn(
+    'ring-offset-background focus-visible:ring-ring mt-2 focus-visible:ring-2 focus-visible:ring-offset-2 focus-visible:outline-none',
+    className
+  )
+
+  if (asChild) {
+    return (
+      <TabsPrimitive.Content ref={ref} asChild className={mergedClassName} {...props}>
+        {children}
+      </TabsPrimitive.Content>
+    )
+  }
+
+  return (
+    <TabsPrimitive.Content ref={ref} asChild {...props}>
+      <MotionTabContent className={mergedClassName}>{children}</MotionTabContent>
+    </TabsPrimitive.Content>
+  )
+})
 TabsContent.displayName = TabsPrimitive.Content.displayName
 
 export { Tabs, TabsList, TabsTrigger, TabsContent }

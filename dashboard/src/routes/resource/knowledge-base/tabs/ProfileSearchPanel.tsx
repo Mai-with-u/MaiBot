@@ -7,7 +7,7 @@
  * 支撑证据的纠错、别名维护、画像覆写属于检修动作，在记忆检修的 ProfileMaintenancePanel。
  */
 import { ArrowLeftRight, ChevronDown, Loader2, RefreshCw, Search, UserRound } from 'lucide-react'
-import { motion, AnimatePresence, useReducedMotion } from 'motion/react'
+import { AnimatePresence, motion } from 'motion/react'
 import type { ReactNode } from 'react'
 
 import { Badge } from '@/components/ui/badge'
@@ -27,6 +27,7 @@ import { Label } from '@/components/ui/label'
 import { ScrollArea } from '@/components/ui/scroll-area'
 import { Textarea } from '@/components/ui/textarea'
 import { ThinkingIllustration } from '@/components/ui/thinking-illustration'
+import { useMotion } from '@/lib/motion'
 import { cn } from '@/lib/utils'
 
 import { describeProfileIdentity, formatMemoryTime } from '../profile-utils'
@@ -66,8 +67,8 @@ export function ProfileSearchPanel({ profile, searchModeTabs }: ProfileSearchPan
     detailOpen,
     setDetailOpen,
   } = profile
-  // 尊重系统「减少动态效果」：开启时跳过滚动过渡，直接切换
-  const reduceMotion = useReducedMotion()
+  // 跟随统一动效配置：关闭动效或系统「减少动态效果」开启时跳过滚动过渡，直接切换
+  const { enabled: motionEnabled, transitions: motionTransitions } = useMotion()
 
   const detailPersonLabel =
     selectedProfile?.person_name || selectedPersonId || String(queryResult?.person_id ?? '')
@@ -96,10 +97,10 @@ export function ProfileSearchPanel({ profile, searchModeTabs }: ProfileSearchPan
               <motion.div
                 key={queryMode}
                 className="flex w-full items-end gap-3"
-                initial={reduceMotion ? false : { y: '100%' }}
+                initial={motionEnabled ? { y: '100%' } : false}
                 animate={{ y: 0 }}
-                exit={reduceMotion ? undefined : { y: '-100%' }}
-                transition={{ duration: reduceMotion ? 0 : 0.24, ease: 'easeInOut' }}
+                exit={motionEnabled ? { y: '-100%' } : undefined}
+                transition={motionTransitions.normal}
               >
                 {queryMode === 'exact' ? (
                   <>
